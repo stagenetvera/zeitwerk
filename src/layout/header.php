@@ -39,7 +39,7 @@ $user = auth_user();
           <?php else: ?>
             <a class="btn btn-outline-success me-2" href="<?=url('/times/start.php')?>">Timer starten</a>
           <?php endif; ?>
-          <span class="navbar-text me-3">👤 <?=h($user['name'])?> (<?=h($user['account_name']??'')?>)</span>
+          <span class="navbar-text me-3">👤 <?=h($user['name'])?></span>
           <a class="btn btn-outline-light" href="<?=url('/logout.php')?>">Logout</a>
         <?php else: ?>
           <a class="btn btn-outline-light me-2" href="<?=url('/login.php')?>">Login</a>
