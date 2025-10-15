@@ -29,12 +29,13 @@ $companies = $stmt->fetchAll();
         <tbody>
         <?php foreach ($companies as $c): ?>
           <tr>
-            <td><?=h($c['name'])?></td>
+            <td><a href="<?=url('/companies/show.php')?>?id=<?=$c['id']?>"><?=h($c['name'])?></a></td>
             <td><span class="badge <?=($c['status']==='abgeschlossen'?'bg-secondary':'bg-success')?>"><?=h($c['status'])?></span></td>
             <td><?= $c['hourly_rate'] !== null ? number_format($c['hourly_rate'], 2, ',', '.') . ' €' : '–' ?></td>
             <td><?=h($c['vat_id'] ?? '')?></td>
             <td class="text-truncate" style="max-width: 380px;"><?=nl2br(h($c['address'] ?? ''))?></td>
             <td class="text-end">
+              <a class="btn btn-sm btn-outline-primary" href="<?=url('/companies/show.php')?>?id=<?=$c['id']?>">Anzeigen</a>
               <a class="btn btn-sm btn-outline-secondary" href="<?=url('/companies/edit.php')?>?id=<?=$c['id']?>">Bearbeiten</a>
               <form class="d-inline" method="post" action="<?=url('/companies/delete.php')?>" onsubmit="return confirm('Diese Firma wirklich löschen?');">
                 <?=csrf_field()?>
