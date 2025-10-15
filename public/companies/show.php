@@ -258,8 +258,8 @@ function prio_badge($p) {
                 <?php endif; ?>
               </td>
               <td class="text-end">
-                <a class="btn btn-sm btn-outline-secondary" href="<?=url('/companies/projects_edit_v2.php')?>?id=<?=$p['id']?>">Bearbeiten</a>
-                <form class="d-inline" method="post" action="<?=url('/projects/delete_to_company.php')?>" onsubmit="return confirm('Dieses Projekt wirklich löschen?');">
+                <a class="btn btn-sm btn-outline-secondary" href="<?=url('/companies/projects_edit.php')?>?id=<?=$p['id']?>">Bearbeiten</a>
+                <form class="d-inline" method="post" action="<?=url('/projects/delete.php')?>" onsubmit="return confirm('Dieses Projekt wirklich löschen?');">
                   <?=csrf_field()?>
                   <input type="hidden" name="id" value="<?=$p['id']?>">
                   <button class="btn btn-sm btn-outline-danger">Löschen</button>

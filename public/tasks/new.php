@@ -142,7 +142,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       </div>
 
       <button class="btn btn-primary">Speichern</button>
-      <a class="btn btn-outline-secondary" href="<?=url('/tasks/index.php')?>">Zurück</a>
+      <a class="btn btn-outline-secondary" href="<?=url('/dashboard/index.php')?>">Zurück</a>
     </form>
 
     <script>
