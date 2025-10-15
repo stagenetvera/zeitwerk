@@ -21,9 +21,8 @@ $user = auth_user();
     <div class="collapse navbar-collapse" id="nav">
       <ul class="navbar-nav me-auto mb-2 mb-lg-0">
         <?php if ($user): ?>
-        <li class="nav-item"><a class="nav-link" href="<?=url('/dashboard.php')?>">Dashboard</a></li>
-        <li class="nav-item"><a class="nav-link" href="<?=url('/companies/index.php')?>">Firmen</a></li>
-        <li class="nav-item"><a class="nav-link" href="<?=url('/projects/index.php')?>">Projekte</a></li>
+          <li class="nav-item"><a class="nav-link" href="<?=url('/dashboard/index.php')?>">Dashboard</a></li>
+          <li class="nav-item"><a class="nav-link" href="<?=url('/companies/index.php')?>">Firmen</a></li>
         <li class="nav-item"><a class="nav-link" href="<?=url('/tasks/index.php')?>">Aufgaben</a></li>
         <li class="nav-item"><a class="nav-link" href="<?=url('/times/index.php')?>">Zeiten</a></li>
         <li class="nav-item"><a class="nav-link" href="<?=url('/offers/index.php')?>">Angebote</a></li>

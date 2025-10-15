@@ -6,7 +6,7 @@
     <?php if (!auth_user()): ?>
       <a class="btn btn-primary btn-lg" href="<?=url('/register.php')?>">Jetzt starten</a>
     <?php else: ?>
-      <a class="btn btn-primary btn-lg" href="<?=url('/dashboard.php')?>">Zum Dashboard</a>
+      <a class="btn btn-primary btn-lg" href="<?=url('/dashboard/index.php')?>">Zum Dashboard</a>
     <?php endif; ?>
   </div>
 </div>

@@ -17,6 +17,11 @@ if (!$company) {
 $ks = $pdo->prepare('SELECT * FROM contacts WHERE account_id = ? AND company_id = ? ORDER BY name');
 $ks->execute([$account_id, $id]);
 $contacts = $ks->fetchAll();
+
+// Projekte der Firma laden
+$ps = $pdo->prepare('SELECT id, title, status, hourly_rate FROM projects WHERE account_id = ? AND company_id = ? ORDER BY title');
+$ps->execute([$account_id, $id]);
+$projects = $ps->fetchAll();
 ?>
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h3>Firma: <?=h($company['name'])?></h3>
@@ -46,7 +51,7 @@ $contacts = $ks->fetchAll();
   <h4 class="mb-0">Ansprechpartner</h4>
   <a class="btn btn-sm btn-primary" href="<?=url('/companies/contacts_new.php')?>?company_id=<?=$company['id']?>">Neu</a>
 </div>
-<div class="card">
+<div class="card mb-4">
   <div class="card-body p-0">
     <div class="table-responsive">
       <table class="table table-striped table-hover mb-0">
@@ -76,6 +81,47 @@ $contacts = $ks->fetchAll();
           <?php endforeach; ?>
           <?php if (!$contacts): ?>
             <tr><td colspan="4" class="text-center text-muted">Noch keine Ansprechpartner.</td></tr>
+          <?php endif; ?>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="d-flex justify-content-between align-items-center mb-2">
+  <h4 class="mb-0">Projekte</h4>
+  <a class="btn btn-sm btn-primary" href="<?=url('/companies/projects_new.php')?>?company_id=<?=$company['id']?>">Neu</a>
+</div>
+<div class="card">
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-striped table-hover mb-0">
+        <thead>
+          <tr>
+            <th>Titel</th>
+            <th>Status</th>
+            <th>Projekt-Stundensatz</th>
+            <th class="text-end">Aktionen</th>
+          </tr>
+        </thead>
+        <tbody>
+          <?php foreach ($projects as $p): ?>
+            <tr>
+              <td><?=h($p['title'])?></td>
+              <td><?=h($p['status'])?></td>
+              <td><?= $p['hourly_rate'] !== null ? number_format($p['hourly_rate'], 2, ',', '.') . ' €' : '–' ?></td>
+              <td class="text-end">
+                <a class="btn btn-sm btn-outline-secondary" href="<?=url('/projects/edit.php')?>?id=<?=$p['id']?>">Bearbeiten</a>
+                <form class="d-inline" method="post" action="<?=url('/projects/delete.php')?>" onsubmit="return confirm('Dieses Projekt wirklich löschen?');">
+                  <?=csrf_field()?>
+                  <input type="hidden" name="id" value="<?=$p['id']?>">
+                  <button class="btn btn-sm btn-outline-danger">Löschen</button>
+                </form>
+              </td>
+            </tr>
+          <?php endforeach; ?>
+          <?php if (!$projects): ?>
+            <tr><td colspan="4" class="text-center text-muted">Noch keine Projekte.</td></tr>
           <?php endif; ?>
         </tbody>
       </table>
