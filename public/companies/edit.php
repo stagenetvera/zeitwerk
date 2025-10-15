@@ -31,8 +31,9 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
   <h3>Firma bearbeiten</h3>
   <?php if ($ok): ?><div class="alert alert-success"><?=$ok?></div><?php endif; ?>
   <?php if ($err): ?><div class="alert alert-danger"><?=$err?></div><?php endif; ?>
-  <form method="post">
+  <form method="post" action="<?=url('/companies/update_and_redirect.php')?>">
     <?=csrf_field()?>
+    <input type="hidden" name="id" value="<?=$company['id']?>">
     <div class="mb-3"><label class="form-label">Name</label>
       <input type="text" name="name" class="form-control" value="<?=h($company['name'])?>" required></div>
     <div class="mb-3"><label class="form-label">Adresse</label>

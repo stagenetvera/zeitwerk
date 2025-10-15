@@ -159,7 +159,6 @@ function prio_badge($p) {
   <div class="d-flex gap-2">
     <a class="btn btn-outline-secondary" href="<?=url('/companies/index.php')?>">Zurück zur Übersicht</a>
     <a class="btn btn-primary" href="<?=url('/companies/edit.php')?>?id=<?=$company['id']?>">Firma bearbeiten</a>
-    <a class="btn btn-success" href="<?=url('/tasks/new.php')?>?company_id=<?=$company['id']?>">Neue Aufgabe</a>
   </div>
 </div>
 
