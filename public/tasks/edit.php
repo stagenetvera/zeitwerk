@@ -36,7 +36,9 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
   <h3>Aufgabe bearbeiten</h3>
   <?php if ($ok): ?><div class="alert alert-success"><?=$ok?></div><?php endif; ?>
   <?php if ($err): ?><div class="alert alert-danger"><?=$err?></div><?php endif; ?>
-  <form method="post">
+  <form method="post" action="<?=url('/tasks/update_and_redirect.php')?>">
+    <?=csrf_field()?>
+    <input type="hidden" name="id" value="<?=$task['id']?>">
     <?=csrf_field()?>
     <div class="mb-3">
       <label class="form-label">Projekt</label>
@@ -85,7 +87,6 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
       </div>
     </div>
     <button class="btn btn-primary">Speichern</button>
-    <a class="btn btn-outline-secondary" href="<?=url('/dashboard/index.php')?>">Zurück</a>
   </form>
 </div></div>
 <?php require __DIR__ . '/../../src/layout/footer.php'; ?>
