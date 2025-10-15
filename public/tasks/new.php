@@ -55,7 +55,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   if ($ok) {
     $ins = $pdo->prepare('INSERT INTO tasks(account_id, project_id, description, planned_minutes, priority, deadline, status, billable) VALUES (?,?,?,?,?,?,?,?)');
     $ins->execute([$account_id, $project_id, $description, $planned, $priority, $deadline, $status, $billable]);
-    redirect('/tasks/index.php');
+    if (isset($_GET["returnTo"]) && $_GET["returnTo"] == "companies" ) {
+      redirect('/companies/show.php?id='.$_POST['company_id']);
+    }
+    else {
+      redirect('/dashboard/index.php');
+    }
   }
 }
 ?>

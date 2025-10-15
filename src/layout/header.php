@@ -23,7 +23,6 @@ $user = auth_user();
         <?php if ($user): ?>
           <li class="nav-item"><a class="nav-link" href="<?=url('/dashboard/index.php')?>">Dashboard</a></li>
           <li class="nav-item"><a class="nav-link" href="<?=url('/companies/index.php')?>">Firmen</a></li>
-        <li class="nav-item"><a class="nav-link" href="<?=url('/tasks/index.php')?>">Aufgaben</a></li>
         <li class="nav-item"><a class="nav-link" href="<?=url('/times/index.php')?>">Zeiten</a></li>
         <li class="nav-item"><a class="nav-link" href="<?=url('/offers/index.php')?>">Angebote</a></li>
         <li class="nav-item"><a class="nav-link" href="<?=url('/invoices/index.php')?>">Rechnungen</a></li>
@@ -31,6 +30,7 @@ $user = auth_user();
       </ul>
       <div class="d-flex">
         <?php if ($user): ?>
+          <a class="btn btn-outline-success me-2" href="<?=url('/tasks/new.php')?>">Neue Aufgabe</a>
           <?php
             $running = get_running_time($pdo, (int)$user['account_id'], (int)$user['id']);
           ?>
