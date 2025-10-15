@@ -14,16 +14,7 @@ function fmt_minutes($m){
   $m = (int)$m; $h = intdiv($m,60); $r = $m%60;
   return $h>0 ? sprintf('%d:%02d h',$h,$r) : ($m.' min');
 }
-function badge_for_estimate($sum, $est){
-  if ($est === null || $est <= 0) return '';
-  $sum = (int)$sum;
-  $est = (int)$est;
-  $pct = ($est > 0) ? ($sum / $est) : 0.0;
-  $class = 'bg-success';
-  if ($pct >= 1.0) $class = 'bg-danger';
-  elseif ($pct >= 0.8) $class = 'bg-warning text-dark';
-  return sprintf('<span class="badge %s">%s / %s</span>', $class, fmt_minutes($sum), fmt_minutes($est));
-}
+
 
 // ---------- input ----------
 $company_id = isset($_GET['company_id']) && $_GET['company_id'] !== '' ? (int)$_GET['company_id'] : 0;
@@ -157,7 +148,9 @@ $keep = [
             <th>Aufgabe</th>
             <th>Priorität</th>
             <th>Deadline</th>
-            <th>Geschätzt / Summe</th>
+            <th>Geschätzt</th>
+            <th>Aufgelaufene Zeit</th>
+
             <th class="text-end">Aktionen</th>
           </tr>
         </thead>
@@ -166,20 +159,28 @@ $keep = [
             <?php
               $sum = (int)($r['sum_minutes'] ?? 0);
               $est = $r['planned_minutes'] ?? ($r['planned_minutes'] ?? null);
-              $badge = badge_for_estimate($sum, $est);
+              $badge = '';
+              if ($est > 0) {
+                $ratio = $sum / $est;
+                if ($ratio >= 1.0) $badge = 'badge bg-danger';
+                elseif ($ratio >= 0.8) $badge = 'badge bg-warning text-dark';
+                else $badge = 'badge bg-success';
+              }
             ?>
             <tr>
               <td><?=h($r['company_name'])?><?= $r['project_title'] ? ' ('.h($r['project_title']).')' : '' ?></td>
               <td><?=h($r['description'])?></td>
               <td><?=h($r['priority'] ?? '—')?></td>
               <td><?= $r['deadline'] ? h($r['deadline']) : '—' ?></td>
+              <td><?= $est ? fmt_minutes($est) : '—' ?></td>
               <td>
                 <?php if ($badge): ?>
-                  <?=$badge?>
+                  <span class="<?=$badge?>"><?=fmt_minutes($sum)?></span>
                 <?php else: ?>
                   <?=fmt_minutes($sum)?>
                 <?php endif; ?>
               </td>
+
               <td class="text-end">
                 <a class="btn btn-sm btn-outline-secondary" href="<?=url('/tasks/edit.php')?>?id=<?=$r['id']?>&return_to=<?=urlencode($_SERVER['REQUEST_URI'])?>">Bearbeiten</a>
               </td>

@@ -425,7 +425,7 @@ $tasks = $st->fetchAll();
               <td><?= $planned ? fmt_minutes($planned) : '—' ?></td>
               <td>
                 <?php if ($badge): ?>
-                  <span class="<?=$badge?>"><?=fmt_minutes($total)?> / <?=fmt_minutes($planned)?></span>
+                  <span class="<?=$badge?>"><?=fmt_minutes($total)?></span>
                 <?php else: ?>
                   <?=fmt_minutes($total)?>
                 <?php endif; ?>
