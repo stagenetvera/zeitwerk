@@ -317,6 +317,10 @@ function prio_badge($p) {
                 if ($ratio >= 1.0)      $warn_class = 'badge bg-danger';
                 elseif ($ratio >= 0.8)  $warn_class = 'badge bg-warning text-dark';
               }
+              // Ergänzung: bei <80% jetzt grün kennzeichnen
+              if ($planned && $planned > 0 && $warn_class === '') {
+                $warn_class = 'badge bg-success';
+              }
             ?>
             <tr>
               <td><?=h($t['project_title'])?></td>
