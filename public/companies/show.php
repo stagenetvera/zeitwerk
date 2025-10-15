@@ -385,7 +385,7 @@ $tasks = $st->fetchAll();
     <div class="form-text">Standard: „offen“ und „warten“.</div>
   </div>
   <div class="col-md-4 d-flex align-items-end justify-content-end gap-2">
-    <button class="btn btn-outline-secondary" type="submit">Filtern</button>
+
     <a class="btn btn-outline-secondary" href="<?=hurl(url('/companies/show.php').'?id='.$company['id'])?>">Reset (Standard)</a>
   </div>
 </form>
@@ -446,5 +446,140 @@ $tasks = $st->fetchAll();
     </div>
   </div>
 </div>
+<script>
+/**
+ * On-place Reload für Aufgaben- und Projekt-Card.
+ * - Auto-Filter onChange (Checkboxen)
+ * - Paginierung abfangen (task_page= / proj_page=)
+ * - "Reset (Standard)"-Links abfangen (on place neu laden)
+ * - fetch() lädt die Seite im Hintergrund und ersetzt nur die betroffene Card
+ * - Kein Scroll nach oben; URL wird via history.replaceState aktualisiert
+ */
+(function () {
+  function getFormByFilterField(root, fieldName) {
+    var input = root.querySelector('form input[name="' + fieldName + '"]');
+    return input ? input.form : null;
+  }
+  function getCardForForm(form) {
+    return form ? form.closest('.card') : null;
+  }
 
+  function isResetLink(href, pageParam) {
+    if (!href) return false;
+    // Reset zeigt auf companies/show.php?id=... ohne Filter-/Page-Parameter
+    var isShow = href.indexOf('/companies/show.php') !== -1;
+    var hasPage = href.indexOf(pageParam + '=') !== -1;
+    var hasTaskFlag = href.indexOf('tsf=') !== -1;
+    var hasProjFlag = href.indexOf('psf=') !== -1;
+    return isShow && !hasPage && !hasTaskFlag && !hasProjFlag;
+  }
+
+  function bindCard(fieldName, pageParam) {
+    var form = getFormByFilterField(document, fieldName);
+    var card = getCardForForm(form);
+    if (!form || !card) return;
+
+    // "Filtern"-Button ausblenden (wir filtern onChange)
+    var submitBtn = form.querySelector('button[type="submit"]');
+    if (submitBtn) submitBtn.style.display = 'none';
+
+    // Auto-Submit bei Änderung einer Checkbox in diesem Formular
+    form.addEventListener('change', function (e) {
+      if (e.target && e.target.name === fieldName) {
+        if (form.requestSubmit) form.requestSubmit();
+        else form.dispatchEvent(new Event('submit', { cancelable: true }));
+      }
+    });
+
+    // Submit abfangen und on-place nachladen
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var params = new URLSearchParams(new FormData(form));
+      var url = (form.action || window.location.pathname).split('#')[0] + '?' + params.toString();
+      fetchAndSwap(url, fieldName);
+    });
+
+    // Paginierung & Reset-Links in der jeweiligen Card abfangen
+    card.addEventListener('click', function (e) {
+      var a = e.target && e.target.closest('a');
+      if (!a) return;
+      var href = a.getAttribute('href') || '';
+
+      // Nur eigene Paginierung oder der Reset-Link dieser Card
+      if (href.indexOf(pageParam + '=') !== -1 || isResetLink(href, pageParam)) {
+        e.preventDefault();
+        fetchAndSwap(href, fieldName);
+      }
+    });
+  }
+
+  function fetchAndSwap(url, fieldName) {
+    fetch(url, { headers: { 'X-Requested-With': 'fetch' } })
+      .then(function (r) { return r.text(); })
+      .then(function (html) {
+        var doc = new DOMParser().parseFromString(html, 'text/html');
+        var newForm = getFormByFilterField(doc, fieldName);
+        var newCard = getCardForForm(newForm);
+        if (!newCard) return;
+
+        var curForm = getFormByFilterField(document, fieldName);
+        var curCard = getCardForForm(curForm);
+        if (!curCard) return;
+
+        curCard.replaceWith(newCard);
+
+        // URL aktualisieren (ohne Scroll)
+        try { history.replaceState(null, '', url); } catch (e) {}
+
+        // Rebind nur für diese Card
+        setTimeout(function () {
+          var onlyThisForm = getFormByFilterField(document, fieldName);
+          var onlyThisCard = getCardForForm(onlyThisForm);
+          if (!onlyThisForm || !onlyThisCard) return;
+
+          var submitBtn = onlyThisForm.querySelector('button[type="submit"]');
+          if (submitBtn) submitBtn.style.display = 'none';
+
+          // OnChange erneut binden
+          onlyThisForm.addEventListener('change', function (e) {
+            if (e.target && e.target.name === fieldName) {
+              if (onlyThisForm.requestSubmit) onlyThisForm.requestSubmit();
+              else onlyThisForm.dispatchEvent(new Event('submit', { cancelable: true }));
+            }
+          });
+
+          // Submit erneut binden
+          onlyThisForm.addEventListener('submit', function (e) {
+            e.preventDefault();
+            var params = new URLSearchParams(new FormData(onlyThisForm));
+            var url = (onlyThisForm.action || window.location.pathname).split('#')[0] + '?' + params.toString();
+            fetchAndSwap(url, fieldName);
+          });
+
+          // Pagination/Reset erneut binden
+          onlyThisCard.addEventListener('click', function (e) {
+            var a = e.target && e.target.closest('a');
+            if (!a) return;
+            var href = a.getAttribute('href') || '';
+            var pageParam = (fieldName === 'task_status[]') ? 'task_page' : 'proj_page';
+            if (href.indexOf(pageParam + '=') !== -1 || isResetLink(href, pageParam)) {
+              e.preventDefault();
+              fetchAndSwap(href, fieldName);
+            }
+          });
+        }, 0);
+      })
+      .catch(function (err) {
+        console && console.error && console.error('Reload fehlgeschlagen:', err);
+      });
+  }
+
+  document.addEventListener('DOMContentLoaded', function () {
+    // Aufgaben
+    bindCard('task_status[]', 'task_page');
+    // Projekte
+    bindCard('proj_status[]', 'proj_page');
+  });
+})();
+</script>
 <?php require __DIR__ . '/../../src/layout/footer.php'; ?>
