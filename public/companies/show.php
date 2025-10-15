@@ -14,13 +14,13 @@ if (!$company) {
   require __DIR__ . '/../../src/layout/footer.php'; exit;
 }
 
-// Kontakte der Firma
+// Kontakte
 $ks = $pdo->prepare('SELECT * FROM contacts WHERE account_id = ? AND company_id = ? ORDER BY name');
 $ks->execute([$account_id, $id]);
 $contacts = $ks->fetchAll();
 
-// Projekte der Firma
-$ps = $pdo->prepare('SELECT id, title, status, hourly_rate FROM projects WHERE account_id = ? AND company_id = ? ORDER BY title');
+// Projekte (+ effektiver Satz: Projektsatz oder Firmensatz)
+$ps = $pdo->prepare('SELECT p.id, p.title, p.status, p.hourly_rate AS project_rate, c.hourly_rate AS company_rate, COALESCE(p.hourly_rate, c.hourly_rate) AS effective_rate FROM projects p JOIN companies c ON c.id = p.company_id AND c.account_id = p.account_id WHERE p.account_id = ? AND p.company_id = ? ORDER BY p.title');
 $ps->execute([$account_id, $id]);
 $projects = $ps->fetchAll();
 
@@ -37,7 +37,7 @@ if ($has_running) {
   $running_extra = max(0, (int) floor(($now->getTimestamp() - $start->getTimestamp()) / 60));
 }
 
-// Aufgaben der Firma (projektübergreifend, nur nicht-abgeschlossene) + Summe der beendeten Minuten des Users
+// Aufgaben (projektübergreifend, offen)
 $sqlTasks = "SELECT
     t.id AS task_id,
     t.description,
@@ -76,23 +76,7 @@ function fmt_minutes($m) {
   <div class="d-flex gap-2">
     <a class="btn btn-outline-secondary" href="<?=url('/companies/index.php')?>">Zurück zur Übersicht</a>
     <a class="btn btn-primary" href="<?=url('/companies/edit.php')?>?id=<?=$company['id']?>">Firma bearbeiten</a>
-
-  </div>
-</div>
-
-<div class="row g-3 mb-4">
-  <div class="col-12 col-lg-6">
-    <div class="card">
-      <div class="card-header fw-bold">Firmendaten</div>
-      <div class="card-body">
-        <dl class="row mb-0">
-          <dt class="col-sm-4">Status</dt><dd class="col-sm-8"><?=h($company['status'])?></dd>
-          <dt class="col-sm-4">Stundensatz</dt><dd class="col-sm-8"><?= $company['hourly_rate'] !== null ? number_format($company['hourly_rate'], 2, ',', '.') . ' €' : '–' ?></dd>
-          <dt class="col-sm-4">USt-ID</dt><dd class="col-sm-8"><?=h($company['vat_id'] ?? '')?></dd>
-          <dt class="col-sm-4">Adresse</dt><dd class="col-sm-8"><?=nl2br(h($company['address'] ?? ''))?></dd>
-        </dl>
-      </div>
-    </div>
+    <a class="btn btn-success" href="<?=url('/tasks/new_scoped.php')?>?company_id=<?=$company['id']?>">Neue Aufgabe</a>
   </div>
 </div>
 
@@ -141,7 +125,7 @@ function fmt_minutes($m) {
 <!-- Projekte -->
 <div class="d-flex justify-content-between align-items-center mb-2">
   <h4 class="mb-0">Projekte</h4>
-  <a class="btn btn-sm btn-primary" href="<?=url('/companies/projects_new.php')?>?company_id=<?=$company['id']?>">Neu</a>
+  <a class="btn btn-sm btn-primary" href="<?=url('/companies/projects_new_v2.php')?>?company_id=<?=$company['id']?>">Neu</a>
 </div>
 <div class="card mb-4">
   <div class="card-body p-0">
@@ -151,7 +135,7 @@ function fmt_minutes($m) {
           <tr>
             <th>Titel</th>
             <th>Status</th>
-            <th>Projekt-Stundensatz</th>
+            <th>Stundensatz (effektiv)</th>
             <th class="text-end">Aktionen</th>
           </tr>
         </thead>
@@ -160,10 +144,19 @@ function fmt_minutes($m) {
             <tr>
               <td><?=h($p['title'])?></td>
               <td><?=h($p['status'])?></td>
-              <td><?= $p['hourly_rate'] !== null ? number_format($p['hourly_rate'], 2, ',', '.') . ' €' : '–' ?></td>
+              <td>
+                <?php if ($p['effective_rate'] !== null): ?>
+                  <?= number_format($p['effective_rate'], 2, ',', '.') ?> €
+                  <?php if ($p['project_rate'] === null && $p['company_rate'] !== null): ?>
+                    <small class="text-muted">(von Firma)</small>
+                  <?php endif; ?>
+                <?php else: ?>
+                  —
+                <?php endif; ?>
+              </td>
               <td class="text-end">
-                <a class="btn btn-sm btn-outline-secondary" href="<?=url('/projects/edit.php')?>?id=<?=$p['id']?>">Bearbeiten</a>
-                <form class="d-inline" method="post" action="<?=url('/projects/delete.php')?>" onsubmit="return confirm('Dieses Projekt wirklich löschen?');">
+                <a class="btn btn-sm btn-outline-secondary" href="<?=url('/companies/projects_edit_v2.php')?>?id=<?=$p['id']?>">Bearbeiten</a>
+                <form class="d-inline" method="post" action="<?=url('/projects/delete_to_company.php')?>" onsubmit="return confirm('Dieses Projekt wirklich löschen?');">
                   <?=csrf_field()?>
                   <input type="hidden" name="id" value="<?=$p['id']?>">
                   <button class="btn btn-sm btn-outline-danger">Löschen</button>
@@ -183,7 +176,7 @@ function fmt_minutes($m) {
 <!-- Aufgaben (projektübergreifend) -->
 <div class="d-flex justify-content-between align-items-center mb-2">
   <h4 class="mb-0">Aufgaben</h4>
-  <a class="btn btn-sm btn-primary" href="<?=url('/tasks/new.php')?>?company_id=<?=$company['id']?>&returnTo=companies">Neu</a>
+  <a class="btn btn-sm btn-primary" href="<?=url('/tasks/new_scoped.php')?>?company_id=<?=$company['id']?>">Neu</a>
 </div>
 <div class="card">
   <div class="card-body p-0">
