@@ -23,6 +23,7 @@ $user = auth_user();
         <?php if ($user): ?>
         <li class="nav-item"><a class="nav-link" href="<?=url('/dashboard.php')?>">Dashboard</a></li>
         <li class="nav-item"><a class="nav-link" href="<?=url('/companies/index.php')?>">Firmen</a></li>
+        <li class="nav-item"><a class="nav-link" href="<?=url('/contacts/index.php')?>">Ansprechpartner</a></li>
         <li class="nav-item"><a class="nav-link" href="<?=url('/projects/index.php')?>">Projekte</a></li>
         <li class="nav-item"><a class="nav-link" href="<?=url('/tasks/index.php')?>">Aufgaben</a></li>
         <li class="nav-item"><a class="nav-link" href="<?=url('/times/index.php')?>">Zeiten</a></li>
