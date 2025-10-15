@@ -9,11 +9,13 @@ $stmt = $pdo->prepare('SELECT * FROM projects WHERE id = ? AND account_id = ?');
 $stmt->execute([$id, $account_id]);
 $project = $stmt->fetch();
 if (!$project) { echo '<div class="alert alert-danger">Projekt nicht gefunden.</div>'; require __DIR__ . '/../../src/layout/footer.php'; exit; }
+$company_id = (int)$project['company_id'];
 
 // Firmen für Auswahl
 $cs = $pdo->prepare('SELECT id, name FROM companies WHERE account_id = ? ORDER BY name');
 $cs->execute([$account_id]);
 $companies = $cs->fetchAll();
+
 
 $ok = $err = null;
 if ($_SERVER['REQUEST_METHOD']==='POST') {
@@ -55,7 +57,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
       <input type="number" step="0.01" name="hourly_rate" class="form-control" value="<?=h($project['hourly_rate'] ?? '')?>">
     </div>
     <button class="btn btn-primary">Speichern</button>
-    <a class="btn btn-outline-secondary" href="<?=url('/projects/index.php')?>">Zurück</a>
+    <a class="btn btn-outline-secondary" href="<?=url('/companies/show.php?id='.$company_id)?>">Zurück</a>
   </form>
 </div></div>
 <?php require __DIR__ . '/../../src/layout/footer.php'; ?>
