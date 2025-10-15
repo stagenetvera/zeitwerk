@@ -93,6 +93,9 @@ if ($has_running) {
                 } elseif ($ratio >= 0.8) {
                   $warn_class = 'badge bg-warning text-dark';
                 }
+                else {
+                  $warn_class = 'badge bg-success ';
+                }
               }
 
               // Start/Stop-Logik: Stop nur für die laufende Aufgabe; wenn Timer ohne Task läuft → Stop überall anbieten
