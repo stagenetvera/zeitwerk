@@ -1,5 +1,5 @@
 <?php
-// public/times/index_filtered_v3.php
+// public/times/index_filtered_v3_with_delete.php
 require __DIR__ . '/../../src/layout/header.php';
 require_login();
 
@@ -138,7 +138,6 @@ if ($task_id) {
 if ($billable_filter === '1') {
   $where[] = 't.billable = 1';
 } elseif ($billable_filter === '0') {
-  // "nicht fakturierbar" -> 0 ODER NULL (falls ältere Einträge kein Flag hatten)
   $where[] = '(t.billable = 0 OR t.billable IS NULL)';
 }
 
@@ -185,8 +184,8 @@ $rows = $st->fetchAll();
 $sumStmt = $pdo->prepare("SELECT COALESCE(SUM(t.minutes),0)
   FROM times t
   LEFT JOIN tasks ta ON ta.id = t.task_id AND ta.account_id = t.account_id
-  LEFT JOIN projects p ON p.id = ta.project_id AND p.account_id = ta.account_id
-  LEFT JOIN companies c ON c.id = p.company_id AND c.account_id = p.account_id
+  LEFT JOIN projects p ON p.id = ta.project_id AND p.account_id = t.account_id
+  LEFT JOIN companies c ON c.id = p.company_id AND c.account_id = t.account_id
   WHERE $WHERE AND t.minutes IS NOT NULL");
 foreach ($params as $k=>$v) {
   $sumStmt->bindValue($k, $v, is_int($v) ? PDO::PARAM_INT : PDO::PARAM_STR);
@@ -204,7 +203,6 @@ $persist = [
   'billable'=>$billable_filter
 ];
 
-// Quick range links should keep current filters
 function qs($base, $arr) { return htmlspecialchars($base.'?'.http_build_query($arr), ENT_QUOTES, 'UTF-8'); }
 ?>
 <div class="d-flex justify-content-between align-items-center mb-3">
@@ -318,6 +316,12 @@ function qs($base, $arr) { return htmlspecialchars($base.'?'.http_build_query($a
               <td><?= h($r['status'] ?? '—') ?></td>
               <td class="text-end">
                 <a class="btn btn-sm btn-outline-secondary" href="<?=url('/times/edit.php')?>?id=<?=$r['id']?>&return_to=<?=urlencode($_SERVER['REQUEST_URI'])?>">Bearbeiten</a>
+                <form class="d-inline" method="post" action="<?=url('/times/delete.php')?>" onsubmit="return confirm('Diesen Zeiteintrag wirklich löschen?');">
+                  <?=csrf_field()?>
+                  <input type="hidden" name="id" value="<?=$r['id']?>">
+                  <input type="hidden" name="return_to" value="<?=h($_SERVER['REQUEST_URI'])?>">
+                  <button class="btn btn-sm btn-outline-danger">Löschen</button>
+                </form>
               </td>
             </tr>
           <?php endforeach; ?>
