@@ -147,12 +147,6 @@ function fmt_minutes($m) {
   if ($h > 0) return sprintf('%d:%02d h', $h, $r);
   return $m . ' min';
 }
-function prio_badge($p) {
-  $p = strtolower((string)$p);
-  if ($p === 'high') return '<span class=\"badge bg-danger\">high</span>';
-  if ($p === 'low')  return '<span class=\"badge bg-secondary\">low</span>';
-  return '<span class=\"badge bg-info text-dark\">medium</span>';
-}
 ?>
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h3>Firma: <?=h($company['name'])?></h3>
@@ -306,40 +300,34 @@ function prio_badge($p) {
           <?php foreach ($tasks as $t): ?>
             <?php
               $total = (int)$t['spent_minutes'];
-              if ($has_running && $running && (int)$t['task_id'] === (int)$running['task_id']) {
-                $total += $running_extra;
-              }
               $planned = $t['planned_minutes'] !== null ? (int)$t['planned_minutes'] : null;
-              $warn_class = '';
+              $badge = '';
               if ($planned && $planned > 0) {
                 $ratio = $total / $planned;
-                if ($ratio >= 1.0)      $warn_class = 'badge bg-danger';
-                elseif ($ratio >= 0.8)  $warn_class = 'badge bg-warning text-dark';
-              }
-              // Ergänzung: bei <80% jetzt grün kennzeichnen
-              if ($planned && $planned > 0 && $warn_class === '') {
-                $warn_class = 'badge bg-success';
+                if     ($ratio >= 1.0) $badge = 'badge bg-danger';
+                elseif ($ratio >= 0.8) $badge = 'badge bg-warning text-dark';
+                else                   $badge = 'badge bg-success';
               }
             ?>
             <tr>
               <td><?=h($t['project_title'])?></td>
               <td><?=h($t['description'])?></td>
-              <td><?= prio_badge($t['priority']) ?></td>
+              <td><?=h($t['priority'] ?? '—')?></td>
               <td><?= $t['deadline'] ? h($t['deadline']) : '—' ?></td>
               <td>
                 <?php if ($planned): ?>
-                  <?php if ($warn_class): ?>
-                    <span class="<?= $warn_class ?>"><?= fmt_minutes($planned) ?></span>
-                  <?php else: ?>
-                    <?= fmt_minutes($planned) ?>
-                  <?php endif; ?>
-                <?php else: ?>
-                  —
-                <?php endif; ?>
+                  <?php if ($badge): ?><span class="<?=$badge?>"><?=fmt_minutes($planned)?></span><?php else: ?><?=fmt_minutes($planned)?><?php endif; ?>
+                <?php else: ?>—<?php endif; ?>
               </td>
               <td><?= fmt_minutes($total) ?></td>
               <td class="text-end">
                 <a class="btn btn-sm btn-outline-secondary" href="<?=url('/tasks/edit.php')?>?id=<?=$t['task_id']?>">Bearbeiten</a>
+                <form class="d-inline" method="post" action="<?=url('/tasks/delete.php')?>" onsubmit="return confirm('Diese Aufgabe wirklich löschen?');">
+                  <?=csrf_field()?>
+                  <input type="hidden" name="id" value="<?=$t['task_id']?>">
+
+                  <button class="btn btn-sm btn-outline-danger">Löschen</button>
+                </form>
               </td>
             </tr>
           <?php endforeach; ?>
@@ -348,12 +336,6 @@ function prio_badge($p) {
           <?php endif; ?>
         </tbody>
       </table>
-    </div>
-    <div class="d-flex justify-content-end p-2">
-      <?php
-        $base = url('/companies/show.php') . '?id=' . $company['id'] . '&proj_page=' . $proj_page . '&task_page';
-        echo render_pagination_named($base, 'task_page', $task_page, $tasks_pages);
-      ?>
     </div>
   </div>
 </div>
