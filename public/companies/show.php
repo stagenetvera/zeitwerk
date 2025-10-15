@@ -1,11 +1,41 @@
 <?php
+// public/companies/show.php
 require __DIR__ . '/../../src/layout/header.php';
 require_login();
+
 $user = auth_user();
 $account_id = (int)$user['account_id'];
 $user_id = (int)$user['id'];
 
+// -------- helpers --------
+function page_int($v, $d=1){ $n=(int)$v; return $n>0?$n:$d; }
+function hurl($s){ return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
+
+function render_pagination_named_keep($baseUrl, $param, $current, $total, $keepParams = []) {
+  if ($total <= 1) return '';
+  $qs = function($extra) use ($keepParams) {
+    $arr = array_merge($keepParams, $extra);
+    return http_build_query($arr);
+  };
+  $prev = max(1,$current-1); $next = min($total,$current+1);
+  ob_start(); ?>
+  <nav><ul class="pagination mb-0">
+    <li class="page-item <?= $current===1?'disabled':'' ?>"><a class="page-link" href="<?=hurl($baseUrl.'?'.$qs([$param=>1]))?>">&laquo;</a></li>
+    <li class="page-item <?= $current===1?'disabled':'' ?>"><a class="page-link" href="<?=hurl($baseUrl.'?'.$qs([$param=>$prev]))?>">&lsaquo;</a></li>
+    <?php $s=max(1,$current-2); $e=min($total,$current+2); for($i=$s;$i<=$e;$i++): ?>
+      <li class="page-item <?= $i===$current?'active':'' ?>"><a class="page-link" href="<?=hurl($baseUrl.'?'.$qs([$param=>$i]))?>"><?=$i?></a></li>
+    <?php endfor; ?>
+    <li class="page-item <?= $current===$total?'disabled':'' ?>"><a class="page-link" href="<?=hurl($baseUrl.'?'.$qs([$param=>$next]))?>">&rsaquo;</a></li>
+    <li class="page-item <?= $current===$total?'disabled':'' ?>"><a class="page-link" href="<?=hurl($baseUrl.'?'.$qs([$param=>$total]))?>">&raquo;</a></li>
+  </ul></nav>
+  <?php return ob_get_clean();
+}
+
+// -------- input --------
 $id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
+if ($id<=0) { echo '<div class="alert alert-danger">Ungültige Firmen-ID.</div>'; require __DIR__.'/../../src/layout/footer.php'; exit; }
+
+// Fetch company
 $cs = $pdo->prepare('SELECT * FROM companies WHERE id = ? AND account_id = ?');
 $cs->execute([$id, $account_id]);
 $company = $cs->fetch();
@@ -14,72 +44,81 @@ if (!$company) {
   require __DIR__ . '/../../src/layout/footer.php'; exit;
 }
 
-// helpers
-function page_int($val, $default=1) {
-  $n = (int)$val;
-  return $n > 0 ? $n : $default;
-}
-function render_pagination_named($baseUrl, $param, $current, $total) {
-  if ($total <= 1) return '';
-  $html = '<nav><ul class="pagination mb-0">';
-  $prev = max(1, $current-1);
-  $next = min($total, $current+1);
-  $disabledPrev = $current===1 ? ' disabled' : '';
-  $disabledNext = $current===$total ? ' disabled' : '';
-
-  $html .= '<li class="page-item'.$disabledPrev.'"><a class="page-link" href="'.h($baseUrl).'&'.$param.'=1" aria-label="Erste">&laquo;</a></li>';
-  $html .= '<li class="page-item'.$disabledPrev.'"><a class="page-link" href="'.h($baseUrl).'&'.$param.'='.$prev.'" aria-label="Zurück">&lsaquo;</a></li>';
-
-  $start = max(1, $current-2);
-  $end   = min($total, $current+2);
-  for ($i=$start; $i<=$end; $i++) {
-    $active = $i===$current ? ' active' : '';
-    $html .= '<li class="page-item'.$active.'"><a class="page-link" href="'.h($baseUrl).'&'.$param.'='.$i.'">'.$i.'</a></li>';
-  }
-
-  $html .= '<li class="page-item'.$disabledNext.'"><a class="page-link" href="'.h($baseUrl).'&'.$param.'='.$next.'" aria-label="Weiter">&rsaquo;</a></li>';
-  $html .= '<li class="page-item'.$disabledNext.'"><a class="page-link" href="'.h($baseUrl).'&'.$param.'='.$total.'" aria-label="Letzte">&raquo;</a></li>';
-  $html .= '</ul></nav>';
-  return $html;
-}
-
-// CONTACTS (no pagination here)
+// Contacts (no pagination change)
 $ks = $pdo->prepare('SELECT * FROM contacts WHERE account_id = ? AND company_id = ? ORDER BY name');
 $ks->execute([$account_id, $id]);
 $contacts = $ks->fetchAll();
 
-// PROJECTS pagination (10 per page)
+// -------- project status filter --------
+$allowed_status = ['angeboten','offen','abgeschlossen'];
+$proj_status = [];
+$has_submit = isset($_GET['psf']) ? true : false; // flag to detect form submit
+if (isset($_GET['proj_status']) && is_array($_GET['proj_status'])) {
+  foreach ($_GET['proj_status'] as $st) {
+    $st = strtolower(trim($st));
+    if (in_array($st, $allowed_status, true)) $proj_status[] = $st;
+  }
+}
+if (!$has_submit) {
+  // default preselection for initial load
+  $proj_status = ['angeboten','offen'];
+}
+// build params to keep in links
+$keep = ['id'=>$id, 'psf'=>1];
+foreach ($proj_status as $st) { $keep['proj_status[]'][] = $st; }
+
+// -------- projects pagination + query --------
 $proj_per_page = 10;
 $proj_page = page_int($_GET['proj_page'] ?? 1);
 $proj_offset = ($proj_page - 1) * $proj_per_page;
 
-$pcnt = $pdo->prepare('SELECT COUNT(*) FROM projects WHERE account_id = ? AND company_id = ?');
-$pcnt->execute([$account_id, $id]);
+$whereP = ['p.account_id = :acc', 'p.company_id = :cid'];
+$paramsP = [':acc'=>$account_id, ':cid'=>$id];
+
+if ($proj_status) {
+  // IN list
+  $in = [];
+  foreach ($proj_status as $i=>$st) {
+    $key = ':st'.$i;
+    $in[] = $key;
+    $paramsP[$key] = $st;
+  }
+  $whereP[] = 'p.status IN ('.implode(',', $in).')';
+}
+$WHEREP = implode(' AND ', $whereP);
+
+// Count
+$pcnt = $pdo->prepare("SELECT COUNT(*) FROM projects p WHERE $WHEREP");
+foreach ($paramsP as $k=>$v) { $pcnt->bindValue($k, $v, is_int($v)?PDO::PARAM_INT:PDO::PARAM_STR); }
+$pcnt->execute();
 $projects_total = (int)$pcnt->fetchColumn();
 $projects_pages = max(1, (int)ceil($projects_total / $proj_per_page));
 
-$ps = $pdo->prepare('SELECT p.id, p.title, p.status, p.hourly_rate AS project_rate, c.hourly_rate AS company_rate, COALESCE(p.hourly_rate, c.hourly_rate) AS effective_rate
-                     FROM projects p JOIN companies c ON c.id = p.company_id AND c.account_id = p.account_id
-                     WHERE p.account_id = ? AND p.company_id = ?
+// Fetch rows
+$ps = $pdo->prepare("SELECT p.id, p.title, p.status, p.hourly_rate AS project_rate,
+                            c.hourly_rate AS company_rate,
+                            COALESCE(p.hourly_rate, c.hourly_rate) AS effective_rate
+                     FROM projects p
+                     JOIN companies c ON c.id = p.company_id AND c.account_id = p.account_id
+                     WHERE $WHEREP
                      ORDER BY p.title
-                     LIMIT ? OFFSET ?');
-$ps->bindValue(1, $account_id, PDO::PARAM_INT);
-$ps->bindValue(2, $id, PDO::PARAM_INT);
-$ps->bindValue(3, $proj_per_page, PDO::PARAM_INT);
-$ps->bindValue(4, $proj_offset, PDO::PARAM_INT);
+                     LIMIT :limit OFFSET :offset");
+foreach ($paramsP as $k=>$v) { $ps->bindValue($k, $v, is_int($v)?PDO::PARAM_INT:PDO::PARAM_STR); }
+$ps->bindValue(':limit', $proj_per_page, PDO::PARAM_INT);
+$ps->bindValue(':offset', $proj_offset, PDO::PARAM_INT);
 $ps->execute();
 $projects = $ps->fetchAll();
 
-// TASKS pagination (10 per page), sorted by global dashboard order
-$task_per_page = 10;
+// -------- tasks pagination (unchanged logic) --------
+$task_per_page = 20;
 $task_page = page_int($_GET['task_page'] ?? 1);
 $task_offset = ($task_page - 1) * $task_per_page;
 
 // total open tasks for this company
-$tcnt = $pdo->prepare('SELECT COUNT(*)
+$tcnt = $pdo->prepare("SELECT COUNT(*)
   FROM tasks t
   JOIN projects p ON p.id = t.project_id AND p.account_id = t.account_id
-  WHERE t.account_id = ? AND p.company_id = ? AND t.status <> "abgeschlossen"');
+  WHERE t.account_id = ? AND p.company_id = ? AND t.status <> 'abgeschlossen'");
 $tcnt->execute([$account_id, $id]);
 $tasks_total = (int)$tcnt->fetchColumn();
 $tasks_pages = max(1, (int)ceil($tasks_total / $task_per_page));
@@ -94,21 +133,11 @@ $pdo->exec("CREATE TABLE IF NOT EXISTS task_ordering_global (
 
 // fetch paginated tasks
 $sqlTasks = "SELECT
-    t.id AS task_id,
-    t.description,
-    t.deadline,
-    t.planned_minutes,
-    t.priority,
-    t.status,
-    p.id AS project_id,
-    p.title AS project_title,
+    t.id AS task_id, t.description, t.deadline, t.planned_minutes, t.priority, t.status,
+    p.id AS project_id, p.title AS project_title,
     COALESCE((
-      SELECT SUM(tt.minutes)
-      FROM times tt
-      WHERE tt.account_id = t.account_id
-        AND tt.user_id    = :uid
-        AND tt.task_id    = t.id
-        AND tt.minutes IS NOT NULL
+      SELECT SUM(tt.minutes) FROM times tt
+      WHERE tt.account_id = t.account_id AND tt.user_id = :uid AND tt.task_id = t.id AND tt.minutes IS NOT NULL
     ), 0) AS spent_minutes,
     og.position AS sort_pos
   FROM tasks t
@@ -126,7 +155,7 @@ $st->bindValue(':offset', $task_offset, PDO::PARAM_INT);
 $st->execute();
 $tasks = $st->fetchAll();
 
-// running timer for info
+// running timer info
 $runStmt = $pdo->prepare('SELECT id, task_id, started_at FROM times WHERE account_id = ? AND user_id = ? AND ended_at IS NULL ORDER BY id DESC LIMIT 1');
 $runStmt->execute([$account_id, $user_id]);
 $running = $runStmt->fetch();
@@ -135,124 +164,182 @@ $running_task_id = $running && $running['task_id'] ? (int)$running['task_id'] : 
 $running_extra = 0;
 if ($has_running) {
   $start = new DateTimeImmutable($running['started_at']);
-  $now   = new DateTimeImmutable('now');
+  $now = new DateTimeImmutable('now');
   $running_extra = max(0, (int) floor(($now->getTimestamp() - $start->getTimestamp()) / 60));
 }
-
-function fmt_minutes($m) {
+function fmt_minutes($m){
   if ($m === null) return '—';
-  $m = (int)$m;
-  $h = intdiv($m, 60);
-  $r = $m % 60;
-  if ($h > 0) return sprintf('%d:%02d h', $h, $r);
-  return $m . ' min';
+  $m = (int)$m; $h = intdiv($m,60); $r = $m%60;
+  return $h>0 ? sprintf('%d:%02d h',$h,$r) : ($m.' min');
 }
+
+// -------- view --------
 ?>
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h3>Firma: <?=h($company['name'])?></h3>
-  <div class="d-flex gap-2">
+  <div>
     <a class="btn btn-outline-secondary" href="<?=url('/companies/index.php')?>">Zurück zur Übersicht</a>
     <a class="btn btn-primary" href="<?=url('/companies/edit.php')?>?id=<?=$company['id']?>">Firma bearbeiten</a>
   </div>
 </div>
 
-<!-- Firmendaten -->
-<div class="card mb-3">
-  <div class="card-body">
-    <div class="row">
-      <div class="col-md-6">
-        <div class="mb-2"><strong>Adresse:</strong><br><pre class="mb-0" style="white-space:pre-wrap;"><?=h($company['address'] ?? '')?></pre></div>
-        <div class="mb-2"><strong>USt-ID:</strong> <?=h($company['vat_id'] ?? '—')?></div>
+<div class="row mb-3">
+  <div class="col-md-6">
+    <div class="card h-100">
+      <div class="card-body">
+        <h5 class="card-title">Stammdaten</h5>
+        <dl class="row mb-0">
+          <dt class="col-sm-4">Adresse</dt><dd class="col-sm-8"><?=nl2br(h($company['address'] ?? ''))?></dd>
+          <dt class="col-sm-4">USt-ID</dt><dd class="col-sm-8"><?=h($company['vat_id'] ?? '—')?></dd>
+          <dt class="col-sm-4">Stundensatz (Firma)</dt><dd class="col-sm-8">€ <?=h(number_format((float)($company['hourly_rate'] ?? 0),2,',','.'))?></dd>
+          <dt class="col-sm-4">Status</dt><dd class="col-sm-8"><?=h($company['status'] ?? '')?></dd>
+        </dl>
       </div>
-      <div class="col-md-6">
-        <div class="mb-2"><strong>Stundensatz (Firma):</strong>
-          <?php if ($company['hourly_rate'] !== null): ?>
-            <?= number_format((float)$company['hourly_rate'], 2, ',', '.') ?> €
-          <?php else: ?>—<?php endif; ?>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="card h-100">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <h5 class="card-title mb-0">Ansprechpartner</h5>
+          <a class="btn btn-sm btn-primary" href="<?=url('/contacts/new.php')?>?company_id=<?=$company['id']?>">Neu</a>
         </div>
-        <div class="mb-2"><strong>Status:</strong> <?=h($company['status'] ?? '—')?></div>
+        <?php if ($contacts): ?>
+      <?php
+// --- Aufgabenstatus-Filter (Default: offen + warten) ---
+$allowed_task_status = ['offen','warten','angeboten','abgeschlossen'];
+$task_status = [];
+$has_tsf = isset($_GET['tsf']);
+if (isset($_GET['task_status']) && is_array($_GET['task_status'])) {
+  foreach ($_GET['task_status'] as $st) {
+    $st = strtolower(trim($st));
+    if (in_array($st, $allowed_task_status, true)) $task_status[] = $st;
+  }
+}
+if (!$has_tsf) { $task_status = ['offen','warten']; }
+// Filter-Params für Pagination beibehalten
+if ($task_status) {
+  $keep['tsf'] = 1;
+  foreach ($task_status as $st) { $keep['task_status[]'][] = $st; }
+}
+// WHERE/Parameter für Task-Filter
+$whereT = ['t.account_id = :acc', 'p.company_id = :cid'];
+$paramsT = [':acc'=>$account_id, ':cid'=>$id];
+if ($task_status) {
+  $inT = [];
+  foreach ($task_status as $i=>$st) {
+    $key = ':tst'.$i;
+    $inT[] = $key;
+    $paramsT[$key] = $st;
+  }
+  $whereT[] = 't.status IN ('.implode(',', $inT).')';
+}
+$WHERET = implode(' AND ', $whereT);
+// Counts aktualisieren
+$tcnt = $pdo->prepare("SELECT COUNT(*)
+  FROM tasks t
+  JOIN projects p ON p.id = t.project_id AND p.account_id = t.account_id
+  WHERE $WHERET");
+foreach ($paramsT as $k=>$v) { $tcnt->bindValue($k, $v, is_int($v)?PDO::PARAM_INT:PDO::PARAM_STR); }
+$tcnt->execute();
+$tasks_total = (int)$tcnt->fetchColumn();
+$tasks_pages = max(1, (int)ceil($tasks_total / $task_per_page));
+// Tasks neu laden
+$sqlTasks = "SELECT
+    t.id AS task_id, t.description, t.deadline, t.planned_minutes, t.priority, t.status,
+    p.id AS project_id, p.title AS project_title,
+    COALESCE((
+      SELECT SUM(tt.minutes) FROM times tt
+      WHERE tt.account_id = t.account_id AND tt.user_id = :uid AND tt.task_id = t.id AND tt.minutes IS NOT NULL
+    ), 0) AS spent_minutes,
+    og.position AS sort_pos
+  FROM tasks t
+  JOIN projects p ON p.id = t.project_id AND p.account_id = t.account_id
+  LEFT JOIN task_ordering_global og ON og.account_id = t.account_id AND og.task_id = t.id
+  WHERE $WHERET
+  ORDER BY (og.position IS NULL), og.position, p.title, t.deadline IS NULL, t.deadline, t.id DESC
+  LIMIT :limit OFFSET :offset";
+$st = $pdo->prepare($sqlTasks);
+foreach ($paramsT as $k=>$v) { $st->bindValue($k, $v, is_int($v)?PDO::PARAM_INT:PDO::PARAM_STR); }
+$st->bindValue(':uid', $user_id, PDO::PARAM_INT);
+$st->bindValue(':limit', $task_per_page, PDO::PARAM_INT);
+$st->bindValue(':offset', $task_offset, PDO::PARAM_INT);
+$st->execute();
+$tasks = $st->fetchAll();
+?>
+
+
+
+
+        <div class="table-responsive">
+            <table class="table table-sm mb-0">
+              <thead><tr><th>Name</th><th>E-Mail</th><th>Telefon</th><th class="text-end">Aktionen</th></tr></thead>
+              <tbody>
+                <?php foreach ($contacts as $k): ?>
+                  <tr>
+                    <td><?=h($k['name'])?></td>
+                    <td><?=h($k['email'] ?? '')?></td>
+                    <td><?=h($k['phone'] ?? '')?></td>
+                    <td class="text-end">
+                      <a class="btn btn-sm btn-outline-secondary" href="<?=url('/contacts/edit.php')?>?id=<?=$k['id']?>">Bearbeiten</a>
+                      <form method="post" action="<?=url('/contacts/delete.php')?>" class="d-inline" onsubmit="return confirm('Kontakt wirklich löschen?');">
+                        <?=csrf_field()?>
+                        <input type="hidden" name="id" value="<?=$k['id']?>">
+                        <button class="btn btn-sm btn-outline-danger">Löschen</button>
+                      </form>
+                    </td>
+                  </tr>
+                <?php endforeach; ?>
+              </tbody>
+            </table>
+          </div>
+        <?php else: ?>
+          <div class="text-muted">Noch keine Ansprechpartner.</div>
+        <?php endif; ?>
       </div>
     </div>
   </div>
 </div>
 
-<!-- Ansprechpartner -->
-<div class="d-flex justify-content-between align-items-center mb-2">
-  <h4 class="mb-0">Ansprechpartner</h4>
-  <a class="btn btn-sm btn-primary" href="<?=url('/companies/contacts_new.php')?>?company_id=<?=$company['id']?>">Neu</a>
-</div>
 <div class="card mb-4">
-  <div class="card-body p-0">
-    <div class="table-responsive">
-      <table class="table table-striped table-hover mb-0">
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>E-Mail</th>
-            <th>Telefon</th>
-            <th class="text-end">Aktionen</th>
-          </tr>
-        </thead>
-        <tbody>
-          <?php foreach ($contacts as $c): ?>
-            <tr>
-              <td><?=h($c['name'])?></td>
-              <td><?=h($c['email'] ?? '')?></td>
-              <td><?=h($c['phone'] ?? '')?></td>
-              <td class="text-end">
-                <a class="btn btn-sm btn-outline-secondary" href="<?=url('/companies/contacts_edit.php')?>?id=<?=$c['id']?>">Bearbeiten</a>
-                <form class="d-inline" method="post" action="<?=url('/companies/contacts_delete.php')?>" onsubmit="return confirm('Diesen Ansprechpartner wirklich löschen?');">
-                  <?=csrf_field()?>
-                  <input type="hidden" name="id" value="<?=$c['id']?>">
-                  <button class="btn btn-sm btn-outline-danger">Löschen</button>
-                </form>
-              </td>
-            </tr>
-          <?php endforeach; ?>
-          <?php if (!$contacts): ?>
-            <tr><td colspan="4" class="text-center text-muted">Noch keine Ansprechpartner.</td></tr>
-          <?php endif; ?>
-        </tbody>
-      </table>
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center mb-2">
+      <h5 class="card-title mb-0">Projekte</h5>
+      <a class="btn btn-sm btn-primary" href="<?=url('/projects/new.php')?>?company_id=<?=$company['id']?>">Neu</a>
     </div>
-  </div>
-</div>
+    <form class="row g-2 mb-3" method="get" action="<?=hurl(url('/companies/show.php'))?>">
+      <input type="hidden" name="id" value="<?=$company['id']?>">
+      <input type="hidden" name="psf" value="1">
+      <div class="col-md-6">
+        <label class="form-label">Projekt-Status</label>
+        <div class="d-flex flex-wrap gap-3">
+          <?php foreach ($allowed_status as $opt): ?>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" name="proj_status[]" id="ps-<?=h($opt)?>" value="<?=h($opt)?>" <?= in_array($opt, $proj_status, true) ? 'checked' : '' ?>>
+              <label class="form-check-label" for="ps-<?=h($opt)?>"><?=h($opt)?></label>
+            </div>
+          <?php endforeach; ?>
+        </div>
+        <div class="form-text">Standard: „offen“ und „angeboten“.</div>
+      </div>
+      <div class="col-md-6 d-flex align-items-end justify-content-end gap-2">
+        <button class="btn btn-outline-secondary" type="submit">Filtern</button>
+        <a class="btn btn-outline-secondary" href="<?=hurl(url('/companies/show.php').'?id='.$company['id'])?>">Reset (Standard)</a>
+      </div>
+    </form>
 
-<!-- Projekte -->
-<div class="d-flex justify-content-between align-items-center mb-2">
-  <h4 class="mb-0">Projekte</h4>
-  <a class="btn btn-sm btn-primary" href="<?=url('/companies/projects_new_v2.php')?>?company_id=<?=$company['id']?>">Neu</a>
-</div>
-<div class="card mb-4">
-  <div class="card-body p-0">
     <div class="table-responsive">
       <table class="table table-striped table-hover mb-0">
-        <thead>
-          <tr>
-            <th>Titel</th>
-            <th>Status</th>
-            <th>Stundensatz (effektiv)</th>
-            <th class="text-end">Aktionen</th>
-          </tr>
-        </thead>
+        <thead><tr><th>Titel</th><th>Status</th><th>Stundensatz (effektiv)</th><th class="text-end">Aktionen</th></tr></thead>
         <tbody>
           <?php foreach ($projects as $p): ?>
             <tr>
               <td><?=h($p['title'])?></td>
               <td><?=h($p['status'])?></td>
-              <td>
-                <?php if ($p['effective_rate'] !== null): ?>
-                  <?= number_format($p['effective_rate'], 2, ',', '.') ?> €
-                  <?php if ($p['project_rate'] === null && $p['company_rate'] !== null): ?>
-                    <small class="text-muted">(von Firma)</small>
-                  <?php endif; ?>
-                <?php else: ?>
-                  —
-                <?php endif; ?>
-              </td>
+              <td>€ <?=h(number_format((float)$p['effective_rate'],2,',','.'))?><?= $p['project_rate']===null ? ' <small class="text-muted">(von Firma)</small>' : '' ?></td>
               <td class="text-end">
-                <a class="btn btn-sm btn-outline-secondary" href="<?=url('/companies/projects_edit.php')?>?id=<?=$p['id']?>">Bearbeiten</a>
-                <form class="d-inline" method="post" action="<?=url('/projects/delete.php')?>" onsubmit="return confirm('Dieses Projekt wirklich löschen?');">
+                <a class="btn btn-sm btn-outline-secondary" href="<?=url('/projects/edit.php')?>?id=<?=$p['id']?>">Bearbeiten</a>
+                <form method="post" action="<?=url('/projects/delete.php')?>" class="d-inline" onsubmit="return confirm('Projekt wirklich löschen?');">
                   <?=csrf_field()?>
                   <input type="hidden" name="id" value="<?=$p['id']?>">
                   <button class="btn btn-sm btn-outline-danger">Löschen</button>
@@ -261,28 +348,47 @@ function fmt_minutes($m) {
             </tr>
           <?php endforeach; ?>
           <?php if (!$projects): ?>
-            <tr><td colspan="4" class="text-center text-muted">Keine Projekte.</td></tr>
+            <tr><td colspan="4" class="text-center text-muted">Keine Projekte mit diesem Filter.</td></tr>
           <?php endif; ?>
         </tbody>
       </table>
     </div>
-    <div class="d-flex justify-content-end p-2">
-      <?php
-        // preserve other group's current page
-        $base = url('/companies/show.php') . '?id=' . $company['id'] . '&task_page=' . $task_page . '&proj_page';
-        echo render_pagination_named($base, 'proj_page', $proj_page, $projects_pages);
-      ?>
+    <div class="mt-2 d-flex justify-content-end">
+      <?= render_pagination_named_keep(url('/companies/show.php'), 'proj_page', $proj_page, $projects_pages, $keep) ?>
     </div>
   </div>
 </div>
 
-<!-- Aufgaben (projektübergreifend, globale Reihenfolge, paginiert) -->
-<div class="d-flex justify-content-between align-items-center mb-2">
-  <h4 class="mb-0">Aufgaben</h4>
-  <a class="btn btn-sm btn-primary" href="<?=url('/tasks/new.php')?>?company_id=<?=$company['id']?>">Neu</a>
-</div>
-<div class="card">
-  <div class="card-body p-0">
+<div class="card mb-4">
+  <div class="card-body">
+     <div class="d-flex justify-content-between align-items-center mb-2">
+      <h5 class="card-title mb-0">Aufgaben</h5>
+      <a class="btn btn-sm btn-primary" href="<?=url('/tasks/new.php')?>?company_id=<?=$company['id']?>">Neu</a>
+    </div>
+    <form class="row g-2 mb-3" method="get" action="<?=hurl(url('/companies/show.php'))?>">
+  <input type="hidden" name="id" value="<?=$company['id']?>">
+  <input type="hidden" name="tsf" value="1">
+  <input type="hidden" name="psf" value="1">
+  <?php foreach ($proj_status as $st): ?>
+    <input type="hidden" name="proj_status[]" value="<?=h($st)?>">
+  <?php endforeach; ?>
+  <div class="col-md-8">
+    <label class="form-label">Aufgaben-Status</label>
+    <div class="d-flex flex-wrap gap-3">
+      <?php foreach ($allowed_task_status as $opt): ?>
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" name="task_status[]" id="ts-<?=h($opt)?>" value="<?=h($opt)?>" <?= in_array($opt, $task_status, true) ? 'checked' : '' ?>>
+          <label class="form-check-label" for="ts-<?=h($opt)?>"><?=h($opt)?></label>
+        </div>
+      <?php endforeach; ?>
+    </div>
+    <div class="form-text">Standard: „offen“ und „warten“.</div>
+  </div>
+  <div class="col-md-4 d-flex align-items-end justify-content-end gap-2">
+    <button class="btn btn-outline-secondary" type="submit">Filtern</button>
+    <a class="btn btn-outline-secondary" href="<?=hurl(url('/companies/show.php').'?id='.$company['id'])?>">Reset (Standard)</a>
+  </div>
+</form>
     <div class="table-responsive">
       <table class="table table-striped table-hover mb-0">
         <thead>
@@ -290,6 +396,7 @@ function fmt_minutes($m) {
             <th>Projekt</th>
             <th>Aufgabe</th>
             <th>Priorität</th>
+            <th>Status</th>
             <th>Deadline</th>
             <th>Geschätzt</th>
             <th>Aufgelaufene Zeit</th>
@@ -297,38 +404,34 @@ function fmt_minutes($m) {
           </tr>
         </thead>
         <tbody>
-          <?php foreach ($tasks as $t): ?>
+          <?php foreach ($tasks as $r): ?>
             <?php
-              $total = (int)$t['spent_minutes'];
-              $planned = $t['planned_minutes'] !== null ? (int)$t['planned_minutes'] : null;
+              $planned = $r['planned_minutes'] !== null ? (int)$r['planned_minutes'] : 0;
+              $total = (int)$r['spent_minutes'] + (($has_running && $running_task_id == $r['task_id']) ? $running_extra : 0);
               $badge = '';
-              if ($planned && $planned > 0) {
+              if ($planned > 0) {
                 $ratio = $total / $planned;
-                if     ($ratio >= 1.0) $badge = 'badge bg-danger';
+                if ($ratio >= 1.0) $badge = 'badge bg-danger';
                 elseif ($ratio >= 0.8) $badge = 'badge bg-warning text-dark';
-                else                   $badge = 'badge bg-success';
+                else $badge = 'badge bg-success';
               }
             ?>
             <tr>
-              <td><?=h($t['project_title'])?></td>
-              <td><?=h($t['description'])?></td>
-              <td><?=h($t['priority'] ?? '—')?></td>
-              <td><?= $t['deadline'] ? h($t['deadline']) : '—' ?></td>
+              <td><?=h($r['project_title'])?></td>
+              <td><?=h($r['description'])?></td>
+              <td><?=h($r['priority'] ?? '—')?></td>
+              <td><?=h($r['status'] ?? '—')?></td>
+              <td><?= $r['deadline'] ? h($r['deadline']) : '—' ?></td>
+              <td><?= $planned ? fmt_minutes($planned) : '—' ?></td>
               <td>
-                <?php if ($planned): ?>
-                  <?php if ($badge): ?><span class="<?=$badge?>"><?=fmt_minutes($planned)?></span><?php else: ?><?=fmt_minutes($planned)?><?php endif; ?>
-                <?php else: ?>—<?php endif; ?>
+                <?php if ($badge): ?>
+                  <span class="<?=$badge?>"><?=fmt_minutes($total)?> / <?=fmt_minutes($planned)?></span>
+                <?php else: ?>
+                  <?=fmt_minutes($total)?>
+                <?php endif; ?>
               </td>
-              <td><?= fmt_minutes($total) ?></td>
               <td class="text-end">
-                <a class="btn btn-sm btn-outline-secondary" href="<?=url('/tasks/edit.php')?>?id=<?=$t['task_id']?>&return_to=<?=urlencode($_SERVER['REQUEST_URI'])?>">Bearbeiten</a>
-                <form class="d-inline" method="post" action="<?=url('/tasks/delete.php')?>" onsubmit="return confirm('Diese Aufgabe wirklich löschen?');">
-                  <input type="hidden" name="return_to" value="<?=h($_SERVER['REQUEST_URI'])?>">
-                  <?=csrf_field()?>
-                  <input type="hidden" name="id" value="<?=$t['task_id']?>">
-
-                  <button class="btn btn-sm btn-outline-danger">Löschen</button>
-                </form>
+                <a class="btn btn-sm btn-outline-secondary" href="<?=url('/tasks/edit.php')?>?id=<?=$r['task_id']?>&return_to=<?=urlencode($_SERVER['REQUEST_URI'])?>">Bearbeiten</a>
               </td>
             </tr>
           <?php endforeach; ?>
@@ -337,6 +440,9 @@ function fmt_minutes($m) {
           <?php endif; ?>
         </tbody>
       </table>
+    </div>
+    <div class="p-2 d-flex justify-content-end">
+      <?= render_pagination_named_keep(url('/companies/show.php'), 'task_page', $task_page, $tasks_pages, $keep) ?>
     </div>
   </div>
 </div>
