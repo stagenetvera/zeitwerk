@@ -58,7 +58,7 @@ function fmt_minutes($m) {
 ?>
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h3>Dashboard – Offene Aufgaben</h3>
-  <div id="saveHint" class="text-muted">Per Drag&Drop sortieren – Reihenfolge wird global gespeichert.</div>
+  <div id="saveHint" class="text-muted">Per Drag&Drop sortieren</div>
 </div>
 
 <div class="card">
@@ -241,7 +241,7 @@ function fmt_minutes($m) {
           hint.classList.remove('text-muted');
           hint.classList.add('text-success');
           setTimeout(() => {
-            hint.textContent = 'Per Drag&Drop sortieren – Reihenfolge wird global gespeichert.';
+            hint.textContent = 'Per Drag&Drop sortieren';
             hint.classList.add('text-muted');
             hint.classList.remove('text-success');
           }, 1200);
@@ -256,7 +256,7 @@ function fmt_minutes($m) {
         hint.classList.remove('text-muted');
         hint.classList.add('text-danger');
         setTimeout(() => {
-          hint.textContent = 'Per Drag&Drop sortieren – Reihenfolge wird global gespeichert.';
+          hint.textContent = 'Per Drag&Drop sortieren';
           hint.classList.add('text-muted');
           hint.classList.remove('text-danger');
         }, 2000);
