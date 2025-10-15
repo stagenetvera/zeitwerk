@@ -321,8 +321,9 @@ function fmt_minutes($m) {
               </td>
               <td><?= fmt_minutes($total) ?></td>
               <td class="text-end">
-                <a class="btn btn-sm btn-outline-secondary" href="<?=url('/tasks/edit.php')?>?id=<?=$t['task_id']?>">Bearbeiten</a>
+                <a class="btn btn-sm btn-outline-secondary" href="<?=url('/tasks/edit.php')?>?id=<?=$t['task_id']?>&return_to=<?=urlencode($_SERVER['REQUEST_URI'])?>">Bearbeiten</a>
                 <form class="d-inline" method="post" action="<?=url('/tasks/delete.php')?>" onsubmit="return confirm('Diese Aufgabe wirklich löschen?');">
+                  <input type="hidden" name="return_to" value="<?=h($_SERVER['REQUEST_URI'])?>">
                   <?=csrf_field()?>
                   <input type="hidden" name="id" value="<?=$t['task_id']?>">
 

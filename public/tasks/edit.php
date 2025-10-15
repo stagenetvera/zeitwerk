@@ -39,6 +39,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
   <form method="post" action="<?=url('/tasks/update_and_redirect.php')?>">
     <?=csrf_field()?>
     <input type="hidden" name="id" value="<?=$task['id']?>">
+    <?php $rt = $_GET['return_to'] ?? ($_SERVER['HTTP_REFERER'] ?? ''); ?>
+    <input type="hidden" name="return_to" value="<?=h($rt)?>">
     <?=csrf_field()?>
     <div class="mb-3">
       <label class="form-label">Projekt</label>

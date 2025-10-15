@@ -4,6 +4,9 @@ declare(strict_types=1);
 function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
 
 function url(string $path): string {
+    if (defined('APP_BASE_URL') && strpos($path, APP_BASE_URL) === 0) {
+        return $path;
+    }
     $base = defined('APP_BASE_URL') ? APP_BASE_URL : '';
     return $base . $path; // $path beginnt mit '/' z.B. '/dashboard.php'
 }

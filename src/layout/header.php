@@ -1,5 +1,7 @@
 <?php
 require_once __DIR__ . '/../bootstrap.php';
+
+require_once __DIR__ . '/../lib/flash.php';
 $user = auth_user();
 ?>
 <!doctype html>
@@ -50,3 +52,4 @@ $user = auth_user();
   </div>
 </nav>
 <main class="container py-4">
+<?php flash_render_bootstrap(); ?>
