@@ -1,0 +1,168 @@
+-- MySQL 8+ Schema für 'Zeitwerk'
+-- Zeichensatz
+SET NAMES utf8mb4;
+SET time_zone = '+00:00';
+
+CREATE TABLE IF NOT EXISTS accounts (
+  id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+  name VARCHAR(190) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS users (
+  id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+  account_id BIGINT UNSIGNED NOT NULL,
+  name VARCHAR(190) NOT NULL,
+  email VARCHAR(190) NOT NULL UNIQUE,
+  password_hash VARCHAR(255) NOT NULL,
+  is_admin TINYINT(1) NOT NULL DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS companies (
+  id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+  account_id BIGINT UNSIGNED NOT NULL,
+  name VARCHAR(190) NOT NULL,
+  address TEXT,
+  hourly_rate DECIMAL(10,2) DEFAULT NULL,
+  vat_id VARCHAR(128) DEFAULT NULL,
+  status ENUM('laufend','abgeschlossen') NOT NULL DEFAULT 'laufend',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE,
+  INDEX (account_id, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS contacts (
+  id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+  account_id BIGINT UNSIGNED NOT NULL,
+  company_id BIGINT UNSIGNED NOT NULL,
+  name VARCHAR(190) NOT NULL,
+  email VARCHAR(190) DEFAULT NULL,
+  phone VARCHAR(64) DEFAULT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE,
+  FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+  INDEX (account_id, company_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS projects (
+  id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+  account_id BIGINT UNSIGNED NOT NULL,
+  company_id BIGINT UNSIGNED NOT NULL,
+  contact_id BIGINT UNSIGNED DEFAULT NULL,
+  title VARCHAR(190) NOT NULL,
+  status ENUM('offen','abgeschlossen','angeboten') NOT NULL DEFAULT 'offen',
+  hourly_rate DECIMAL(10,2) DEFAULT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE,
+  FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+  FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE SET NULL,
+  INDEX (account_id, company_id, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS tasks (
+  id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+  account_id BIGINT UNSIGNED NOT NULL,
+  project_id BIGINT UNSIGNED NOT NULL,
+  description TEXT NOT NULL,
+  planned_minutes INT DEFAULT NULL,
+  priority ENUM('low','medium','high') NOT NULL DEFAULT 'medium',
+  deadline DATE DEFAULT NULL,
+  status ENUM('offen','abgeschlossen','warten','angeboten','fakturierbar') NOT NULL DEFAULT 'offen',
+  billable TINYINT(1) NOT NULL DEFAULT 1,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE,
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+  INDEX (account_id, project_id, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS times (
+  id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+  account_id BIGINT UNSIGNED NOT NULL,
+  user_id BIGINT UNSIGNED NOT NULL,
+  task_id BIGINT UNSIGNED DEFAULT NULL,
+  started_at DATETIME NOT NULL,
+  ended_at DATETIME DEFAULT NULL,
+  minutes INT DEFAULT NULL, -- wird beim Stop berechnet
+  billable TINYINT(1) NOT NULL DEFAULT 1,
+  status ENUM('offen','abgerechnet') NOT NULL DEFAULT 'offen',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL,
+  INDEX (account_id, user_id, status),
+  INDEX (account_id, task_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Angebots-Entitäten
+CREATE TABLE IF NOT EXISTS offers (
+  id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+  account_id BIGINT UNSIGNED NOT NULL,
+  company_id BIGINT UNSIGNED NOT NULL,
+  contact_id BIGINT UNSIGNED DEFAULT NULL,
+  project_id BIGINT UNSIGNED DEFAULT NULL,
+  hourly_rate DECIMAL(10,2) DEFAULT NULL,
+  status ENUM('offen','angenommen','abgelehnt') NOT NULL DEFAULT 'offen',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE,
+  FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+  FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE SET NULL,
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL,
+  INDEX (account_id, company_id, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS offer_tasks (
+  offer_id BIGINT UNSIGNED NOT NULL,
+  task_id BIGINT UNSIGNED NOT NULL,
+  account_id BIGINT UNSIGNED NOT NULL,
+  PRIMARY KEY (offer_id, task_id),
+  FOREIGN KEY (offer_id) REFERENCES offers(id) ON DELETE CASCADE,
+  FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+  FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Rechnungs-Entitäten
+CREATE TABLE IF NOT EXISTS invoices (
+  id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+  account_id BIGINT UNSIGNED NOT NULL,
+  company_id BIGINT UNSIGNED NOT NULL,
+  contact_id BIGINT UNSIGNED DEFAULT NULL,
+  project_id BIGINT UNSIGNED DEFAULT NULL,
+  hourly_rate DECIMAL(10,2) DEFAULT NULL,
+  status ENUM('offen','bezahlt','storniert') NOT NULL DEFAULT 'offen',
+  issue_date DATE DEFAULT NULL,
+  due_date DATE DEFAULT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE,
+  FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+  FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE SET NULL,
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL,
+  INDEX (account_id, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS invoice_items (
+  id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+  account_id BIGINT UNSIGNED NOT NULL,
+  invoice_id BIGINT UNSIGNED NOT NULL,
+  project_id BIGINT UNSIGNED DEFAULT NULL,
+  title VARCHAR(255) NOT NULL,
+  description TEXT,
+  qty DECIMAL(10,2) NOT NULL DEFAULT 0, -- Stunden
+  unit_price DECIMAL(10,2) NOT NULL DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE,
+  FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE,
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL,
+  INDEX (account_id, invoice_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS invoice_item_times (
+  invoice_item_id BIGINT UNSIGNED NOT NULL,
+  time_id BIGINT UNSIGNED NOT NULL,
+  account_id BIGINT UNSIGNED NOT NULL,
+  PRIMARY KEY (invoice_item_id, time_id),
+  FOREIGN KEY (invoice_item_id) REFERENCES invoice_items(id) ON DELETE CASCADE,
+  FOREIGN KEY (time_id) REFERENCES times(id) ON DELETE CASCADE,
+  FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
