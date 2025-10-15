@@ -1,5 +1,5 @@
 <?php
-// public/times/index_filtered_v3_with_delete.php
+// public/times/index_filtered_v3_with_newbtn.php
 require __DIR__ . '/../../src/layout/header.php';
 require_login();
 
@@ -7,7 +7,9 @@ $user = auth_user();
 $account_id = (int)$user['account_id'];
 $user_id = (int)$user['id'];
 
-// ------------- Helpers -------------
+// We'll re-use the latest guard-list if present to avoid duplication.
+// For simplicity here, we inline the filter query similar to index_filtered_v3_with_delete_guard.php
+
 function page_int($v, $d=1){ $n=(int)$v; return $n>0?$n:$d; }
 function hurl($s){ return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
 function fmt_minutes($m){
@@ -35,20 +37,17 @@ function render_pagination_keep($base, $params, $page, $pages){
   <?php return ob_get_clean();
 }
 
-// ------------- Input (GET) -------------
+// Input
 $today = (new DateTimeImmutable('today'))->format('Y-m-d');
 $start = $_GET['start'] ?? $today;
 $end   = $_GET['end']   ?? $today;
-
 $company_id = isset($_GET['company_id']) && $_GET['company_id'] !== '' ? (int)$_GET['company_id'] : 0;
 $project_id = isset($_GET['project_id']) && $_GET['project_id'] !== '' ? (int)$_GET['project_id'] : 0;
 $task_id    = isset($_GET['task_id'])    && $_GET['task_id']    !== '' ? (int)$_GET['task_id']    : 0;
-// billable filter: '' (alle) | '1' (fakturierbar) | '0' (nicht fakturierbar)
 $billable_filter = isset($_GET['billable']) && ($_GET['billable'] === '1' || $_GET['billable'] === '0') ? $_GET['billable'] : '';
 
-// normalize dates (YYYY-MM-DD)
 $valid_date = function($d){
-  if (!preg_match('~^\d{4}-\d{2}-\d{2}$~', $d)) return false;
+  if (!preg_match('~^\\d{4}-\\d{2}-\\d{2}$~', $d)) return false;
   $dt = DateTime::createFromFormat('Y-m-d', $d);
   return $dt && $dt->format('Y-m-d') === $d;
 };
@@ -59,18 +58,15 @@ if ($end < $start) { $tmp=$start; $start=$end; $end=$tmp; }
 $start_dt = $start.' 00:00:00';
 $end_dt   = $end.' 23:59:59';
 
-// Pagination
 $per_page = 20;
 $page = page_int($_GET['page'] ?? 1);
 $offset = ($page-1)*$per_page;
 
-// ------------- Filter Options (dependent selects) -------------
-// Companies
+// options
 $cstmt = $pdo->prepare('SELECT id, name FROM companies WHERE account_id = ? ORDER BY name');
 $cstmt->execute([$account_id]);
 $companies = $cstmt->fetchAll();
 
-// Projects (if company selected)
 $projects = [];
 if ($company_id) {
   $pstmt = $pdo->prepare('SELECT id, title FROM projects WHERE account_id = ? AND company_id = ? ORDER BY title');
@@ -78,7 +74,6 @@ if ($company_id) {
   $projects = $pstmt->fetchAll();
 }
 
-// Tasks (if project selected)
 $tasks = [];
 if ($project_id) {
   $tstmt = $pdo->prepare('SELECT id, description FROM tasks WHERE account_id = ? AND project_id = ? ORDER BY description');
@@ -86,128 +81,74 @@ if ($project_id) {
   $tasks = $tstmt->fetchAll();
 }
 
-// Validate project-company relationship (if both set)
-if ($project_id && $company_id) {
-  $chk = $pdo->prepare('SELECT company_id FROM projects WHERE id = ? AND account_id = ?');
-  $chk->execute([$project_id, $account_id]);
-  $pc = (int)$chk->fetchColumn();
-  if ($pc !== $company_id) {
-    $project_id = 0;
-    $tasks = [];
-    $task_id = 0;
-  }
-}
-
-// Validate task-project relationship (if both set)
-if ($task_id && $project_id) {
-  $chk2 = $pdo->prepare('SELECT project_id FROM tasks WHERE id = ? AND account_id = ?');
-  $chk2->execute([$task_id, $account_id]);
-  $tp = (int)$chk2->fetchColumn();
-  if ($tp !== $project_id) {
-    $task_id = 0;
-  }
-}
-
-// ------------- Build WHERE clauses -------------
-$where = [];
-$params = [
-  ':acc' => $account_id,
-  ':uid' => $user_id,
-  ':end_dt' => $end_dt,
-  ':start_dt' => $start_dt,
+// where
+$where=[]; $params=[
+  ':acc'=>$account_id, ':uid'=>$user_id, ':end_dt'=>$end_dt, ':start_dt'=>$start_dt
 ];
-
-$where[] = 't.account_id = :acc';
-$where[] = 't.user_id = :uid';
-$where[] = 't.started_at <= :end_dt';
-$where[] = '(t.ended_at IS NULL OR t.ended_at >= :start_dt)';
-
-if ($company_id) {
-  $where[] = 'c.id = :cid';
-  $params[':cid'] = $company_id;
-}
-if ($project_id) {
-  $where[] = 'p.id = :pid';
-  $params[':pid'] = $project_id;
-}
-if ($task_id) {
-  $where[] = 't.task_id = :tid';
-  $params[':tid'] = $task_id;
-}
-// billable filter
-if ($billable_filter === '1') {
-  $where[] = 't.billable = 1';
-} elseif ($billable_filter === '0') {
-  $where[] = '(t.billable = 0 OR t.billable IS NULL)';
-}
-
+$where[]='t.account_id = :acc';
+$where[]='t.user_id = :uid';
+$where[]='t.started_at <= :end_dt';
+$where[]='(t.ended_at IS NULL OR t.ended_at >= :start_dt)';
+if ($company_id){ $where[]='c.id = :cid'; $params[':cid']=$company_id; }
+if ($project_id){ $where[]='p.id = :pid'; $params[':pid']=$project_id; }
+if ($task_id){ $where[]='t.task_id = :tid'; $params[':tid']=$task_id; }
+if ($billable_filter==='1'){ $where[]='t.billable = 1'; }
+elseif ($billable_filter==='0'){ $where[]='(t.billable = 0 OR t.billable IS NULL)'; }
 $WHERE = implode(' AND ', $where);
 
-// ------------- Count -------------
+// count
 $cnt = $pdo->prepare("SELECT COUNT(*)
   FROM times t
   LEFT JOIN tasks ta ON ta.id = t.task_id AND ta.account_id = t.account_id
-  LEFT JOIN projects p ON p.id = ta.project_id AND p.account_id = ta.account_id
-  LEFT JOIN companies c ON c.id = p.company_id AND c.account_id = p.account_id
+  LEFT JOIN projects p ON p.id = ta.project_id AND p.account_id = t.account_id
+  LEFT JOIN companies c ON c.id = p.company_id AND c.account_id = t.account_id
   WHERE $WHERE");
-foreach ($params as $k=>$v) {
-  $cnt->bindValue($k, $v, is_int($v) ? PDO::PARAM_INT : PDO::PARAM_STR);
-}
+forEach($params as $k=>$v){ $cnt->bindValue($k, $v, is_int($v)?PDO::PARAM_INT:PDO::PARAM_STR); }
 $cnt->execute();
-$total = (int)$cnt->fetchColumn();
-$pages = max(1, (int)ceil($total / $per_page));
-if ($page > $pages) { $page = $pages; $offset = ($page-1)*$per_page; }
+$total=(int)$cnt->fetchColumn();
+$pages=max(1,(int)ceil($total/$per_page)); if($page>$pages){$page=$pages;$offset=($page-1)*$per_page;}
 
-// ------------- Fetch -------------
-$sql = "SELECT
-    t.id, t.task_id, t.started_at, t.ended_at, t.minutes, t.billable, t.status,
-    ta.description AS task_desc,
-    p.title       AS project_title,
-    c.name        AS company_name
-  FROM times t
-  LEFT JOIN tasks ta ON ta.id = t.task_id AND ta.account_id = t.account_id
-  LEFT JOIN projects p ON p.id = ta.project_id AND p.account_id = ta.account_id
-  LEFT JOIN companies c ON c.id = p.company_id AND c.account_id = p.account_id
-  WHERE $WHERE
-  ORDER BY t.started_at DESC, t.id DESC
-  LIMIT :limit OFFSET :offset";
+// fetch
+$sql = "SELECT t.id, t.task_id, t.started_at, t.ended_at, t.minutes, t.billable, t.status,
+               ta.description AS task_desc, p.title AS project_title, c.name AS company_name
+        FROM times t
+        LEFT JOIN tasks ta ON ta.id = t.task_id AND ta.account_id = t.account_id
+        LEFT JOIN projects p ON p.id = ta.project_id AND p.account_id = ta.account_id
+        LEFT JOIN companies c ON c.id = p.company_id AND c.account_id = p.account_id
+        WHERE $WHERE
+        ORDER BY t.started_at DESC, t.id DESC
+        LIMIT :limit OFFSET :offset";
 $st = $pdo->prepare($sql);
-foreach ($params as $k=>$v) {
-  $st->bindValue($k, $v, is_int($v) ? PDO::PARAM_INT : PDO::PARAM_STR);
-}
-$st->bindValue(':limit', $per_page, PDO::PARAM_INT);
-$st->bindValue(':offset', $offset, PDO::PARAM_INT);
+forEach($params as $k=>$v){ $st->bindValue($k, $v, is_int($v)?PDO::PARAM_INT:PDO::PARAM_STR); }
+$st->bindValue(':limit',$per_page,PDO::PARAM_INT);
+$st->bindValue(':offset',$offset,PDO::PARAM_INT);
 $st->execute();
-$rows = $st->fetchAll();
+$rows=$st->fetchAll();
 
-// Sum in current filter range
 $sumStmt = $pdo->prepare("SELECT COALESCE(SUM(t.minutes),0)
   FROM times t
   LEFT JOIN tasks ta ON ta.id = t.task_id AND ta.account_id = t.account_id
   LEFT JOIN projects p ON p.id = ta.project_id AND p.account_id = t.account_id
   LEFT JOIN companies c ON c.id = p.company_id AND c.account_id = t.account_id
   WHERE $WHERE AND t.minutes IS NOT NULL");
-foreach ($params as $k=>$v) {
-  $sumStmt->bindValue($k, $v, is_int($v) ? PDO::PARAM_INT : PDO::PARAM_STR);
-}
+forEach($params as $k=>$v){ $sumStmt->bindValue($k, $v, is_int($v)?PDO::PARAM_INT:PDO::PARAM_STR); }
 $sumStmt->execute();
-$sum_minutes = (int)$sumStmt->fetchColumn();
+$sum_minutes=(int)$sumStmt->fetchColumn();
 
-// Build base + params for pagination/links
 $base = url('/times/index.php');
 $persist = [
-  'start'=>$start, 'end'=>$end,
-  'company_id'=>$company_id ?: '',
-  'project_id'=>$project_id ?: '',
-  'task_id'=>$task_id ?: '',
+  'start'=>$start,'end'=>$end,
+  'company_id'=>$company_id?:'',
+  'project_id'=>$project_id?:'',
+  'task_id'=>$task_id?:'',
   'billable'=>$billable_filter
 ];
-
-function qs($base, $arr) { return htmlspecialchars($base.'?'.http_build_query($arr), ENT_QUOTES, 'UTF-8'); }
+function qs($base,$arr){return htmlspecialchars($base.'?'.http_build_query($arr),ENT_QUOTES,'UTF-8');}
 ?>
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h3>Zeiten</h3>
-  <div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-primary" href="<?=url('/times/new.php')?>?return_to=<?=urlencode($_SERVER['REQUEST_URI'])?>">Neu</a>
     <a class="btn btn-sm btn-outline-secondary" href="<?=qs($base, array_merge($persist, ['start'=>$today,'end'=>$today,'page'=>1]))?>">Heute</a>
     <a class="btn btn-sm btn-outline-secondary" href="<?php
       $now = new DateTimeImmutable('today');
