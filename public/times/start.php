@@ -6,6 +6,63 @@ $user = auth_user();
 $account_id = (int)$user['account_id'];
 $user_id = (int)$user['id'];
 
+// Vereinheitlichtes Verhalten:
+// "Start" stoppt immer einen ggf. laufenden Timer und startet sofort einen neuen
+// (auch ohne task_id -> dann mit NULL-Aufgabe). Kein zusätzliches Formular.
+try {
+    if ($_SERVER['REQUEST_METHOD'] === 'POST') { csrf_check(); }
+
+    $user = auth_user();
+    $account_id = (int)$user['account_id'];
+    $user_id = (int)$user['id'];
+
+    $task_id_raw = $_POST['task_id'] ?? $_GET['task_id'] ?? null;
+    $task_id = null;
+    if ($task_id_raw !== null && $task_id_raw !== '') {
+        $task_id = (int)$task_id_raw;
+        if ($task_id <= 0) $task_id = null;
+    }
+
+    $return_to = $_POST['return_to'] ?? $_GET['return_to'] ?? url('/dashboard/index.php');
+
+    $pdo->beginTransaction();
+
+    // 1) Laufenden Timer stoppen (falls vorhanden)
+    $runStmt = $pdo->prepare('SELECT id, started_at
+                              FROM times
+                              WHERE account_id = ? AND user_id = ? AND ended_at IS NULL
+                              ORDER BY id DESC LIMIT 1');
+    $runStmt->execute([$account_id, $user_id]);
+    if ($running = $runStmt->fetch()) {
+        $upd = $pdo->prepare('UPDATE times
+                              SET ended_at = NOW(),
+                                  minutes = GREATEST(0, TIMESTAMPDIFF(MINUTE, started_at, NOW()))
+                              WHERE id = ? AND account_id = ? AND user_id = ?');
+        $upd->execute([(int)$running['id'], $account_id, $user_id]);
+    }
+
+    // 2) Neuen Timer starten (task_id kann NULL sein)
+    $ins = $pdo->prepare('INSERT INTO times (account_id, user_id, task_id, started_at)
+                          VALUES (?, ?, ?, NOW())');
+    $ins->execute([$account_id, $user_id, $task_id]);
+
+    $pdo->commit();
+
+    redirect($return_to);
+    exit;
+} catch (Throwable $e) {
+    if (isset($pdo) && $pdo->inTransaction()) { $pdo->rollBack(); }
+    if (function_exists('flash')) {
+        flash('Fehler beim Starten des Timers: ' . $e->getMessage(), 'danger');
+    }
+    $fallback = $_POST['return_to'] ?? $_GET['return_to'] ?? url('/dashboard/index.php');
+    redirect($fallback);
+    exit;
+}
+
+
+
+
 $return_to = $_POST['return_to'] ?? '';
 if (!$return_to && isset($_SERVER['HTTP_REFERER'])) {
   $return_to = $_SERVER['HTTP_REFERER'];
