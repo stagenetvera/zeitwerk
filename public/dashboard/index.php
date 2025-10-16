@@ -183,6 +183,11 @@ $keep = [
 
               <td class="text-end">
                 <a class="btn btn-sm btn-outline-secondary" href="<?=url('/tasks/edit.php')?>?id=<?=$r['id']?>&return_to=<?=urlencode($_SERVER['REQUEST_URI'])?>">Bearbeiten</a>
+                <form method="post" action="<?php echo url('/tasks/delete.php') ?>" class="d-inline" onsubmit="return confirm('Aufgabe wirklich löschen?');">
+                  <?php echo csrf_field() ?>
+                  <input type="hidden" name="id" value="<?php echo $r['id'] ?>">
+                  <button class="btn btn-sm btn-outline-danger">Löschen</button>
+                </form>
               </td>
             </tr>
           <?php endforeach; ?>

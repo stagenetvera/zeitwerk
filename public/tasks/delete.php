@@ -7,7 +7,7 @@ csrf_check();
 
 $user = auth_user();
 $account_id = (int)$user['account_id'];
-
+var_dump($_POST);
 
 $return_to = $_POST['return_to'] ?? '';
 if (!$return_to && isset($_SERVER['HTTP_REFERER'])) {
@@ -22,6 +22,7 @@ if ($return_to && !preg_match('~^(?:https?:)?//~i', $return_to)) {
 if (!$valid) {
     $return_to = "/dashboard/index.php";
 }
+
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
   redirect($return_to);
   exit;
@@ -65,8 +66,7 @@ $pdo->prepare('DELETE FROM task_ordering_global WHERE account_id = ? AND task_id
 $pdo->prepare('DELETE FROM tasks WHERE id = ? AND account_id = ?')->execute([$task_id, $account_id]);
 // try to redirect back where we came from
 
-if ($valid) {
-  flash('Aufgabe gelöscht.', 'success');
-  redirect($return_to);
-}
+flash('Aufgabe gelöscht.', 'success');
+redirect($return_to);
+
 exit;
