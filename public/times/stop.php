@@ -234,15 +234,27 @@ if (!$running['task_id']) {
     elTask.disabled = !pid;
     if (!pid) return;
 
-    tasks.filter(t => String(t.project_id) === String(pid)).forEach(t => {
+    // Kandidaten im gewählten Projekt
+    const cand = tasks.filter(function(t){ return String(t.project_id) === String(pid); });
+
+    cand.forEach(function(t){
       const o = document.createElement('option');
       o.value = String(t.id);
       o.textContent = t.description + (t.status ? ' ('+t.status+')' : '');
       elTask.appendChild(o);
     });
 
-    // (Optional: auch hier könnte man auto-selecten, wenn es exakt 1 Aufgabe gibt.
-    // Nicht gefordert, darum lassen wir es aus.)
+    // ✅ Neu: Auto-Select, wenn genau 1 Aufgabe vorhanden
+    if (cand.length === 1) {
+      elTask.value = String(cand[0].id);
+      elTask.disabled = false;
+    }
+
+    // (Optional) Wenn gar keine Aufgaben existieren, automatisch „Neue Aufgabe anlegen“ öffnen
+    if (cand.length === 0 && tgNew && boxNew) {
+      tgNew.checked = true;
+      boxNew.classList.remove('d-none');
+    }
   }
 
   // Events
