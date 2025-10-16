@@ -15,6 +15,21 @@ if (!$running) {
 
 $err=null; $ok=null;
 
+
+$return_to = $_POST['return_to'] ?? '';
+if (!$return_to && isset($_SERVER['HTTP_REFERER'])) {
+  $return_to = $_SERVER['HTTP_REFERER'];
+}
+// sanitize: allow only same-site relative URLs
+$valid = false;
+if ($return_to && !preg_match('~^(?:https?:)?//~i', $return_to)) {
+  $valid = (str_starts_with($return_to, '/'));
+}
+
+if (!$valid) {
+    $return_to = "/dashboard/index.php";
+}
+
 if ($_SERVER['REQUEST_METHOD']==='POST') {
   // optional: assign task if none
   $task_id = isset($_POST['task_id']) && $_POST['task_id'] !== '' ? (int)$_POST['task_id'] : null;
@@ -33,7 +48,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
     $minutes = max(1, (int)round(($end->getTimestamp() - $start->getTimestamp())/60));
     $stp = $pdo->prepare('UPDATE times SET ended_at = ?, minutes = ? WHERE id = ? AND account_id = ? AND user_id = ?');
     $stp->execute([$end->format('Y-m-d H:i:s'), $minutes, $running['id'], $account_id, $user_id]);
-    redirect('/times/index.php');
+    redirect($return_to);
   }
 }
 

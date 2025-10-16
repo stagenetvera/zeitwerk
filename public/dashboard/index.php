@@ -182,6 +182,39 @@ $keep = [
               </td>
 
               <td class="text-end">
+                <?php
+                 // Einmalig laufenden Timer ermitteln und in statics cachen
+                 static $__dash_run_checked = false, $__dash_running = null;
+                 if (!($__dash_run_checked)) {
+                   $runStmt = $pdo->prepare('SELECT id, task_id, started_at FROM times WHERE account_id = ? AND user_id = ? AND ended_at IS NULL ORDER BY id DESC LIMIT 1');
+                   $runStmt->execute([$account_id, $user_id]);
+                   $__dash_running = $runStmt->fetch();
+                   $__dash_run_checked = true;
+                 }
+                 $has_running = (bool)$__dash_running;
+                 $running_task_id = $has_running && !empty($__dash_running['task_id']) ? (int)$__dash_running['task_id'] : 0;
+                 $running_time_id = $has_running ? (int)$__dash_running['id'] : 0;
+                 // Task-ID robust bestimmen (je nach Alias in SELECT)
+                 $tid = isset($r['task_id']) ? (int)$r['task_id'] : (int)$r['id'];
+                 $return_to = $_SERVER['REQUEST_URI'] ?? url('/dashboard/index.php');
+
+                 // Wenn ein Timer läuft und es ist dieselbe Aufgabe -> STOP
+                 if ($has_running && $running_task_id === $tid):
+               ?>
+                 <form method="post" action="<?=url('/times/stop.php')?>" class="d-inline me-1">
+                   <?=csrf_field()?>
+                   <input type="hidden" name="id" value="<?=$running_time_id?>">
+                   <input type="hidden" name="return_to" value="<?=h($return_to)?>">
+                   <button class="btn btn-sm btn-warning">Stop</button>
+                 </form>
+               <?php else: ?>
+                 <form method="post" action="<?=url('/times/start.php')?>" class="d-inline me-1">
+                   <?=csrf_field()?>
+                   <input type="hidden" name="task_id" value="<?=$tid?>">
+                   <input type="hidden" name="return_to" value="<?=h($return_to)?>">
+                   <button class="btn btn-sm btn-success">Start</button>
+                 </form>
+               <?php endif; ?>
                 <a class="btn btn-sm btn-outline-secondary" href="<?=url('/tasks/edit.php')?>?id=<?=$r['id']?>&return_to=<?=urlencode($_SERVER['REQUEST_URI'])?>">Bearbeiten</a>
                 <form method="post" action="<?php echo url('/tasks/delete.php') ?>" class="d-inline" onsubmit="return confirm('Aufgabe wirklich löschen?');">
                   <?php echo csrf_field() ?>

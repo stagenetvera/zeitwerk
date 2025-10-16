@@ -6,6 +6,21 @@ $user = auth_user();
 $account_id = (int)$user['account_id'];
 $user_id = (int)$user['id'];
 
+$return_to = $_POST['return_to'] ?? '';
+if (!$return_to && isset($_SERVER['HTTP_REFERER'])) {
+  $return_to = $_SERVER['HTTP_REFERER'];
+}
+// sanitize: allow only same-site relative URLs
+$valid = false;
+if ($return_to && !preg_match('~^(?:https?:)?//~i', $return_to)) {
+  $valid = (str_starts_with($return_to, '/'));
+}
+
+if (!$valid) {
+    $return_to = "/dashboard/index.php";
+}
+
+
 if ($_SERVER['REQUEST_METHOD']==='POST') {
   $task_id = isset($_POST['task_id']) && $_POST['task_id'] !== '' ? (int)$_POST['task_id'] : null;
   // ensure no running time
@@ -15,7 +30,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
   } else {
     $stmt = $pdo->prepare('INSERT INTO times(account_id,user_id,task_id,started_at,billable,status) VALUES(?,?,?,?,1,"offen")');
     $stmt->execute([$account_id,$user_id,$task_id, date('Y-m-d H:i:s')]);
-    redirect('/times/index.php');
+    redirect($return_to);
   }
 }
 
@@ -26,7 +41,7 @@ if ($_SERVER['REQUEST_METHOD']==='GET' && isset($_GET['task_id'])) {
   if (!$running) {
     $stmt = $pdo->prepare('INSERT INTO times(account_id,user_id,task_id,started_at,billable,status) VALUES(?,?,?,?,1,"offen")');
     $stmt->execute([$account_id,$user_id,$task_id, date('Y-m-d H:i:s')]);
-    redirect('/times/index.php');
+    redirect($return_to);
   } else {
     $err = "Es läuft bereits ein Timer.";
   }
