@@ -27,6 +27,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   if ($title) {
     $upd = $pdo->prepare('UPDATE projects SET title=?, status=?, hourly_rate=? WHERE id=? AND account_id=?');
     $upd->execute([$title, $status, $rate, $id, $account_id]);
+    flash('Projekt gespeichert.', 'success');
+
     redirect('/companies/show.php?id=' . $company_id);
   } else {
     $err = 'Titel ist erforderlich.';

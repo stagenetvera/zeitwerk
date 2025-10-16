@@ -297,7 +297,7 @@
               <td><?php echo h($p['status']) ?></td>
               <td>€ <?php echo h(number_format((float)$p['effective_rate'], 2, ',', '.')) ?><?php echo $p['project_rate'] === null ? ' <small class="text-muted">(von Firma)</small>' : '' ?></td>
               <td class="text-end">
-                <a class="btn btn-sm btn-outline-secondary" href="<?php echo url('/companies/projects_edit.php') ?>?id=<?php echo $p['id'] ?>">Bearbeiten</a>
+                <a class="btn btn-sm btn-outline-secondary" href="<?php echo url('/projects/edit.php') ?>?id=<?php echo $p['id'] ?>">Bearbeiten</a>
                 <form method="post" action="<?php echo url('/projects/delete.php') ?>" class="d-inline" onsubmit="return confirm('Projekt wirklich löschen?');">
                   <?php echo csrf_field() ?>
                   <input type="hidden" name="id" value="<?php echo $p['id'] ?>">

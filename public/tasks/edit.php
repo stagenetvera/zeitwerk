@@ -16,26 +16,13 @@ $ps->execute([$account_id]);
 $projects = $ps->fetchAll();
 
 $ok = $err = null;
-if ($_SERVER['REQUEST_METHOD']==='POST') {
-  $project_id = (int)($_POST['project_id'] ?? 0);
-  $description = trim($_POST['description'] ?? '');
-  $planned = $_POST['planned_minutes'] !== '' ? (int)$_POST['planned_minutes'] : null;
-  $priority = $_POST['priority'] ?? 'medium';
-  $deadline = $_POST['deadline'] ?: null;
-  $status = $_POST['status'] ?? 'offen';
-  $billable = isset($_POST['billable']) ? 1 : 0;
-  if ($project_id && $description) {
-    $upd = $pdo->prepare('UPDATE tasks SET project_id=?, description=?, planned_minutes=?, priority=?, deadline=?, status=?, billable=? WHERE id=? AND account_id=?');
-    $upd->execute([$project_id,$description,$planned,$priority,$deadline,$status,$billable,$id,$account_id]);
-    $ok = 'Gespeichert.';
-    $stmt->execute([$id, $account_id]); $task = $stmt->fetch();
-  } else { $err = 'Projekt und Beschreibung sind erforderlich.'; }
-}
+
 ?>
 <div class="row"><div class="col-md-8">
   <h3>Aufgabe bearbeiten</h3>
   <?php if ($ok): ?><div class="alert alert-success"><?=$ok?></div><?php endif; ?>
   <?php if ($err): ?><div class="alert alert-danger"><?=$err?></div><?php endif; ?>
+  <form method="post" action="<?=url('/tasks/update_and_redirect.php')?>">
   <form method="post" action="<?=url('/tasks/update_and_redirect.php')?>">
     <?=csrf_field()?>
     <input type="hidden" name="id" value="<?=$task['id']?>">
