@@ -73,6 +73,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST["action"]) && $_POST["
     $ins = $pdo->prepare('INSERT INTO tasks(account_id, project_id, description, planned_minutes, priority, deadline, status, billable) VALUES (?,?,?,?,?,?,?,?)');
     $ins->execute([$account_id, $project_id, $description, $planned, $priority, $deadline, $status, $billable]);
 
+    $task_id = (int)$pdo->lastInsertId();
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS task_ordering_global (
+      account_id INT NOT NULL,
+      task_id INT NOT NULL,
+      position INT NOT NULL,
+      PRIMARY KEY (account_id, task_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+    // 4) Nächste Position ermitteln (MAX+1) und setzen -> neue Aufgabe steht unten
+    try {
+      $pdo->beginTransaction();
+
+      $posStmt = $pdo->prepare("SELECT COALESCE(MAX(position), 0) + 1 FROM task_ordering_global WHERE account_id = ?");
+      $posStmt->execute([$account_id]);
+      $nextPos = (int)$posStmt->fetchColumn();
+      if ($nextPos < 1) $nextPos = 1;
+
+      $ordIns = $pdo->prepare("INSERT INTO task_ordering_global (account_id, task_id, position)
+                              VALUES (?, ?, ?)
+                              ON DUPLICATE KEY UPDATE position = VALUES(position)");
+      $ordIns->execute([$account_id, $task_id, $nextPos]);
+
+      $pdo->commit();
+    } catch (Throwable $e) {
+      if ($pdo->inTransaction()) { $pdo->rollBack(); }
+      // optional: loggen, aber den Redirect trotzdem machen
+    }
     redirect($return_to);
 
   }
