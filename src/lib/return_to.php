@@ -9,8 +9,8 @@ function sanitize_return_to(?string $s): ?string {
   // nur absolute *relative* Pfade erlauben (beginnt mit "/")
   if (!str_starts_with($s, '/')) return null;
 
-  // Optional: nur innerhalb deiner App erlauben (Wenn dein App-Pfad z. B. "/zeitwerk/public")
-  if (!str_starts_with($s, APP_BASE_URL)) return null;
+  // // Optional: nur innerhalb deiner App erlauben (Wenn dein App-Pfad z. B. "/zeitwerk/public")
+  // if (!str_starts_with($s, APP_BASE_URL)) return null;
   return $s;
 }
 

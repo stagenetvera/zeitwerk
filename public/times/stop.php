@@ -19,49 +19,121 @@ $return_to = pick_return_to('/dashboard/index.php');
 
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-  // Wenn der Timer bisher KEINE Aufgabe hat, erlauben wir Firma/Projekt/Aufgabe oder "Neue Aufgabe"
-  if (!$running['task_id']) {
-    $company_id = isset($_POST['company_id']) ? (int)$_POST['company_id'] : 0;
-    $project_id = isset($_POST['project_id']) ? (int)$_POST['project_id'] : 0;
-    $task_id    = isset($_POST['task_id']) && $_POST['task_id'] !== '' ? (int)$_POST['task_id'] : null;
-    $create_new = isset($_POST['create_new']) && $_POST['create_new'] === '1';
+  try {
+    $pdo->beginTransaction();
 
-    if ($create_new) {
-      $desc = trim($_POST['new_description'] ?? '');
-      $prio = $_POST['new_priority'] ?? null;
-      $planned = (isset($_POST['new_planned']) && $_POST['new_planned'] !== '') ? (int)$_POST['new_planned'] : null;
-      $deadline = $_POST['new_deadline'] ?? null;
-      if ($deadline === '') $deadline = null;
+    // Pro-User serialisieren (Mutex)
+    $lock = $pdo->prepare('SELECT id FROM users WHERE id = ? AND account_id = ? FOR UPDATE');
+    $lock->execute([$user_id, $account_id]);
 
-      if ($project_id <= 0 || $desc === '') {
-        $err = 'Bitte Projekt wählen und eine Aufgabenbeschreibung angeben.';
-      } else {
-        $ins = $pdo->prepare('INSERT INTO tasks (account_id, project_id, description, planned_minutes, priority, deadline, status) VALUES (?,?,?,?,?,?,?)');
-        $ins->execute([$account_id, $project_id, $desc, $planned, $prio, $deadline, 'offen']);
-        $task_id = (int)$pdo->lastInsertId();
+    // Laufenden Timer exklusiv sperren
+    $rs = $pdo->prepare('
+      SELECT * FROM times
+      WHERE account_id = ? AND user_id = ? AND ended_at IS NULL
+      ORDER BY id DESC
+      LIMIT 1
+      FOR UPDATE
+    ');
+    $rs->execute([$account_id, $user_id]);
+    $cur = $rs->fetch();
+
+    if (!$cur) {
+      // Zwischenzeitlich schon gestoppt → idempotent zurück
+      $pdo->commit();
+      redirect($return_to);
+    }
+
+    // Wenn der Timer bisher KEINE Aufgabe hat: Zuweisung/Neuanlage (wie in deinem Code)
+    if (empty($cur['task_id'])) {
+      $company_id = isset($_POST['company_id']) ? (int)$_POST['company_id'] : 0;
+      $project_id = isset($_POST['project_id']) ? (int)$_POST['project_id'] : 0;
+      $task_id    = isset($_POST['task_id']) && $_POST['task_id'] !== '' ? (int)$_POST['task_id'] : null;
+      $create_new = isset($_POST['create_new']) && $_POST['create_new'] === '1';
+
+      if ($create_new) {
+        $desc     = trim($_POST['new_description'] ?? '');
+        // ▼ NEU: Priorität robust mappen (de/en erlaubt)
+        $prio_raw = $_POST['new_priority'] ?? null;
+        $prio = null;
+        if ($prio_raw !== null && $prio_raw !== '') {
+          $prio_map = [
+            'hoch'    => 'high',
+            'mittel'  => 'medium',
+            'niedrig' => 'low',
+            'high'    => 'high',
+            'medium'  => 'medium',
+            'low'     => 'low',
+          ];
+          $prio = $prio_map[$prio_raw] ?? null;   // unbekannt ⇒ null
+        }
+        $planned  = (isset($_POST['new_planned']) && $_POST['new_planned'] !== '') ? (int)$_POST['new_planned'] : null;
+        $deadline = $_POST['new_deadline'] ?? null;
+        if ($deadline === '') $deadline = null;
+
+        if ($project_id <= 0 || $desc === '') {
+          $pdo->rollBack();
+          $err = 'Bitte Projekt wählen und eine Aufgabenbeschreibung angeben.';
+        } else {
+          $chk = $pdo->prepare('SELECT COUNT(*) FROM projects WHERE id = ? AND account_id = ?' . ($company_id ? ' AND company_id = ?' : ''));
+          $params = [$project_id, $account_id];
+          if ($company_id) $params[] = $company_id;
+          $chk->execute($params);
+          if (!$chk->fetchColumn()) {
+            $pdo->rollBack();
+            $err = 'Ungültige Projekt-/Firmenauswahl.';
+          } else {
+            $ins = $pdo->prepare('
+              INSERT INTO tasks (account_id, project_id, description, planned_minutes, priority, deadline, status)
+              VALUES (?,?,?,?,?,?,?)
+            ');
+            $ins->execute([$account_id, $project_id, $desc, $planned, $prio, $deadline, 'offen']);
+            $task_id = (int)$pdo->lastInsertId();
+          }
+        }
+      }
+
+      if (!isset($err) && !$task_id) {
+        $pdo->rollBack();
+        $err = 'Bitte Aufgabe auswählen oder neu anlegen.';
+      }
+
+      if (!isset($err)) {
+        // Safety: Task muss zum Account (und optional zum Projekt) gehören
+        $chkT = $pdo->prepare('SELECT COUNT(*) FROM tasks WHERE id = ? AND account_id = ?');
+        $chkT->execute([$task_id, $account_id]);
+        if (!$chkT->fetchColumn()) {
+          $pdo->rollBack();
+          $err = 'Ungültige Aufgabe für diesen Account.';
+        } else {
+          // Aufgabe vor dem Stoppen zuweisen (atomar)
+          $up = $pdo->prepare('UPDATE times SET task_id = ? WHERE id = ? AND account_id = ? AND user_id = ? AND ended_at IS NULL');
+          $up->execute([$task_id, (int)$cur['id'], $account_id, $user_id]);
+          $cur['task_id'] = $task_id; // für die nachfolgende Logik
+        }
       }
     }
 
-    if (!$err && !$task_id) {
-      $err = 'Bitte Aufgabe auswählen oder neu anlegen.';
+    // Timer stoppen (nur wenn keine Fehlermeldung)
+    if (!isset($err)) {
+      $now    = new DateTimeImmutable('now');
+      $start  = new DateTimeImmutable($cur['started_at']);
+      $diff_s = max(0, $now->getTimestamp() - $start->getTimestamp());
+      $minutes= max(1, (int)round($diff_s / 60));
+
+      $stp = $pdo->prepare('
+        UPDATE times
+        SET ended_at = ?, minutes = ?
+        WHERE id = ? AND account_id = ? AND user_id = ? AND ended_at IS NULL
+      ');
+      $stp->execute([$now->format('Y-m-d H:i:s'), $minutes, (int)$cur['id'], $account_id, $user_id]);
+
+      $pdo->commit();
+      redirect($return_to);
     }
 
-    if (!$err) {
-      // Aufgabe zuweisen
-      $up = $pdo->prepare('UPDATE times SET task_id = ? WHERE id = ? AND account_id = ? AND user_id = ?');
-      $up->execute([$task_id, $running['id'], $account_id, $user_id]);
-      $running['task_id'] = $task_id;
-    }
-  }
-
-  // Timer stoppen (egal ob vorher zugewiesen oder schon vorhanden)
-  if (!$err) {
-    $end = new DateTimeImmutable('now');
-    $start = new DateTimeImmutable($running['started_at']);
-    $minutes = max(1, (int)round(($end->getTimestamp() - $start->getTimestamp()) / 60));
-    $stp = $pdo->prepare('UPDATE times SET ended_at = ?, minutes = ? WHERE id = ? AND account_id = ? AND user_id = ?');
-    $stp->execute([$end->format('Y-m-d H:i:s'), $minutes, $running['id'], $account_id, $user_id]);
-    redirect($return_to);
+  } catch (Throwable $e) {
+    if ($pdo->inTransaction()) $pdo->rollBack();
+    $err = 'Timer-Stop fehlgeschlagen.';
   }
 }
 // Daten nur für das Auswahl-Formular laden, falls noch keine Aufgabe gesetzt ist
@@ -136,7 +208,6 @@ if (!$running['task_id']) {
         <div class="col-md-4 mb-3">
           <label class="form-label">Priorität</label>
           <select class="form-select" name="new_priority">
-            <option value="">– keine –</option>
             <option value="hoch">hoch</option>
             <option value="mittel">mittel</option>
             <option value="niedrig">niedrig</option>

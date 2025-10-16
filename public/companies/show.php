@@ -515,12 +515,12 @@
                    <button class="btn btn-sm btn-warning">Stop</button>
                  </form>
                <?php else: ?>
-                 <form method="post" action="<?=url('/times/start.php')?>" class="d-inline me-1">
-                   <?=csrf_field()?>
-                   <?= return_to_hidden($return_to) ?>
-                   <input type="hidden" name="task_id" value="<?=$tid?>">
-                   <button class="btn btn-sm btn-success">Start</button>
-                 </form>
+                  <form method="post" action="<?=url('/times/start.php')?>" class="d-inline me-1">
+                    <?=csrf_field()?>
+                    <?= return_to_hidden($return_to) ?>
+                    <input type="hidden" name="task_id" value="<?=$tid?>">
+                    <button class="btn btn-sm btn-success">Start</button>
+                  </form>
                <?php endif; ?>
                 <a class="btn btn-sm btn-outline-secondary" href="<?php echo url('/tasks/edit.php') ?>?id=<?php echo $r['task_id'] ?>&return_to=<?php echo urlencode($_SERVER['REQUEST_URI']) ?>">Bearbeiten</a>
                 <form method="post" action="<?php echo url('/tasks/delete.php') ?>" class="d-inline" onsubmit="return confirm('Aufgabe wirklich löschen?');">
