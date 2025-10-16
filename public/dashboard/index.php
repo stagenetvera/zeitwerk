@@ -74,8 +74,9 @@ $sql = "SELECT
     WHERE account_id = :acc
     GROUP BY task_id
   ) tsum ON tsum.task_id = ta.id
+  LEFT JOIN task_ordering_global og ON og.account_id = ta.account_id AND og.task_id = ta.id
   WHERE $WHERE
-  ORDER BY
+  ORDER BY (og.position IS NULL), og.position,
     (ta.deadline IS NULL), ta.deadline ASC, ta.id DESC";
 
 $st = $pdo->prepare($sql);
@@ -135,6 +136,11 @@ $keep = [
         <a href="<?=hurl($base)?>" class="btn btn-outline-secondary w-100">Reset</a>
       </div>
     </form>
+
+    <!-- Unsichtbares Formular nur für den CSRF-Token -->
+    <form id="dndCsrf" class="d-none">
+      <?= csrf_field() ?>
+    </form>
   </div>
 </div>
 
@@ -144,6 +150,7 @@ $keep = [
       <table class="table table-striped table-hover mb-0">
         <thead>
           <tr>
+            <th style="width:32px"></th>
             <th>Firma (Projekt)</th>
             <th>Aufgabe</th>
             <th>Priorität</th>
@@ -154,7 +161,7 @@ $keep = [
             <th class="text-end">Aktionen</th>
           </tr>
         </thead>
-        <tbody>
+        <tbody id="dashTaskBody">
           <?php foreach ($rows as $r): ?>
             <?php
               $sum = (int)($r['sum_minutes'] ?? 0);
@@ -167,7 +174,9 @@ $keep = [
                 else $badge = 'badge bg-success';
               }
             ?>
-            <tr>
+            <?php $tid = isset($r['task_id']) ? (int)$r['task_id'] : (int)$r['id']; ?>
+            <tr data-task-id="<?=$tid?>" draggable="true">
+              <td class="drag-handle" title="Ziehen, um zu sortieren">↕</td>
               <td><?=h($r['company_name'])?><?= $r['project_title'] ? ' ('.h($r['project_title']).')' : '' ?></td>
               <td><?=h($r['description'])?></td>
               <td><?=h($r['priority'] ?? '—')?></td>
@@ -229,6 +238,75 @@ $keep = [
           <?php endif; ?>
         </tbody>
       </table>
+      <script>
+(function(){
+  var tbody = document.getElementById('dashTaskBody');
+  if (!tbody) return;
+
+  function getCsrf() {
+    var m = document.querySelector('meta[name="csrf-token"]');
+    if (m && m.content) return m.content;
+    var i = document.querySelector('input[name="csrf_token"]');
+    return i ? i.value : '';
+  }
+
+  var dragEl = null;
+
+  tbody.addEventListener('dragstart', function(e){
+    var tr = e.target.closest('tr[data-task-id]');
+    if (!tr) return;
+    dragEl = tr;
+    tr.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', tr.dataset.taskId); } catch(_) {}
+  });
+
+  tbody.addEventListener('dragend', function(){
+    if (dragEl) dragEl.classList.remove('dragging');
+    dragEl = null;
+  });
+
+  tbody.addEventListener('dragover', function(e){
+    e.preventDefault();
+    var tr = e.target.closest('tr[data-task-id]');
+    if (!tr || tr === dragEl) return;
+    var rect = tr.getBoundingClientRect();
+    var after = (e.clientY - rect.top) > (rect.height / 2);
+    tbody.insertBefore(dragEl, after ? tr.nextSibling : tr);
+  });
+
+  tbody.addEventListener('drop', function(e){
+    e.preventDefault();
+    saveOrder();
+  });
+
+  function saveOrder(){
+    var order = Array.from(tbody.querySelectorAll('tr[data-task-id]'))
+      .map(function(tr){ return tr.dataset.taskId; });
+
+    // FormData mit csrf_token + order[]
+    var fd = new FormData(document.getElementById('dndCsrf'));
+    order.forEach(function(id){
+      fd.append('order[]', id);
+    });
+
+    fetch('<?=url('/tasks/order_save_global.php')?>', {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: fd
+    })
+    .then(function(r){ return r.json(); })
+    .then(function(j){
+      if (!j || !j.ok) {
+        console.error('Order-Save fehlgeschlagen', j);
+      }
+    })
+    .catch(function(err){
+      console.error('Order-Save Fehler', err);
+    });
+  }
+})();
+</script>
     </div>
   </div>
 </div>
