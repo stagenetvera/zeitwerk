@@ -6,8 +6,9 @@ csrf_check();
 $user = auth_user();
 $account_id = (int)$user['account_id'];
 
-// Auswahllisten laden
-$company_id = isset($_GET['company_id']) ? (int)$_GET['company_id'] : 0;
+// Firma/Projekt aus POST (bei Save) oder aus GET (bei Reload nach Auswahl)
+$company_id = isset($_POST['company_id']) ? (int)$_POST['company_id']
+            : (isset($_GET['company_id']) ? (int)$_GET['company_id'] : 0);
 
 // Firmenliste
 $cs = $pdo->prepare('SELECT id, name FROM companies WHERE account_id = ? ORDER BY name');
@@ -22,13 +23,28 @@ if ($company_id) {
   $projects = $ps->fetchAll();
   // Wenn genau 1 Projekt existiert, als Default setzen (nur für Anzeige)
   if (count($projects) === 1) {
-    $_GET['project_id'] = (int)$projects[0]['id'];
+    $_POST['project_id'] = (int)$projects[0]['id'];
   }
 }
-$project_id = isset($_GET['project_id']) ? (int)$_GET['project_id'] : 0;
-
+$project_id = isset($_POST['project_id']) ? (int)$_POST['project_id']
+            : (isset($_GET['project_id']) ? (int)$_GET['project_id'] : 0);
 $err = null;
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+
+$return_to = $_POST['return_to'] ?? '';
+if (!$return_to && isset($_SERVER['HTTP_REFERER'])) {
+  $return_to = $_SERVER['HTTP_REFERER'];
+}
+// sanitize: allow only same-site relative URLs
+$valid = false;
+if ($return_to && !preg_match('~^(?:https?:)?//~i', $return_to)) {
+  $valid = (str_starts_with($return_to, '/'));
+}
+
+if (!$valid) {
+    $return_to = "/dashboard/index.php";
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST["action"]) && $_POST["action"] == "save") {
   $company_id = (int)($_POST['company_id'] ?? 0);
   $project_id = (int)($_POST['project_id'] ?? 0);
   $description = trim($_POST['description'] ?? '');
@@ -52,17 +68,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
   }
 
+
   if ($ok) {
     $ins = $pdo->prepare('INSERT INTO tasks(account_id, project_id, description, planned_minutes, priority, deadline, status, billable) VALUES (?,?,?,?,?,?,?,?)');
     $ins->execute([$account_id, $project_id, $description, $planned, $priority, $deadline, $status, $billable]);
-    if (isset($_GET["returnTo"]) && $_GET["returnTo"] == "companies" ) {
-      redirect('/companies/show.php?id='.$_POST['company_id']);
-    }
-    else {
-      redirect('/dashboard/index.php');
-    }
+
+    redirect($return_to);
+
   }
 }
+
 ?>
 <div class="row">
   <div class="col-md-8">
@@ -71,7 +86,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     <form method="post" id="taskForm">
       <?=csrf_field()?>
-
+      <input type="hidden" name="action" value="save">
+      <input type="hidden" name="return_to" value="<?= h($return_to) ?>">
       <div class="row">
         <div class="col-md-6 mb-3">
           <label class="form-label">Firma</label>
@@ -152,7 +168,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
           company.addEventListener('change', function() {
             const base = '<?=url('/tasks/new.php')?>';
             const val = this.value || '';
-            const url = val ? base + '?company_id=' + encodeURIComponent(val) : base;
+            const rt = document.querySelector('input[name="return_to"]');
+            const rtVal = rt ? rt.value : '';
+
+            let url = base;
+            const params = [];
+            if (val) params.push('company_id=' + encodeURIComponent(val));
+            if (rtVal) params.push('return_to=' + encodeURIComponent(rtVal));
+            if (params.length) url += '?' + params.join('&');
+
             window.location.href = url;
           });
         }

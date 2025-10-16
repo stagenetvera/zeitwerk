@@ -320,9 +320,15 @@
 
 <div class="card mb-4">
   <div class="card-body">
-     <div class="d-flex justify-content-between align-items-center mb-2">
+    <div class="d-flex justify-content-between align-items-center mb-2">
       <h5 class="card-title mb-0">Aufgaben</h5>
-      <a class="btn btn-sm btn-primary" href="<?php echo url('/tasks/new.php') ?>?company_id=<?php echo $company['id'] ?>">Neu</a>
+
+      <form class="d-inline" method="post" action="<?= url('/tasks/new.php') ?>">
+        <?=csrf_field()?>
+        <input type="hidden" name="company_id" value="<?= $company['id'] ?>">
+        <input type="hidden" name="return_to" value="<?= h($_SERVER['REQUEST_URI']) ?>">
+        <button class="btn btn-sm btn-primary" type="submit">Neu</button>
+      </form>
     </div>
     <form class="row g-2 mb-3" method="get" action="<?php echo hurl(url('/companies/show.php')) ?>">
   <input type="hidden" name="id" value="<?php echo $company['id'] ?>">
