@@ -248,14 +248,14 @@ function qs($base,$arr){return htmlspecialchars($base.'?'.http_build_query($arr)
         <tbody>
           <?php foreach ($rows as $r): ?>
             <tr>
-              <td><?=h($r['started_at'])?></td>
-              <td><?= $r['ended_at'] ? h($r['ended_at']) : '—' ?></td>
+              <td class="text-nowrap"><?=h($r['started_at'])?></td>
+              <td class="text-nowrap"><?= $r['ended_at'] ? h($r['ended_at']) : '—' ?></td>
               <td><?= $r['minutes'] !== null ? fmt_minutes((int)$r['minutes']) : '—' ?></td>
               <td><?= h($r['company_name'] ?: '—') ?><?= $r['project_title'] ? ' / '.h($r['project_title']) : '' ?></td>
               <td><?= h($r['task_desc'] ?: '—') ?></td>
               <td><?= ($r['billable'] ?? 0) ? 'ja' : 'nein' ?></td>
               <td><?= h($r['status'] ?? '—') ?></td>
-              <td class="text-end">
+              <td class="text-nowrap text-end">
                 <a class="btn btn-sm btn-outline-secondary" href="<?=url('/times/edit.php')?>?id=<?=$r['id']?>&return_to=<?=urlencode($_SERVER['REQUEST_URI'])?>">Bearbeiten</a>
                 <form class="d-inline" method="post" action="<?=url('/times/delete.php')?>" onsubmit="return confirm('Diesen Zeiteintrag wirklich löschen?');">
                   <?=csrf_field()?>
