@@ -7,6 +7,7 @@
   $account_id = (int)$user['account_id'];
   $user_id    = (int)$user['id'];
 
+
   // -------- helpers --------
   function page_int($v, $d = 1)
   {$n = (int)$v;return $n > 0 ? $n : $d;}
@@ -41,6 +42,9 @@
 
     // -------- input --------
     $id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
+
+    $return_to = pick_return_to('/companies/show.php?id='.$id);
+
     if ($id <= 0) {echo '<div class="alert alert-danger">Ungültige Firmen-ID.</div>';require __DIR__ . '/../../src/layout/footer.php';exit;}
 
     // Fetch company
@@ -223,7 +227,13 @@
       <div class="card-body">
         <div class="d-flex justify-content-between align-items-center mb-2">
           <h5 class="card-title mb-0">Ansprechpartner</h5>
-          <a class="btn btn-sm btn-primary" href="<?php echo url('/contacts/new.php') ?>?company_id=<?php echo $company['id'] ?>">Neu</a>
+          <form class="d-inline" method="post" action="<?= url('/contacts/new.php') ?>">
+            <?=csrf_field()?>
+            <?= return_to_hidden($return_to) ?>
+            <input type="hidden" name="company_id" value="<?= $company['id'] ?>">
+            <button class="btn btn-sm btn-primary" type="submit">Neu</button>
+          </form>
+
         </div>
         <?php if ($contacts): ?>
 
@@ -264,7 +274,13 @@
   <div class="card-body">
     <div class="d-flex justify-content-between align-items-center mb-2">
       <h5 class="card-title mb-0">Projekte</h5>
-      <a class="btn btn-sm btn-primary" href="<?php echo url('/projects/new.php') ?>?company_id=<?php echo $company['id'] ?>">Neu</a>
+      <form class="d-inline" method="post" action="<?= url('/projects/new.php') ?>">
+        <?=csrf_field()?>
+        <?= return_to_hidden($return_to) ?>
+        <input type="hidden" name="company_id" value="<?= $company['id'] ?>">
+        <button class="btn btn-sm btn-primary" type="submit">Neu</button>
+      </form>
+
     </div>
     <form class="row g-2 mb-3" method="get" action="<?php echo hurl(url('/companies/show.php')) ?>">
       <input type="hidden" name="id" value="<?php echo $company['id'] ?>">
@@ -325,8 +341,8 @@
 
       <form class="d-inline" method="post" action="<?= url('/tasks/new.php') ?>">
         <?=csrf_field()?>
+        <?= return_to_hidden($return_to) ?>
         <input type="hidden" name="company_id" value="<?= $company['id'] ?>">
-        <input type="hidden" name="return_to" value="<?= h($_SERVER['REQUEST_URI']) ?>">
         <button class="btn btn-sm btn-primary" type="submit">Neu</button>
       </form>
     </div>
@@ -488,30 +504,29 @@
                  $running_time_id = $has_running ? (int)$__dash_running['id'] : 0;
                  // Task-ID robust bestimmen (je nach Alias in SELECT)
                  $tid = isset($r['task_id']) ? (int)$r['task_id'] : (int)$r['id'];
-                 $return_to = $_SERVER['REQUEST_URI'] ?? url('/dashboard/index.php');
 
                  // Wenn ein Timer läuft und es ist dieselbe Aufgabe -> STOP
                  if ($has_running && $running_task_id === $tid):
                ?>
                  <form method="post" action="<?=url('/times/stop.php')?>" class="d-inline me-1">
-                   <?=csrf_field()?>
-                   <input type="hidden" name="id" value="<?=$running_time_id?>">
-                   <input type="hidden" name="return_to" value="<?=h($return_to)?>">
+                    <?=csrf_field()?>
+                    <?= return_to_hidden($return_to) ?>
+                    <input type="hidden" name="id" value="<?=$running_time_id?>">
                    <button class="btn btn-sm btn-warning">Stop</button>
                  </form>
                <?php else: ?>
                  <form method="post" action="<?=url('/times/start.php')?>" class="d-inline me-1">
                    <?=csrf_field()?>
+                   <?= return_to_hidden($return_to) ?>
                    <input type="hidden" name="task_id" value="<?=$tid?>">
-                   <input type="hidden" name="return_to" value="<?=h($return_to)?>">
                    <button class="btn btn-sm btn-success">Start</button>
                  </form>
                <?php endif; ?>
                 <a class="btn btn-sm btn-outline-secondary" href="<?php echo url('/tasks/edit.php') ?>?id=<?php echo $r['task_id'] ?>&return_to=<?php echo urlencode($_SERVER['REQUEST_URI']) ?>">Bearbeiten</a>
                 <form method="post" action="<?php echo url('/tasks/delete.php') ?>" class="d-inline" onsubmit="return confirm('Aufgabe wirklich löschen?');">
                   <?php echo csrf_field() ?>
+                  <?= return_to_hidden($return_to) ?>
                   <input type="hidden" name="id" value="<?php echo $r['task_id'] ?>">
-                  <input type="hidden" name="return_to" value="<?php echo ($_SERVER['REQUEST_URI']) ?>">
                   <button class="btn btn-sm btn-outline-danger">Löschen</button>
                 </form>
               </td>

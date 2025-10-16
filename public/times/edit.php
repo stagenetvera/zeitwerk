@@ -6,6 +6,8 @@ $user = auth_user();
 $account_id = (int)$user['account_id'];
 $user_id = (int)$user['id'];
 
+$return_to = pick_return_to('/times/index.php');
+
 $id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
 $st = $pdo->prepare('SELECT * FROM times WHERE id = ? AND account_id = ? AND user_id = ?');
 $st->execute([$id,$account_id,$user_id]);
@@ -47,9 +49,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
       $upd = $pdo->prepare('UPDATE times SET task_id=?, started_at=?, ended_at=?, minutes=?, billable=?, status=? WHERE id=? AND account_id=? AND user_id=?');
       $upd->execute([$task_id,$start->format('Y-m-d H:i:s'), $end? $end->format('Y-m-d H:i:s') : null, $minutes,$billable,$status,$id,$account_id,$user_id]);
       $ok = 'Gespeichert.';
-      // reload
-      $st->execute([$id,$account_id,$user_id]);
-      $time = $st->fetch();
+      flash('Zeit gespeichert.', 'success');
+      redirect($return_to);
     }
   }
 }
@@ -68,6 +69,7 @@ function fmt_dt_local($s) {
     <?php if ($err): ?><div class="alert alert-danger"><?=$err?></div><?php endif; ?>
     <form method="post">
       <?=csrf_field()?>
+      <?= return_to_hidden($return_to) ?>
       <div class="mb-3">
         <label class="form-label">Aufgabe (optional)</label>
         <select name="task_id" class="form-select">
@@ -101,7 +103,7 @@ function fmt_dt_local($s) {
         </div>
       </div>
       <button class="btn btn-primary">Speichern</button>
-      <a class="btn btn-outline-secondary" href="<?=url('/times/index.php')?>">Zurück</a>
+      <a class="btn btn-outline-secondary" href="<?= h(url($return_to)) ?>">Abbrechen</a>
     </form>
   </div>
 </div>

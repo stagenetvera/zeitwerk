@@ -5,6 +5,9 @@ csrf_check();
 $user = auth_user();
 $account_id = (int)$user['account_id'];
 
+$return_to = pick_return_to('/companies/index.php');
+
+
 $err = null;
 if ($_SERVER['REQUEST_METHOD']==='POST') {
   $name = trim($_POST['name'] ?? '');
@@ -15,7 +18,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
   if ($name) {
     $ins = $pdo->prepare('INSERT INTO companies(account_id,name,address,hourly_rate,vat_id,status) VALUES(?,?,?,?,?,?)');
     $ins->execute([$account_id,$name,$address,$rate,$vat,$status]);
-    redirect('/companies/index.php');
+    flash('Firma angelegt.', 'success');
+    redirect($return_to);
   } else {
     $err = 'Name ist erforderlich.';
   }
@@ -26,6 +30,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
   <?php if ($err): ?><div class="alert alert-danger"><?=$err?></div><?php endif; ?>
   <form method="post">
     <?=csrf_field()?>
+    <?= return_to_hidden($return_to) ?>
     <div class="mb-3"><label class="form-label">Name</label>
       <input type="text" name="name" class="form-control" required></div>
     <div class="mb-3"><label class="form-label">Adresse</label>
@@ -43,7 +48,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
       </div>
     </div>
     <button class="btn btn-primary">Speichern</button>
-    <a class="btn btn-outline-secondary" href="<?=url('/companies/index.php')?>">Zurück</a>
+    <a class="btn btn-outline-secondary" href="<?= h(url($return_to)) ?>">Abbrechen</a>
   </form>
 </div></div>
 <?php require __DIR__ . '/../../src/layout/footer.php'; ?>

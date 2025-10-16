@@ -3,6 +3,8 @@ declare(strict_types=1);
 date_default_timezone_set('Europe/Berlin');
 
 $config = require __DIR__ . '/../config.php';
+require_once __DIR__ . '/lib/return_to.php';
+
 define('APP_BASE_URL', rtrim($config['app']['base_url'] ?? '', '/'));
 
 if (!isset($config['app']['timezone'])) {

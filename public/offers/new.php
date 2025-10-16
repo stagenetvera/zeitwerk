@@ -71,7 +71,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
         <input type="number" step="0.01" name="hourly_rate" class="form-control">
       </div>
       <button class="btn btn-primary">Speichern</button>
-      <a class="btn btn-outline-secondary" href="<?=url('/offers/list.php')?>">Zurück</a>
+      <a class="btn btn-outline-secondary" href="<?= h(url($return_to)) ?>">Abbrechen</a>
     </form>
   </div>
 </div>

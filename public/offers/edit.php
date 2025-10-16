@@ -137,7 +137,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
         <div class="form-text">Mehrfachauswahl mit Strg/Cmd.</div>
       </div>
       <button class="btn btn-primary">Speichern</button>
-      <a class="btn btn-outline-secondary" href="<?=url('/offers/list.php')?>">Zurück</a>
+      <a class="btn btn-outline-secondary" href="<?= h(url($return_to)) ?>">Abbrechen</a>
     </form>
   </div>
 </div>

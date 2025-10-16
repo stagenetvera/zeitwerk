@@ -7,22 +7,6 @@ csrf_check();
 $user = auth_user();
 $account_id = (int)$user['account_id'];
 
-// --------------------------------------------------
-// return_to (wie in deinen anderen Skripten)
-// --------------------------------------------------
-$return_to_get = $_GET['return_to'] ?? ''; // für das Hidden-Feld bei GET
-$return_to = $_POST['return_to'] ?? '';
-if (!$return_to && isset($_SERVER['HTTP_REFERER'])) {
-  $return_to = $_SERVER['HTTP_REFERER'];
-}
-// sanitize: allow only same-site relative URLs
-$valid = false;
-if ($return_to && !preg_match('~^(?:https?:)?//~i', $return_to)) {
-  $valid = (str_starts_with($return_to, '/'));
-}
-if (!$valid) {
-  $return_to = "/dashboard/index.php";
-}
 
 // --------------------------------------------------
 // Datensatz laden
@@ -50,6 +34,9 @@ if (!$task) {
 // --------------------------------------------------
 $company_id = isset($_POST['company_id']) ? (int)$_POST['company_id']
             : (isset($_GET['company_id']) ? (int)$_GET['company_id'] : (int)$task['company_id']);
+
+
+$return_to = pick_return_to('/companies/show.php?id='.$company_id);
 
 $project_id = isset($_POST['project_id']) ? (int)$_POST['project_id'] : (int)$task['project_id'];
 
@@ -132,7 +119,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <form method="post" id="taskEditForm">
       <?= csrf_field() ?>
       <input type="hidden" name="id" value="<?= $task['id'] ?>">
-      <input type="hidden" name="return_to" value="<?= h($return_to_get ?: $return_to) ?>">
+      <?= return_to_hidden($return_to) ?>
 
       <div class="row">
         <div class="col-md-6 mb-3">
@@ -205,7 +192,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
       <div class="d-flex gap-2">
         <button class="btn btn-primary">Speichern</button>
-        <a class="btn btn-outline-secondary" href="<?= h($return_to_get ?: $return_to) ?>">Abbrechen</a>
+        <a class="btn btn-outline-secondary" href="<?= h(url($return_to)) ?>">Abbrechen</a>
       </div>
     </form>
 

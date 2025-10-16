@@ -8,9 +8,8 @@ $user = auth_user();
 $account_id = (int)$user['account_id'];
 
 $err = null;
-
 // --- optionaler Firmen-Kontext (aus Firmen-Ansicht) ---
-$prefill_company_id = isset($_GET['company_id']) ? (int)$_GET['company_id'] : 0;
+$prefill_company_id = isset($_POST['company_id']) ? (int)$_POST['company_id'] : 0;
 $prefill_company = null;
 if ($prefill_company_id > 0) {
   $cs = $pdo->prepare('SELECT id, name FROM companies WHERE id = ? AND account_id = ?');
@@ -21,16 +20,11 @@ if ($prefill_company_id > 0) {
   }
 }
 
-// Return-URL (Standard: zurück zur Firma, sonst zur Projektliste/Dashboard)
-$return_to = $_GET['return_to'] ?? '';
-if (!$return_to) {
-  $return_to = $prefill_company_id > 0
-    ? url('/companies/show.php').'?id='.$prefill_company_id
-    : url('/projects/index.php'); // ggf. bei dir dashboard/index.php, wenn es keine Projektliste gibt
-}
+$return_to = pick_return_to('/companies/show.php?id='.$prefill_company_id);
+
 
 // POST-Handling
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+if ($_SERVER['REQUEST_METHOD'] === 'POST'  && isset($_POST["action"]) && $_POST["action"] == "save") {
   $title = trim($_POST['title'] ?? '');
   $status = $_POST['status'] ?? 'offen';
   $project_rate = ($_POST['hourly_rate'] !== '' ? (float)$_POST['hourly_rate'] : null);
@@ -58,7 +52,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   if (!$err) {
     $ins = $pdo->prepare('INSERT INTO projects (account_id, company_id, title, status, hourly_rate) VALUES (?,?,?,?,?)');
     $ins->execute([$account_id, $company_id, $title, $status, $project_rate]);
-    // zurück zur Ursprungssicht
+    flash('Projekt angelegt.', 'success');
     redirect($return_to);
   }
 }
@@ -78,7 +72,8 @@ if ($prefill_company_id === 0) {
 
     <form method="post">
       <?=csrf_field()?>
-      <input type="hidden" name="return_to" value="<?=h($return_to)?>">
+      <?= return_to_hidden($return_to) ?>
+      <input type="hidden" name="action" value="save">
 
       <?php if ($prefill_company_id > 0 && $prefill_company): ?>
         <!-- Feste Firma (aus Firmen-Ansicht) -->
@@ -122,7 +117,7 @@ if ($prefill_company_id === 0) {
 
       <div class="d-flex gap-2">
         <button class="btn btn-primary">Speichern</button>
-        <a class="btn btn-outline-secondary" href="<?=h($return_to)?>">Abbrechen</a>
+        <a class="btn btn-outline-secondary" href="<?= h(url($return_to)) ?>">Abbrechen</a>
       </div>
     </form>
   </div>

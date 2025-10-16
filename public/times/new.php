@@ -8,6 +8,8 @@ $user = auth_user();
 $account_id = (int)$user['account_id'];
 $user_id = (int)$user['id'];
 
+$return_to = pick_return_to('/times/index.php');
+
 $err = null;
 $today = (new DateTimeImmutable('now'))->format('Y-m-d');
 $now_time = (new DateTimeImmutable('now'))->format('H:i');
@@ -73,12 +75,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $ins->execute([$account_id, $user_id, $task_id, $started_at, $ended_at, $minutes, $billable, $status]);
 
     flash('Zeit wurde angelegt.', 'success');
-    $return_to = $_POST['return_to'] ?? '';
-    if ($return_to && !preg_match("~^(?:https?:)?//~i", $return_to) && str_starts_with($return_to, '/')) {
-      redirect($return_to);
-    } else {
-      redirect('/times/index.php');
-    }
+    redirect($return_to);
+
     exit;
   }
 }
@@ -89,7 +87,6 @@ function qs_self($arr) {
   $q = array_merge($_GET, $arr);
   return htmlspecialchars($base.'?'.http_build_query($q), ENT_QUOTES, 'UTF-8');
 }
-$return_to = $_GET['return_to'] ?? ($_SERVER['HTTP_REFERER'] ?? url('/times/index.php'));
 
 // default datetime-local values
 $default_start = $today.'T'.$now_time;
@@ -176,7 +173,7 @@ $default_end = '';
         </div>
         <div class="d-flex gap-2">
           <button class="btn btn-primary" <?=$project_id? '' : 'disabled'?>>Speichern</button>
-          <a class="btn btn-outline-secondary" href="<?=h($return_to)?>">Abbrechen</a>
+          <a class="btn btn-outline-secondary" href="<?= h(url($return_to)) ?>">Abbrechen</a>
         </div>
       </div>
     </form>

@@ -148,7 +148,7 @@ function qs($base,$arr){return htmlspecialchars($base.'?'.http_build_query($arr)
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h3>Zeiten</h3>
   <div class="d-flex gap-2">
-    <a class="btn btn-primary" href="<?=url('/times/new.php')?>?return_to=<?=urlencode($_SERVER['REQUEST_URI'])?>">Neu</a>
+    <a class="btn btn-primary" href="<?= h(with_return_to(url('/times/new.php'))) ?>">Neu</a>
     <a class="btn btn-sm btn-outline-secondary" href="<?=qs($base, array_merge($persist, ['start'=>$today,'end'=>$today,'page'=>1]))?>">Heute</a>
     <a class="btn btn-sm btn-outline-secondary" href="<?php
       $now = new DateTimeImmutable('today');

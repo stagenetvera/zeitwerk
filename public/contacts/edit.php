@@ -12,6 +12,8 @@ $contact = $st->fetch();
 if (!$contact) { echo '<div class="alert alert-danger">Ansprechpartner nicht gefunden.</div>'; require __DIR__ . '/../../src/layout/footer.php'; exit; }
 $company_id = (int)$contact['company_id'];
 
+$return_to = pick_return_to('/companies/show.php?id='.$company_id);
+
 // Firma für Titel
 $cs = $pdo->prepare('SELECT id, name FROM companies WHERE id = ? AND account_id = ?');
 $cs->execute([$company_id,$account_id]);
@@ -26,7 +28,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
     $upd = $pdo->prepare('UPDATE contacts SET name=?, email=?, phone=? WHERE id=? AND account_id=?');
     $upd->execute([$name,$email ?: null,$phone ?: null,$id,$account_id]);
     flash('Ansprechpartner gespeichert.', 'success');
-    redirect('/companies/show.php?id=' . $company_id);
+    redirect($return_to);
     $ok = 'Gespeichert.';
     $st->execute([$id,$account_id]); $contact = $st->fetch();
   } else {
@@ -41,6 +43,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
     <?php if ($err): ?><div class="alert alert-danger"><?=$err?></div><?php endif; ?>
     <form method="post">
       <?=csrf_field()?>
+      <?= return_to_hidden($return_to) ?>
       <div class="mb-3">
         <label class="form-label">Name</label>
         <input type="text" name="name" class="form-control" value="<?=h($contact['name'])?>" required>
@@ -54,7 +57,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
         <input type="text" name="phone" class="form-control" value="<?=h($contact['phone'] ?? '')?>">
       </div>
       <button class="btn btn-primary">Speichern</button>
-      <a class="btn btn-outline-secondary" href="<?=url('/companies/show.php')?>?id=<?=$company_id?>">Abbrechen</a>
+      <a class="btn btn-outline-secondary" href="<?= h(url($return_to)) ?>">Abbrechen</a>
     </form>
   </div>
 </div>

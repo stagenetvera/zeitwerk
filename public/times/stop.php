@@ -15,21 +15,7 @@ if (!$running) {
 
 $err=null; $ok=null;
 
-
-$return_to = $_POST['return_to'] ?? '';
-if (!$return_to && isset($_SERVER['HTTP_REFERER'])) {
-  $return_to = $_SERVER['HTTP_REFERER'];
-}
-// sanitize: allow only same-site relative URLs
-$valid = false;
-if ($return_to && !preg_match('~^(?:https?:)?//~i', $return_to)) {
-  $valid = (str_starts_with($return_to, '/'));
-}
-
-if (!$valid) {
-    $return_to = "/dashboard/index.php";
-}
-
+$return_to = pick_return_to('/dashboard/index.php');
 
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -108,7 +94,7 @@ if (!$running['task_id']) {
     </div>
     <form method="post">
   <?=csrf_field()?>
-  <input type="hidden" name="return_to" value="<?=h($return_to)?>">
+  <?= return_to_hidden($return_to) ?>
 
   <?php if (!$running['task_id']): ?>
     <div class="mb-3">
@@ -170,7 +156,7 @@ if (!$running['task_id']) {
   <?php endif; ?>
 
   <button class="btn btn-warning">Stoppen</button>
-  <a class="btn btn-outline-secondary" href="<?=h($return_to)?>">Abbrechen</a>
+  <a class="btn btn-outline-secondary" href="<?= h(url($return_to)) ?>">Abbrechen</a>
 </form>
   </div>
 </div>

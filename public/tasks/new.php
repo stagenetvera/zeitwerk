@@ -30,19 +30,8 @@ $project_id = isset($_POST['project_id']) ? (int)$_POST['project_id']
             : (isset($_GET['project_id']) ? (int)$_GET['project_id'] : 0);
 $err = null;
 
-$return_to = $_POST['return_to'] ?? '';
-if (!$return_to && isset($_SERVER['HTTP_REFERER'])) {
-  $return_to = $_SERVER['HTTP_REFERER'];
-}
-// sanitize: allow only same-site relative URLs
-$valid = false;
-if ($return_to && !preg_match('~^(?:https?:)?//~i', $return_to)) {
-  $valid = (str_starts_with($return_to, '/'));
-}
 
-if (!$valid) {
-    $return_to = "/dashboard/index.php";
-}
+$return_to = pick_return_to('/companies/show.php?id='.$company_id);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST["action"]) && $_POST["action"] == "save") {
   $company_id = (int)($_POST['company_id'] ?? 0);
@@ -64,7 +53,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST["action"]) && $_POST["
     $chk = $pdo->prepare('SELECT COUNT(*) FROM projects WHERE id = ? AND company_id = ? AND account_id = ?');
     $chk->execute([$project_id, $company_id, $account_id]);
     if (!$chk->fetchColumn()) {
-      $ok = false; $err = 'Ungültige Projekt-/Firmenkombination.';
+      $ok = false;
+      $err = 'Ungültige Projekt-/Firmenkombination.';
     }
   }
 
@@ -114,8 +104,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST["action"]) && $_POST["
 
     <form method="post" id="taskForm">
       <?=csrf_field()?>
+      <?= return_to_hidden($return_to) ?>
       <input type="hidden" name="action" value="save">
-      <input type="hidden" name="return_to" value="<?= h($return_to) ?>">
       <div class="row">
         <div class="col-md-6 mb-3">
           <label class="form-label">Firma</label>
@@ -186,7 +176,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST["action"]) && $_POST["
       </div>
 
       <button class="btn btn-primary">Speichern</button>
-      <a class="btn btn-outline-secondary" href="<?=url('/dashboard/index.php')?>">Zurück</a>
+      <a class="btn btn-outline-secondary" href="<?= h(url($return_to)) ?>">Abbrechen</a>
     </form>
 
     <script>

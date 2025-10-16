@@ -7,7 +7,6 @@ csrf_check();
 
 $user = auth_user();
 $account_id = (int)$user['account_id'];
-var_dump($_POST);
 
 $return_to = $_POST['return_to'] ?? '';
 if (!$return_to && isset($_SERVER['HTTP_REFERER'])) {

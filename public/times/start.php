@@ -6,6 +6,8 @@ $user = auth_user();
 $account_id = (int)$user['account_id'];
 $user_id = (int)$user['id'];
 
+$return_to = pick_return_to('/dashboard/index.php');
+
 // Vereinheitlichtes Verhalten:
 // "Start" stoppt immer einen ggf. laufenden Timer und startet sofort einen neuen
 // (auch ohne task_id -> dann mit NULL-Aufgabe). Kein zusätzliches Formular.
@@ -23,7 +25,7 @@ try {
         if ($task_id <= 0) $task_id = null;
     }
 
-    $return_to = $_POST['return_to'] ?? $_GET['return_to'] ?? url('/dashboard/index.php');
+
 
     $pdo->beginTransaction();
 
@@ -55,28 +57,10 @@ try {
     if (function_exists('flash')) {
         flash('Fehler beim Starten des Timers: ' . $e->getMessage(), 'danger');
     }
-    $fallback = $_POST['return_to'] ?? $_GET['return_to'] ?? url('/dashboard/index.php');
+    $fallback = url('/dashboard/index.php');
     redirect($fallback);
     exit;
 }
-
-
-
-
-$return_to = $_POST['return_to'] ?? '';
-if (!$return_to && isset($_SERVER['HTTP_REFERER'])) {
-  $return_to = $_SERVER['HTTP_REFERER'];
-}
-// sanitize: allow only same-site relative URLs
-$valid = false;
-if ($return_to && !preg_match('~^(?:https?:)?//~i', $return_to)) {
-  $valid = (str_starts_with($return_to, '/'));
-}
-
-if (!$valid) {
-    $return_to = "/dashboard/index.php";
-}
-
 
 if ($_SERVER['REQUEST_METHOD']==='POST') {
   $task_id = isset($_POST['task_id']) && $_POST['task_id'] !== '' ? (int)$_POST['task_id'] : null;
@@ -125,7 +109,7 @@ $tasks = $ts->fetchAll();
         </select>
       </div>
       <button class="btn btn-success">Start</button>
-      <a class="btn btn-outline-secondary" href="<?=url('/times/index.php')?>">Abbrechen</a>
+      <a class="btn btn-outline-secondary" href="<?= h(url($return_to)) ?>">Abbrechen</a>
     </form>
   </div>
 </div>

@@ -13,6 +13,8 @@ $project = $st->fetch();
 if (!$project) { echo '<div class="alert alert-danger">Projekt nicht gefunden.</div>'; require __DIR__ . '/../../src/layout/footer.php'; exit; }
 $company_id = (int)$project['company_id'];
 
+$return_to = pick_return_to('/companies/show.php?id='.$company_id);
+
 $cs = $pdo->prepare('SELECT id, name, hourly_rate FROM companies WHERE id = ? AND account_id = ?');
 $cs->execute([$company_id, $account_id]);
 $company = $cs->fetch();
@@ -28,8 +30,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $upd = $pdo->prepare('UPDATE projects SET title=?, status=?, hourly_rate=? WHERE id=? AND account_id=?');
     $upd->execute([$title, $status, $rate, $id, $account_id]);
     flash('Projekt gespeichert.', 'success');
-
-    redirect('/companies/show.php?id=' . $company_id);
+    redirect($return_to);
   } else {
     $err = 'Titel ist erforderlich.';
   }
@@ -42,6 +43,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <?php if ($err): ?><div class="alert alert-danger"><?=$err?></div><?php endif; ?>
     <form method="post">
       <?=csrf_field()?>
+      <?= return_to_hidden($return_to) ?>
       <div class="mb-3">
         <label class="form-label">Titel</label>
         <input type="text" name="title" class="form-control" value="<?=h($project['title'])?>" required>
@@ -69,7 +71,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         </div>
       </div>
       <button class="btn btn-primary">Speichern</button>
-      <a class="btn btn-outline-secondary" href="<?=url('/companies/show.php')?>?id=<?=$company_id?>">Abbrechen</a>
+      <a class="btn btn-outline-secondary" href="<?= h(url($return_to)) ?>">Abbrechen</a>
     </form>
   </div>
 </div>

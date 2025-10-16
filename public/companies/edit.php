@@ -7,19 +7,9 @@ csrf_check();
 $user = auth_user();
 $account_id = (int)$user['account_id'];
 
-// ---------- return_to (analog zu deinen anderen Skripten) ----------
-$return_to = $_POST['return_to'] ?? '';
-if (!$return_to && isset($_SERVER['HTTP_REFERER'])) {
-  $return_to = $_SERVER['HTTP_REFERER'];
-}
-// sanitize: allow only same-site relative URLs
-$valid = false;
-if ($return_to && !preg_match('~^(?:https?:)?//~i', $return_to)) {
-  $valid = (str_starts_with($return_to, '/'));
-}
-if (!$valid) {
-  $return_to = "/companies/index.php";
-}
+
+$return_to = pick_return_to('/companies/index.php');
+
 
 // ---------- Input & Datensatz laden ----------
 $id = isset($_GET['id']) ? (int)$_GET['id'] : (int)($_POST['id'] ?? 0);
@@ -77,7 +67,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <form method="post">
       <?= csrf_field() ?>
       <input type="hidden" name="id" value="<?= $company['id'] ?>">
-      <input type="hidden" name="return_to" value="<?= h($return_to) ?>">
+      <?= return_to_hidden($return_to) ?>
 
       <div class="mb-3">
         <label class="form-label">Name</label>
@@ -111,7 +101,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
       <div class="d-flex gap-2">
         <button class="btn btn-primary">Speichern</button>
-        <a class="btn btn-outline-secondary" href="<?= h($return_to) ?>">Abbrechen</a>
+        <a class="btn btn-outline-secondary" href="<?= h(url($return_to)) ?>">Abbrechen</a>
       </div>
     </form>
   </div>
