@@ -154,14 +154,19 @@ function delete_item_with_times(PDO $pdo, int $account_id, int $invoice_id, int 
 $err = null; $ok = null;
 
 if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['action']==='save') {
-  // Grundvalidierung
+  // Kopf-Felder
   $issue_date = $_POST['issue_date'] ?? $invoice['issue_date'];
   $due_date   = $_POST['due_date']   ?? $invoice['due_date'];
 
-  // Nur Rechnungen im Status 'in_vorbereitung' bearbeiten (optional)
-  if (($invoice['status'] ?? '') !== 'in_vorbereitung') {
-    $err = 'Diese Rechnung kann nicht mehr bearbeitet werden.';
+  // Status aus Formular (whitelist)
+  $allowed_status = ['in_vorbereitung','gestellt','gemahnt','bezahlt','storniert'];
+  $new_status = $_POST['status'] ?? ($invoice['status'] ?? 'in_vorbereitung');
+  if (!in_array($new_status, $allowed_status, true)) {
+    $new_status = $invoice['status'] ?? 'in_vorbereitung';
   }
+
+  // Items dürfen nur verändert werden, solange die Rechnung in Vorbereitung ist
+  $canEditItems = (($invoice['status'] ?? '') === 'in_vorbereitung');
 
   $itemsPosted   = $_POST['items'] ?? [];          // items[idx][id|description|hourly_rate|tax_rate|time_ids[]]
   $deletedPosted = $_POST['items_deleted'] ?? [];  // array von invoice_item.id
@@ -169,146 +174,166 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
   if (!$err) {
     $pdo->beginTransaction();
     try {
-      // -----------------------
-      // 1) GELÖSCHTE POSITIONEN
-      // -----------------------
-      if ($deletedPosted) {
-        $deletedIds = array_values(array_filter(array_map('intval', (array)$deletedPosted), fn($v)=>$v>0));
-        if ($deletedIds) {
-          // hole alle Time-IDs dieser Items
-          $inDel = implode(',', array_fill(0, count($deletedIds), '?'));
-          $getTimes = $pdo->prepare("
-            SELECT time_id FROM invoice_item_times
-            WHERE account_id=? AND invoice_item_id IN ($inDel)
-          ");
-          $getTimes->execute(array_merge([$account_id], $deletedIds));
-          $toOpen = array_map(fn($r)=>(int)$r['time_id'], $getTimes->fetchAll());
+      $sum_net   = 0.0;
+      $sum_gross = 0.0;
 
-          // Verknüpfungen löschen
-          $delLinks = $pdo->prepare("DELETE FROM invoice_item_times WHERE account_id=? AND invoice_item_id IN ($inDel)");
-          $delLinks->execute(array_merge([$account_id], $deletedIds));
+      if ($canEditItems) {
+        // -----------------------
+        // 1) GELÖSCHTE POSITIONEN
+        // -----------------------
+        if ($deletedPosted) {
+          $deletedIds = array_values(array_filter(array_map('intval', (array)$deletedPosted), fn($v)=>$v>0));
+          if ($deletedIds) {
+            $inDel = implode(',', array_fill(0, count($deletedIds), '?'));
 
-          // Items löschen (nur aus dieser Rechnung)
-          $delItems = $pdo->prepare("DELETE FROM invoice_items WHERE account_id=? AND invoice_id=? AND id IN ($inDel)");
-          $delItems->execute(array_merge([$account_id, (int)$invoice['id']], $deletedIds));
+            // Time-IDs der Items ermitteln
+            $getTimes = $pdo->prepare("
+              SELECT time_id FROM invoice_item_times
+              WHERE account_id=? AND invoice_item_id IN ($inDel)
+            ");
+            $getTimes->execute(array_merge([$account_id], $deletedIds));
+            $toOpen = array_map(fn($r)=>(int)$r['time_id'], $getTimes->fetchAll());
 
-          // Zeit-Status zurück auf 'offen', aber nur wenn sie nun nirgends mehr verknüpft sind
-          if ($toOpen) {
-            $toOpen = array_values(array_unique(array_filter($toOpen, fn($v)=>$v>0)));
-            $inTimes = implode(',', array_fill(0, count($toOpen), '?'));
-            // LEFT JOIN-Variante, um nur verwaiste Zeiten umzustellen
-            $sql = "
+            // Links löschen
+            $pdo->prepare("DELETE FROM invoice_item_times WHERE account_id=? AND invoice_item_id IN ($inDel)")
+                ->execute(array_merge([$account_id], $deletedIds));
+
+            // Items löschen
+            $pdo->prepare("DELETE FROM invoice_items WHERE account_id=? AND invoice_id=? AND id IN ($inDel)")
+                ->execute(array_merge([$account_id, (int)$invoice['id']], $deletedIds));
+
+            // Zeiten zurück auf 'offen', aber nur wenn sie nirgendwo mehr verknüpft sind
+            if ($toOpen) {
+              $toOpen = array_values(array_unique(array_filter($toOpen, fn($v)=>$v>0)));
+              $inTimes = implode(',', array_fill(0, count($toOpen), '?'));
+              $sql = "
+                UPDATE times t
+                LEFT JOIN invoice_item_times iit
+                  ON iit.account_id=t.account_id AND iit.time_id=t.id
+                SET t.status='offen'
+                WHERE t.account_id=? AND t.id IN ($inTimes) AND iit.time_id IS NULL
+              ";
+              $pdo->prepare($sql)->execute(array_merge([$account_id], $toOpen));
+            }
+          }
+        }
+
+        // -------------------------------------------
+        // 2) EXISTIERENDE POSITIONEN AKTUALISIEREN
+        // -------------------------------------------
+        $updItem = $pdo->prepare("
+          UPDATE invoice_items
+             SET description=?, unit_price=?, vat_rate=?, quantity=?, total_net=?, total_gross=?
+           WHERE account_id=? AND invoice_id=? AND id=?
+        ");
+
+        $getCurrTimes = $pdo->prepare("
+          SELECT time_id FROM invoice_item_times
+          WHERE account_id=? AND invoice_item_id=?
+        ");
+        $addLink = $pdo->prepare("INSERT INTO invoice_item_times (account_id, invoice_item_id, time_id) VALUES (?,?,?)");
+        $delLink = $pdo->prepare("DELETE FROM invoice_item_times WHERE account_id=? AND invoice_item_id=? AND time_id=?");
+
+        // Hilfsfunktion
+        $dec = function($s){
+          if ($s === null) return 0.0;
+          if (is_float($s) || is_int($s)) return (float)$s;
+          $s = str_replace(['.', ','], ['', '.'], (string)$s);
+          $n = (float)$s;
+          return is_finite($n) ? $n : 0.0;
+        };
+        $sum_minutes = function(PDO $pdo, int $account_id, array $ids): int {
+          $ids = array_values(array_filter(array_map('intval', $ids), fn($v)=>$v>0));
+          if (!$ids) return 0;
+          $in = implode(',', array_fill(0, count($ids), '?'));
+          $st = $pdo->prepare("SELECT COALESCE(SUM(minutes),0) FROM times WHERE account_id=? AND id IN ($in)");
+          $st->execute(array_merge([$account_id], $ids));
+          return (int)$st->fetchColumn();
+        };
+
+        foreach ($itemsPosted as $row) {
+          $item_id = isset($row['id']) ? (int)$row['id'] : 0;
+          if ($item_id <= 0) continue;
+
+          $desc = trim($row['description'] ?? '');
+          $rate = $dec($row['hourly_rate'] ?? 0);
+          $vat  = $dec($row['tax_rate'] ?? 19.0);
+
+          $newTimes = array_values(array_filter(array_map('intval', $row['time_ids'] ?? []), fn($v)=>$v>0));
+
+          // Aktuell verlinkte Zeiten
+          $getCurrTimes->execute([$account_id, $item_id]);
+          $currTimes = array_map(fn($r)=>(int)$r['time_id'], $getCurrTimes->fetchAll());
+
+          // Diff
+          $toAdd    = array_values(array_diff($newTimes, $currTimes));
+          $toRemove = array_values(array_diff($currTimes, $newTimes));
+
+          // Minuten neu berechnen
+          $minutes = $sum_minutes($pdo, $account_id, $newTimes);
+          $qty     = round($minutes/60, 2);
+          $net     = round($qty * $rate, 2);
+          $gross   = round($net * (1 + $vat/100), 2);
+
+          // Item aktualisieren
+          $updItem->execute([
+            $desc, $rate, $vat, $qty, $net, $gross,
+            $account_id, (int)$invoice['id'], $item_id
+          ]);
+
+          // Links + Status
+          if ($toAdd) {
+            foreach ($toAdd as $tid) { $addLink->execute([$account_id, $item_id, $tid]); }
+            $ph = implode(',', array_fill(0, count($toAdd), '?'));
+            $pdo->prepare("UPDATE times SET status='in_abrechnung' WHERE account_id=? AND id IN ($ph)")
+                ->execute(array_merge([$account_id], $toAdd));
+          }
+          if ($toRemove) {
+            foreach ($toRemove as $tid) { $delLink->execute([$account_id, $item_id, $tid]); }
+            $ph = implode(',', array_fill(0, count($toRemove), '?'));
+            // Nur verwaiste Zeiten zurück auf 'offen'
+            $sqlOpen = "
               UPDATE times t
               LEFT JOIN invoice_item_times iit
                 ON iit.account_id=t.account_id AND iit.time_id=t.id
               SET t.status='offen'
-              WHERE t.account_id=? AND t.id IN ($inTimes) AND iit.time_id IS NULL
+              WHERE t.account_id=? AND t.id IN ($ph) AND iit.time_id IS NULL
             ";
-            $st = $pdo->prepare($sql);
-            $st->execute(array_merge([$account_id], $toOpen));
+            $pdo->prepare($sqlOpen)->execute(array_merge([$account_id], $toRemove));
           }
         }
       }
 
       // -------------------------------------------
-      // 2) EXISTIERENDE POSITIONEN AKTUALISIEREN
+      // 3) Summen und Status updaten
       // -------------------------------------------
-      // Hilfsstatements
-      $updItem = $pdo->prepare("
-        UPDATE invoice_items
-           SET description=?, unit_price=?, vat_rate=?, quantity=?, total_net=?, total_gross=?
-         WHERE account_id=? AND invoice_id=? AND id=?
-      ");
+      // Summen immer sauber aus invoice_items ziehen
+      $sumSt = $pdo->prepare("SELECT COALESCE(SUM(total_net),0), COALESCE(SUM(total_gross),0)
+                              FROM invoice_items WHERE account_id=? AND invoice_id=?");
+      $sumSt->execute([$account_id, (int)$invoice['id']]);
+      [$sum_net, $sum_gross] = $sumSt->fetch(PDO::FETCH_NUM);
 
-      $getCurrTimes = $pdo->prepare("
-        SELECT time_id FROM invoice_item_times
-        WHERE account_id=? AND invoice_item_id=?
-      ");
-      $addLink   = $pdo->prepare("INSERT INTO invoice_item_times (account_id, invoice_item_id, time_id) VALUES (?,?,?)");
-      $delLink   = $pdo->prepare("DELETE FROM invoice_item_times WHERE account_id=? AND invoice_item_id=? AND time_id=?");
-      $setInAb   = $pdo->prepare("UPDATE times SET status='in_abrechnung' WHERE account_id=? AND id IN (%s)");
-      // für 'offen' nutzen wir die JOIN-Variante unten (verwaiste)
+      // Rechnungskopf inkl. Status speichern
+      $pdo->prepare("UPDATE invoices SET issue_date=?, due_date=?, status=?, total_net=?, total_gross=? WHERE account_id=? AND id=?")
+          ->execute([$issue_date, $due_date, $new_status, $sum_net, $sum_gross, $account_id, (int)$invoice['id']]);
 
-      $sum_net   = 0.0;
-      $sum_gross = 0.0;
-
-      foreach ($itemsPosted as $row) {
-        $item_id = isset($row['id']) ? (int)$row['id'] : 0;
-        if ($item_id <= 0) continue; // (Optional) Neu-Items könntest du hier anlegen, aktuell nur Update
-
-        $desc = trim($row['description'] ?? '');
-        $rate = dec($row['hourly_rate'] ?? 0);
-        $vat  = dec($row['tax_rate'] ?? 19.0);
-
-        $newTimes = array_values(array_filter(array_map('intval', $row['time_ids'] ?? []), fn($v)=>$v>0));
-
-        // Aktuell verlinkte Zeiten lesen
-        $getCurrTimes->execute([$account_id, $item_id]);
-        $currTimes = array_map(fn($r)=>(int)$r['time_id'], $getCurrTimes->fetchAll());
-
-        // Diff bilden
-        $toAdd    = array_values(array_diff($newTimes, $currTimes));
-        $toRemove = array_values(array_diff($currTimes, $newTimes));
-
-        // Minuten auf Basis der aktuell gewünschten Zeiten
-        $minutes = sum_minutes_for_times_edit($pdo, $account_id, $newTimes);
-        $qty     = round($minutes/60, 2);
-        $net     = round($qty * $rate, 2);
-        $gross   = round($net * (1 + $vat/100), 2);
-
-        // Item schreiben
-        $updItem->execute([
-          $desc, $rate, $vat, $qty, $net, $gross,
-          $account_id, (int)$invoice['id'], $item_id
-        ]);
-
-        // Links hinzufügen
-        if ($toAdd) {
-          foreach ($toAdd as $tid) {
-            $addLink->execute([$account_id, $item_id, $tid]);
-          }
-          // Status auf 'in_abrechnung' setzen
-          $placeholders = implode(',', array_fill(0, count($toAdd), '?'));
-          $st = $pdo->prepare(sprintf("UPDATE times SET status='in_abrechnung' WHERE account_id=? AND id IN ($placeholders)"));
-          $st->execute(array_merge([$account_id], $toAdd));
+      // Times-Status an Rechnungsstatus anpassen (nur wenn Änderung)
+      if ($new_status !== ($invoice['status'] ?? '')) {
+        $map = [
+          'in_vorbereitung' => 'in_abrechnung',
+          'gestellt'        => 'abgerechnet',
+          'gemahnt'         => 'abgerechnet',
+          'bezahlt'         => 'abgerechnet',
+          'storniert'       => 'offen',
+        ];
+        if (isset($map[$new_status])) {
+          set_times_status_for_invoice($pdo, $account_id, (int)$invoice['id'], $map[$new_status]);
         }
-
-        // Links entfernen
-        if ($toRemove) {
-          foreach ($toRemove as $tid) {
-            $delLink->execute([$account_id, $item_id, $tid]);
-          }
-          // Nur verwaiste Zeiten zurück auf 'offen'
-          $inRem = implode(',', array_fill(0, count($toRemove), '?'));
-          $sqlOpen = "
-            UPDATE times t
-            LEFT JOIN invoice_item_times iit
-              ON iit.account_id=t.account_id AND iit.time_id=t.id
-            SET t.status='offen'
-            WHERE t.account_id=? AND t.id IN ($inRem) AND iit.time_id IS NULL
-          ";
-          $st = $pdo->prepare($sqlOpen);
-          $st->execute(array_merge([$account_id], $toRemove));
-        }
-
-        $sum_net   += $net;
-        $sum_gross += $gross;
       }
-
-      // -------------------------------------------
-      // 3) Summen + Kopfdaten aktualisieren
-      // -------------------------------------------
-      // Falls du lieber serverseitig aus invoice_items summierst:
-      // $sum = $pdo->prepare("SELECT COALESCE(SUM(total_net),0), COALESCE(SUM(total_gross),0) FROM invoice_items WHERE account_id=? AND invoice_id=?");
-      // $sum->execute([$account_id, (int)$invoice['id']]);
-      // [$sum_net, $sum_gross] = $sum->fetch(PDO::FETCH_NUM);
-
-      $updInv = $pdo->prepare("UPDATE invoices SET issue_date=?, due_date=?, total_net=?, total_gross=? WHERE account_id=? AND id=?");
-      $updInv->execute([$issue_date, $due_date, $sum_net, $sum_gross, $account_id, (int)$invoice['id']]);
 
       $pdo->commit();
-
-      // zurück zur Firma oder zurück zur Rechnung – wie es bei dir üblich ist:
+      $ok = 'Rechnung gespeichert.';
+      // Nach dem Speichern auf der gleichen Seite bleiben
       redirect(url('/invoices/edit.php').'?id='.(int)$invoice['id']);
     } catch (Throwable $e) {
       $pdo->rollBack();
@@ -316,8 +341,6 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
     }
   }
 }
-
-// ---------- Anzeige-Daten laden (nach evtl. Save/Delete) ----------
 // ---------- Anzeige-Daten laden (nach evtl. Save/Delete) ----------
 $invStmt = $pdo->prepare("SELECT * FROM invoices WHERE id = ? AND account_id = ?");
 $invStmt->execute([$invoice_id, $account_id]);
