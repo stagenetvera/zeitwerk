@@ -119,12 +119,13 @@ if (!empty($groups)) {
                 <?php foreach ($row['times'] as $t): $tid=(int)$t['id']; $m=(int)$t['minutes']; ?>
                   <tr>
                     <td>
-                        <input type="checkbox"
-                            class="inv-time form-check-input"
-                            name="<?=$NAME_TIMES?>[]"
-                            value="<?= (int)$t['id'] ?>"
-                            checked>
 
+                        <input type="checkbox"
+                            class="form-check-input time-checkbox"
+                            name="<?=$NAME_TIMES?>[<?= (int)$row['task_id'] ?>][]"
+                            value="<?= (int)$t['id'] ?>"
+                            data-min="<?= (int)$t['minutes'] ?>"
+                            checked>
                     </td>
                     <td><?=h($t['started_at'])?> – <?=h($t['ended_at'])?></td>
                     <td class="text-end"><?=_fmt_hhmm($m)?></td>

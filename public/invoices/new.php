@@ -14,18 +14,21 @@
  function fmt_minutes_to_hours($m)
  {return round(((int)$m) / 60, 2);}
 
+ // ...
+ /** Summe Minuten für eine Menge von Time-IDs dieser Firma/Account */
+ function sum_minutes_for_times(PDO $pdo, int $account_id, array $ids): int
+ {
+  $ids = array_values(array_filter(array_map('intval', $ids), fn($v) => $v > 0));
+  if (! $ids) {
+   return 0;
+  }
 
-// ...
-/** Summe Minuten für eine Menge von Time-IDs dieser Firma/Account */
-function sum_minutes_for_times(PDO $pdo, int $account_id, array $ids): int {
-  $ids = array_values(array_filter(array_map('intval', $ids), fn($v)=>$v>0));
-  if (!$ids) return 0;
-  $in = implode(',', array_fill(0, count($ids), '?'));
+  $in     = implode(',', array_fill(0, count($ids), '?'));
   $params = array_merge([$account_id], $ids);
-  $st = $pdo->prepare("SELECT COALESCE(SUM(minutes),0) AS m FROM times WHERE account_id = ? AND id IN ($in)");
+  $st     = $pdo->prepare("SELECT COALESCE(SUM(minutes),0) AS m FROM times WHERE account_id = ? AND id IN ($in)");
   $st->execute($params);
   return (int)$st->fetchColumn();
-}
+ }
 
  // ---- Daten für neue Rechnung: offene, fakturierbare Zeiten der Firma, gruppiert nach Projekten -> Tasks -> Times
  function fmt_minutes_hhmm(int $m): string
@@ -210,7 +213,6 @@ function sum_minutes_for_times(PDO $pdo, int $account_id, array $ids): int {
  }
 
  // -------- Speichern ----------
-
  if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'save') {
   $company_id = (int)($_POST['company_id'] ?? 0);
   $issue_date = $_POST['issue_date'] ?? date('Y-m-d');
@@ -278,113 +280,132 @@ function sum_minutes_for_times(PDO $pdo, int $account_id, array $ids): int {
     $invoice_id = (int)$pdo->lastInsertId();
 
     // 2) Positionen vorbereiten
-    $insItem = $pdo->prepare("
-        INSERT INTO invoice_items
-          (account_id, invoice_id, project_id, task_id, description, quantity, unit_price, vat_rate, total_net, total_gross, position)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?)
-      ");
-    $insLink = $pdo->prepare("
-        INSERT INTO invoice_item_times (account_id, invoice_item_id, time_id)
-        VALUES (?,?,?)
-      ");
-    $setTimeStatus = $pdo->prepare("
-        UPDATE times SET status = 'in_abrechnung' WHERE account_id = ? AND id = ?
-      ");
+$insItem = $pdo->prepare("
+  INSERT INTO invoice_items
+    (account_id, invoice_id, project_id, task_id, description, quantity, unit_price, vat_rate, total_net, total_gross, position)
+  VALUES (?,?,?,?,?,?,?,?,?,?,?)
+");
+$insLink = $pdo->prepare("
+  INSERT INTO invoice_item_times (account_id, invoice_item_id, time_id)
+  VALUES (?,?,?)
+");
+$setTimeStatus = $pdo->prepare("
+  UPDATE times SET status = 'in_abrechnung' WHERE account_id = ? AND id = ?
+");
 
-    $pos       = 1;
-    $sum_net   = 0.00;
-    $sum_gross = 0.00;
+// Formular-Felder einsammeln
+$itemsForm   = $_POST['items']    ?? []; // items[idx][task_id|description|hourly_rate|tax_rate|...]
+$timesRaw    = $_POST['time_ids'] ?? []; // time_ids[task_id][] = time_id
+$timesByTask = normalize_times_selection($timesRaw, $pdo, $account_id);
 
-    // 2a) Ausgewählte Task-Positionen – aus $timesByTask
-    foreach ($timesByTask as $tid => $timeIds) {
-     $row = $tasksForm[$tid] ?? [];
+// Map: task_id => { description, rate, vat }
+$propsByTask = [];
+foreach ($itemsForm as $row) {
+  $tid = isset($row['task_id']) ? (int)$row['task_id'] : 0;
+  if (!$tid) continue;
 
-     $task_id    = (int)$tid;
-     $project_id = isset($row['project_id']) && $row['project_id'] !== '' ? (int)$row['project_id'] : null;
-     $desc       = trim($row['description'] ?? '');
-     $minutes    = isset($row['minutes']) ? (int)$row['minutes'] : 0;
-     $rate       = isset($row['rate']) ? (float)$row['rate'] : 0.0;
-     $vat        = isset($row['vat']) ? (float)$row['vat'] : 19.0;
+  // Komma-Dezimalzahlen erlauben
+  $rate = isset($row['hourly_rate']) ? (float)str_replace(',', '.', $row['hourly_rate']) : 0.0;
+  $vat  = isset($row['tax_rate'])    ? (float)str_replace(',', '.', $row['tax_rate'])    : 19.0;
 
-     // Minuten notfalls aus den gewählten times summieren (robuster als nur JS)
-     if ($minutes <= 0) {
-      $in   = implode(',', array_fill(0, count($timeIds), '?'));
-      $sumQ = $pdo->prepare("SELECT SUM(minutes) FROM times WHERE account_id = ? AND id IN ($in)");
-      $sumQ->execute(array_merge([$account_id], $timeIds));
-      $minutes = (int)$sumQ->fetchColumn();
-     }
+  $propsByTask[$tid] = [
+    'description' => trim($row['description'] ?? ''),
+    'rate'        => $rate,
+    'vat'         => $vat,
+  ];
+}
 
-     // Beschreibung leer? -> aus Task holen
-     if ($desc === '') {
-      $dQ = $pdo->prepare("SELECT description FROM tasks WHERE account_id = ? AND id = ?");
-      $dQ->execute([$account_id, $task_id]);
-      $d = $dQ->fetchColumn();
-      if ($d) {
-       $desc = (string)$d;
-      }
+$getTaskProject = $pdo->prepare("SELECT project_id FROM tasks WHERE account_id = ? AND id = ?");
 
-     }
+$pos      = 1;
+$sum_net  = 0.00;
+$sum_gross= 0.00;
 
-     // Rate 0? -> effektiven Satz aus Projekt/Firma holen
-     if ($rate <= 0) {
-      $rQ = $pdo->prepare("
-      SELECT COALESCE(p.hourly_rate, c.hourly_rate) AS eff
-      FROM tasks t
-      JOIN projects p ON p.id=t.project_id AND p.account_id=t.account_id
-      JOIN companies c ON c.id=p.company_id AND c.account_id=p.account_id
-      WHERE t.account_id=? AND t.id=?
-    ");
-      $rQ->execute([$account_id, $task_id]);
-      $rate = (float)($rQ->fetchColumn() ?: 0);
-     }
+/** 2a) Normale Erstellung: pro Task die explizit ausgewählten Zeiten abrechnen */
+foreach ($timesByTask as $task_id => $picked) {
+  $task_id = (int)$task_id;
+  $picked  = array_values(array_filter(array_map('intval', (array)$picked), fn($v)=>$v>0));
+  if (!$picked) continue;
 
-     // Beträge
-     $qty   = round($minutes / 60, 2);
-     $net   = round($qty * $rate, 2);
-     $gross = round($net * (1 + $vat / 100), 2);
+  // Eigenschaften aus items[...] (nicht aus tasks[...])
+  $p     = $propsByTask[$task_id] ?? ['description'=>'', 'rate'=>0.0, 'vat'=>19.0];
+  $desc  = $p['description'];
+  $rate  = (float)$p['rate'];
+  $vat   = (float)$p['vat'];
 
-     $insItem->execute([
-      $account_id, $invoice_id, $project_id, $task_id, $desc,
-      $qty, $rate, $vat, $net, $gross, $pos++,
-     ]);
-     $item_id = (int)$pdo->lastInsertId();
+  // Projekt bestimmen
+  $getTaskProject->execute([$account_id, $task_id]);
+  $project_id = ($pid = $getTaskProject->fetchColumn()) ? (int)$pid : null;
 
-     // Zeiten verlinken + Status setzen
-     foreach ($timeIds as $time_id) {
+  // Minuten summieren
+  $minutes = sum_minutes_for_times($pdo, $account_id, $picked);
+  $qty     = round($minutes / 60, 2);
+
+  $net   = round($qty * $rate, 2);
+  $gross = round($net * (1 + $vat/100), 2);
+
+  // Position schreiben
+  $insItem->execute([
+    $account_id, $invoice_id, $project_id, $task_id, $desc,
+    $qty, $rate, $vat, $net, $gross, $pos++
+  ]);
+  $item_id = (int)$pdo->lastInsertId();
+
+  // Zeiten verknüpfen + Status
+  foreach ($picked as $time_id) {
+    $insLink->execute([$account_id, $item_id, (int)$time_id]);
+    $setTimeStatus->execute([$account_id, (int)$time_id]);
+  }
+
+  $sum_net   += $net;
+  $sum_gross += $gross;
+}
+
+/** 2b) Fallback: keine expliziten time_ids, aber Items vorhanden → alle offenen, billable Zeiten pro Task abrechnen */
+if ($sum_net == 0.0 && $sum_gross == 0.0 && !empty($propsByTask)) {
+  $getOpenTimes = $pdo->prepare("
+    SELECT id FROM times
+    WHERE account_id = ? AND task_id = ? AND status = 'offen' AND billable = 1 AND minutes IS NOT NULL
+  ");
+  foreach ($propsByTask as $task_id => $p) {
+    $getOpenTimes->execute([$account_id, (int)$task_id]);
+    $picked = array_map(fn($r)=>(int)$r['id'], $getOpenTimes->fetchAll());
+    if (!$picked) continue;
+
+    $desc = $p['description'];
+    $rate = (float)$p['rate'];
+    $vat  = (float)$p['vat'];
+
+    $getTaskProject->execute([$account_id, (int)$task_id]);
+    $project_id = ($pid = $getTaskProject->fetchColumn()) ? (int)$pid : null;
+
+    $minutes = sum_minutes_for_times($pdo, $account_id, $picked);
+    $qty     = round($minutes / 60, 2);
+
+    $net   = round($qty * $rate, 2);
+    $gross = round($net * (1 + $vat/100), 2);
+
+    $insItem->execute([
+      $account_id, $invoice_id, $project_id, (int)$task_id, $desc,
+      $qty, $rate, $vat, $net, $gross, $pos++
+    ]);
+    $item_id = (int)$pdo->lastInsertId();
+
+    foreach ($picked as $time_id) {
       $insLink->execute([$account_id, $item_id, (int)$time_id]);
-      $setTimeStatus->execute([$account_id, (int)$time_id]); // -> in_abrechnung
-     }
-
-     $sum_net += $net;
-     $sum_gross += $gross;
+      $setTimeStatus->execute([$account_id, (int)$time_id]);
     }
 
-    // 2b) Manuelle Positionen
-    if (is_array($manual)) {
-     foreach ($manual as $m) {
-      $mdesc = trim($m['description'] ?? '');
-      if ($mdesc === '') {
-       continue;
-      }
+    $sum_net   += $net;
+    $sum_gross += $gross;
+  }
+}
 
-      $mqty   = (float)($m['quantity'] ?? 0);
-      $mprice = (float)($m['unit_price'] ?? 0);
-      $mvat   = (float)($m['vat_rate'] ?? 19.0);
-      $mnet   = round($mqty * $mprice, 2);
-      $mgross = round($mnet * (1 + $mvat / 100), 2);
-
-      $insItem->execute([
-       $account_id, $invoice_id, null, null, $mdesc, $mqty, $mprice, $mvat, $mnet, $mgross, $pos++,
-      ]);
-
-      $sum_net += $mnet;
-      $sum_gross += $mgross;
-     }
-    }
+// -------- Summen in der Rechnung aktualisieren --------
+$updInv = $pdo->prepare("UPDATE invoices SET total_net = ?, total_gross = ? WHERE id = ? AND account_id = ?");
+$updInv->execute([$sum_net, $sum_gross, $invoice_id, $account_id]);
 
     // 3) Rechnungssummen aktualisieren
-    $updInv = $pdo->prepare("UPDATE invoices SET total_net = ?, total_gross = ? WHERE id = ? AND account_id = ?");
-    $updInv->execute([$sum_net, $sum_gross, $invoice_id, $account_id]);
 
     $pdo->commit();
 
@@ -459,9 +480,9 @@ function sum_minutes_for_times(PDO $pdo, int $account_id, array $ids): int {
         <div class="text-muted">Keine offenen, fakturierbaren Zeiten gefunden.</div>
       <?php else: ?>
         <?php $mode = 'new';
-			$rowName = 'tasks';
-			$timesName = 'time_ids';
-			require __DIR__ . '/_items_table.php'; ?>
+         $rowName            = 'tasks';
+         $timesName          = 'time_ids';
+        require __DIR__ . '/_items_table.php'; ?>
 
       <?php endif; ?>
     </div>
