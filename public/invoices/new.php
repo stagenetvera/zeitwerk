@@ -423,7 +423,7 @@ $updInv->execute([$sum_net, $sum_gross, $invoice_id, $account_id]);
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h3>Neue Rechnung</h3>
   <div>
-    <a class="btn btn-outline-secondary" href="<?php echo hurl($return_to) ?>">Zurück</a>
+    <a class="btn btn-outline-secondary" href="<?php echo h(url($return_to)) ?>">Zurück</a>
   </div>
 </div>
 
@@ -431,25 +431,6 @@ $updInv->execute([$sum_net, $sum_gross, $invoice_id, $account_id]);
   <div class="alert alert-danger"><?php echo h($err) ?></div>
 <?php endif; ?>
 
-<div class="card mb-3">
-  <div class="card-body">
-    <form method="get" action="<?php echo hurl(url('/invoices/new.php')) ?>" class="row g-2">
-      <div class="col-md-6">
-        <label class="form-label">Firma</label>
-        <select name="company_id" class="form-select" onchange="this.form.submit()">
-          <option value="">– bitte wählen –</option>
-          <?php foreach ($companies as $c): ?>
-            <option value="<?php echo $c['id'] ?>"<?php echo $company_id === $c['id'] ? 'selected' : '' ?>><?php echo h($c['name']) ?></option>
-          <?php endforeach; ?>
-        </select>
-      </div>
-      <div class="col-md-6 d-flex align-items-end justify-content-end">
-        <input type="hidden" name="return_to" value="<?php echo h($return_to) ?>">
-        <a class="btn btn-outline-secondary" href="<?php echo hurl(url('/invoices/new.php')) ?>">Reset</a>
-      </div>
-    </form>
-  </div>
-</div>
 
 <?php if ($company_id): ?>
 <form method="post" id="invForm" action="<?php echo hurl(url('/invoices/new.php')) ?>">
@@ -522,7 +503,7 @@ $updInv->execute([$sum_net, $sum_gross, $invoice_id, $account_id]);
   </div>
 
   <div class="d-flex justify-content-end gap-2">
-    <a class="btn btn-outline-secondary" href="<?php echo hurl($return_to) ?>">Abbrechen</a>
+    <a class="btn btn-outline-secondary" href="<?php echo h(url($return_to)) ?>">Abbrechen</a>
     <button class="btn btn-primary" name="action" value="save">Rechnung anlegen</button>
   </div>
 </form>

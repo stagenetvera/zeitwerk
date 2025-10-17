@@ -11,6 +11,25 @@ function hurl($s){ return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
 function fmt_money($v){ return number_format((float)$v, 2, ',', '.'); }
 function fmt_minutes_hhmm(int $m): string { $h=intdiv($m,60); $r=$m%60; return sprintf('%02d:%02d',$h,$r); }
 
+// Komma-Dezimal in Float
+function dec($s) {
+  if ($s === null) return 0.0;
+  if (is_float($s) || is_int($s)) return (float)$s;
+  $s = str_replace(['.', ','], ['', '.'], (string)$s);
+  $n = (float)$s;
+  return is_finite($n) ? $n : 0.0;
+}
+
+// Minuten über eine Menge Time-IDs (Account-sicher) summieren
+function sum_minutes_for_times_edit(PDO $pdo, int $account_id, array $ids): int {
+  $ids = array_values(array_filter(array_map('intval', $ids), fn($v)=>$v>0));
+  if (!$ids) return 0;
+  $in = implode(',', array_fill(0, count($ids), '?'));
+  $st = $pdo->prepare("SELECT COALESCE(SUM(minutes),0) FROM times WHERE account_id=? AND id IN ($in)");
+  $st->execute(array_merge([$account_id], $ids));
+  return (int)$st->fetchColumn();
+}
+
 // ---------- Eingaben ----------
 $invoice_id = isset($_GET['id']) ? (int)$_GET['id'] : (int)($_POST['id'] ?? 0);
 if ($invoice_id <= 0) {
@@ -134,229 +153,216 @@ function delete_item_with_times(PDO $pdo, int $account_id, int $invoice_id, int 
 // ---------- POST: Speichern / Löschen ----------
 $err = null; $ok = null;
 
-if ($_SERVER['REQUEST_METHOD']==='POST') {
-  // Einzelnes Item löschen?
-  if (isset($_POST['delete_item_id']) && ctype_digit((string)$_POST['delete_item_id'])) {
-    try {
-      $pdo->beginTransaction();
-      delete_item_with_times($pdo, $account_id, $invoice_id, (int)$_POST['delete_item_id']);
-      // Summen neu berechnen (später unten, nach generellem Recalc)
-      $pdo->commit();
-      $ok = 'Position gelöscht.';
-    } catch (Throwable $e) {
-      $pdo->rollBack();
-      $err = 'Löschen fehlgeschlagen: '.$e->getMessage();
-    }
-  }
-  // „Delete“-Flags aus dem großen Formular (falls dein Partial so postet)
-  if (isset($_POST['items']) && is_array($_POST['items'])) {
-    foreach ($_POST['items'] as $iid => $row) {
-      if (!empty($row['delete']) && ctype_digit((string)$iid)) {
-        try {
-          $pdo->beginTransaction();
-          delete_item_with_times($pdo, $account_id, $invoice_id, (int)$iid);
-          $pdo->commit();
-          $ok = 'Position gelöscht.';
-        } catch (Throwable $e) {
-          $pdo->rollBack();
-          $err = 'Löschen fehlgeschlagen: '.$e->getMessage();
-        }
-      }
-    }
+if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['action']==='save') {
+  // Grundvalidierung
+  $issue_date = $_POST['issue_date'] ?? $invoice['issue_date'];
+  $due_date   = $_POST['due_date']   ?? $invoice['due_date'];
+
+  // Nur Rechnungen im Status 'in_vorbereitung' bearbeiten (optional)
+  if (($invoice['status'] ?? '') !== 'in_vorbereitung') {
+    $err = 'Diese Rechnung kann nicht mehr bearbeitet werden.';
   }
 
-  // Allgemeines Speichern
-  if (isset($_POST['action']) && $_POST['action']==='save') {
-    $issue_date = $_POST['issue_date'] ?? $invoice['issue_date'];
-    $due_date   = $_POST['due_date']   ?? $invoice['due_date'];
-    $status     = $_POST['status']     ?? $invoice['status'];
+  $itemsPosted   = $_POST['items'] ?? [];          // items[idx][id|description|hourly_rate|tax_rate|time_ids[]]
+  $deletedPosted = $_POST['items_deleted'] ?? [];  // array von invoice_item.id
 
-    $itemsPost  = $_POST['items'] ?? [];             // aus Partial (edit-Modus)
-    $timesPost  = $_POST['times_selected'] ?? [];    // aus Partial (edit-Modus)
-    // Manuelle neue Positionen (optional, eigener Editor unten – identisch wie in new.php)
-    $manual     = $_POST['manual'] ?? [];
-
+  if (!$err) {
+    $pdo->beginTransaction();
     try {
-      $pdo->beginTransaction();
+      // -----------------------
+      // 1) GELÖSCHTE POSITIONEN
+      // -----------------------
+      if ($deletedPosted) {
+        $deletedIds = array_values(array_filter(array_map('intval', (array)$deletedPosted), fn($v)=>$v>0));
+        if ($deletedIds) {
+          // hole alle Time-IDs dieser Items
+          $inDel = implode(',', array_fill(0, count($deletedIds), '?'));
+          $getTimes = $pdo->prepare("
+            SELECT time_id FROM invoice_item_times
+            WHERE account_id=? AND invoice_item_id IN ($inDel)
+          ");
+          $getTimes->execute(array_merge([$account_id], $deletedIds));
+          $toOpen = array_map(fn($r)=>(int)$r['time_id'], $getTimes->fetchAll());
 
-      // 1) Header updaten
-      $updInv = $pdo->prepare("UPDATE invoices SET issue_date = ?, due_date = ?, status = ? WHERE id = ? AND account_id = ?");
-      $updInv->execute([$issue_date, $due_date, $status, $invoice_id, $account_id]);
+          // Verknüpfungen löschen
+          $delLinks = $pdo->prepare("DELETE FROM invoice_item_times WHERE account_id=? AND invoice_item_id IN ($inDel)");
+          $delLinks->execute(array_merge([$account_id], $deletedIds));
 
-      // 2) Bestehende Items updaten & Time-Links synchronisieren
-      // Bestehende Items laden (für Differenzen)
-      $dbItems = load_invoice_items($pdo, $account_id, $invoice_id);
-      $mapDb   = [];
-      foreach ($dbItems as $di) { $mapDb[(int)$di['item_id']] = $di; }
+          // Items löschen (nur aus dieser Rechnung)
+          $delItems = $pdo->prepare("DELETE FROM invoice_items WHERE account_id=? AND invoice_id=? AND id IN ($inDel)");
+          $delItems->execute(array_merge([$account_id, (int)$invoice['id']], $deletedIds));
 
-      // Aktuelle Links
-      $timesByItem = load_times_by_item($pdo, $account_id, array_keys($mapDb));
-
-      $upItem = $pdo->prepare("
-        UPDATE invoice_items
-           SET description = ?, unit_price = ?, vat_rate = ?
-         WHERE account_id = ? AND id = ? AND invoice_id = ?
-      ");
-      $delLink = $pdo->prepare("DELETE FROM invoice_item_times WHERE account_id = ? AND invoice_item_id = ? AND time_id = ?");
-      $addLink = $pdo->prepare("INSERT IGNORE INTO invoice_item_times (account_id, invoice_item_id, time_id) VALUES (?,?,?)");
-
-      // Für Netto/Brutto-Neuberechnung
-      $recalc = $pdo->prepare("
-        UPDATE invoice_items
-           SET quantity = ?, total_net = ?, total_gross = ?
-         WHERE account_id = ? AND id = ? AND invoice_id = ?
-      ");
-
-      foreach ($itemsPost as $iid => $row) {
-        if (!ctype_digit((string)$iid)) continue;
-        $iid = (int)$iid;
-        if (!isset($mapDb[$iid])) continue; // gehört nicht zu dieser Rechnung
-        $db = $mapDb[$iid];
-
-        $desc = trim($row['description'] ?? $db['description']);
-        $rate = (float)($row['rate'] ?? $db['unit_price']);
-        $vat  = (float)($row['vat']  ?? $db['vat_rate']);
-
-        $upItem->execute([$desc, $rate, $vat, $account_id, $iid, $invoice_id]);
-
-        // Time-Links synchronisieren (nur wenn im POST vorhanden)
-        $postedTimes = [];
-        if (isset($timesPost[$iid]) && is_array($timesPost[$iid])) {
-          foreach ($timesPost[$iid] as $tid) {
-            $tid = (int)$tid; if ($tid>0) $postedTimes[$tid] = true;
+          // Zeit-Status zurück auf 'offen', aber nur wenn sie nun nirgends mehr verknüpft sind
+          if ($toOpen) {
+            $toOpen = array_values(array_unique(array_filter($toOpen, fn($v)=>$v>0)));
+            $inTimes = implode(',', array_fill(0, count($toOpen), '?'));
+            // LEFT JOIN-Variante, um nur verwaiste Zeiten umzustellen
+            $sql = "
+              UPDATE times t
+              LEFT JOIN invoice_item_times iit
+                ON iit.account_id=t.account_id AND iit.time_id=t.id
+              SET t.status='offen'
+              WHERE t.account_id=? AND t.id IN ($inTimes) AND iit.time_id IS NULL
+            ";
+            $st = $pdo->prepare($sql);
+            $st->execute(array_merge([$account_id], $toOpen));
           }
-          // Bisher verlinkte Zeiten
-          $current = [];
-          foreach ($timesByItem[$iid] ?? [] as $t) {
-            $current[(int)$t['id']] = true;
-          }
-          // Entfernen
-          foreach ($current as $tid => $_) {
-            if (!isset($postedTimes[$tid])) {
-              $delLink->execute([$account_id, $iid, $tid]);
-              // Falls Zeit nirgends mehr verlinkt -> Status zurück auf 'offen'
-              $chk = $pdo->prepare("SELECT COUNT(*) FROM invoice_item_times WHERE account_id = ? AND time_id = ?");
-              $chk->execute([$account_id, $tid]);
-              if ((int)$chk->fetchColumn() === 0) {
-                $pdo->prepare("UPDATE times SET status='offen' WHERE account_id=? AND id=?")->execute([$account_id, $tid]);
-              }
-            }
-          }
-          // Hinzufügen
-          foreach ($postedTimes as $tid => $_) {
-            if (!isset($current[$tid])) {
-              $addLink->execute([$account_id, $iid, $tid]);
-              // Falls Rechnung noch in Vorbereitung -> Zeit auf 'in_abrechnung'
-              if ($status === 'in_vorbereitung') {
-                $pdo->prepare("UPDATE times SET status='in_abrechnung' WHERE account_id=? AND id=?")->execute([$account_id, $tid]);
-              }
-            }
-          }
-          // Neu laden für Minuten-Berechnung
-          $timesByItem[$iid] = load_times_by_item($pdo, $account_id, [$iid])[$iid] ?? [];
-        }
-
-        // Menge (Stunden) und Summen neu berechnen
-        $minutes = 0;
-        foreach ($timesByItem[$iid] ?? [] as $t) { $minutes += (int)$t['minutes']; }
-        // Wenn keine Times (manuelle Position) -> Menge unverändert aus DB
-        $qty = $minutes > 0 ? round($minutes/60, 2) : (float)$db['quantity'];
-        $net = round($qty * $rate, 2);
-        $gross = round($net * (1 + $vat/100), 2);
-        $recalc->execute([$qty, $net, $gross, $account_id, $iid, $invoice_id]);
-      }
-
-      // 3) Neue manuelle Positionen (falls aus Editor unten hinzugefügt)
-      if (is_array($manual)) {
-        $posMax = $pdo->prepare("SELECT COALESCE(MAX(position),0) FROM invoice_items WHERE account_id = ? AND invoice_id = ?");
-        $posMax->execute([$account_id, $invoice_id]);
-        $pos = (int)$posMax->fetchColumn() + 1;
-
-        $insItem = $pdo->prepare("
-          INSERT INTO invoice_items
-            (account_id, invoice_id, project_id, task_id, description, quantity, unit_price, vat_rate, total_net, total_gross, position)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?)
-        ");
-        foreach ($manual as $m) {
-          $mdesc = trim($m['description'] ?? '');
-          if ($mdesc === '') continue;
-          $mqty   = (float)($m['quantity'] ?? 0);
-          $mprice = (float)($m['unit_price'] ?? 0);
-          $mvat   = (float)($m['vat_rate'] ?? 19.0);
-          $mnet   = round($mqty * $mprice, 2);
-          $mgross = round($mnet * (1 + $mvat/100), 2);
-          $insItem->execute([$account_id, $invoice_id, null, null, $mdesc, $mqty, $mprice, $mvat, $mnet, $mgross, $pos++]);
         }
       }
 
-      // 4) Gesamtsummen der Rechnung neu berechnen
-      $sum = $pdo->prepare("SELECT COALESCE(SUM(total_net),0), COALESCE(SUM(total_gross),0) FROM invoice_items WHERE account_id=? AND invoice_id=?");
-      $sum->execute([$account_id, $invoice_id]);
-      [$total_net, $total_gross] = $sum->fetch(PDO::FETCH_NUM);
-      $pdo->prepare("UPDATE invoices SET total_net=?, total_gross=? WHERE account_id=? AND id=?")
-          ->execute([(float)$total_net, (float)$total_gross, $account_id, $invoice_id]);
+      // -------------------------------------------
+      // 2) EXISTIERENDE POSITIONEN AKTUALISIEREN
+      // -------------------------------------------
+      // Hilfsstatements
+      $updItem = $pdo->prepare("
+        UPDATE invoice_items
+           SET description=?, unit_price=?, vat_rate=?, quantity=?, total_net=?, total_gross=?
+         WHERE account_id=? AND invoice_id=? AND id=?
+      ");
 
-      // 5) Zeit-Status je nach Rechnungsstatus
-      if ($status === 'in_vorbereitung') {
-        set_times_status_for_invoice($pdo, $account_id, $invoice_id, 'in_abrechnung');
-      } elseif (in_array($status, ['gestellt','gemahnt','bezahlt'], true)) {
-        set_times_status_for_invoice($pdo, $account_id, $invoice_id, 'abgerechnet');
-      } elseif ($status === 'storniert') {
-        set_times_status_for_invoice($pdo, $account_id, $invoice_id, 'offen');
+      $getCurrTimes = $pdo->prepare("
+        SELECT time_id FROM invoice_item_times
+        WHERE account_id=? AND invoice_item_id=?
+      ");
+      $addLink   = $pdo->prepare("INSERT INTO invoice_item_times (account_id, invoice_item_id, time_id) VALUES (?,?,?)");
+      $delLink   = $pdo->prepare("DELETE FROM invoice_item_times WHERE account_id=? AND invoice_item_id=? AND time_id=?");
+      $setInAb   = $pdo->prepare("UPDATE times SET status='in_abrechnung' WHERE account_id=? AND id IN (%s)");
+      // für 'offen' nutzen wir die JOIN-Variante unten (verwaiste)
+
+      $sum_net   = 0.0;
+      $sum_gross = 0.0;
+
+      foreach ($itemsPosted as $row) {
+        $item_id = isset($row['id']) ? (int)$row['id'] : 0;
+        if ($item_id <= 0) continue; // (Optional) Neu-Items könntest du hier anlegen, aktuell nur Update
+
+        $desc = trim($row['description'] ?? '');
+        $rate = dec($row['hourly_rate'] ?? 0);
+        $vat  = dec($row['tax_rate'] ?? 19.0);
+
+        $newTimes = array_values(array_filter(array_map('intval', $row['time_ids'] ?? []), fn($v)=>$v>0));
+
+        // Aktuell verlinkte Zeiten lesen
+        $getCurrTimes->execute([$account_id, $item_id]);
+        $currTimes = array_map(fn($r)=>(int)$r['time_id'], $getCurrTimes->fetchAll());
+
+        // Diff bilden
+        $toAdd    = array_values(array_diff($newTimes, $currTimes));
+        $toRemove = array_values(array_diff($currTimes, $newTimes));
+
+        // Minuten auf Basis der aktuell gewünschten Zeiten
+        $minutes = sum_minutes_for_times_edit($pdo, $account_id, $newTimes);
+        $qty     = round($minutes/60, 2);
+        $net     = round($qty * $rate, 2);
+        $gross   = round($net * (1 + $vat/100), 2);
+
+        // Item schreiben
+        $updItem->execute([
+          $desc, $rate, $vat, $qty, $net, $gross,
+          $account_id, (int)$invoice['id'], $item_id
+        ]);
+
+        // Links hinzufügen
+        if ($toAdd) {
+          foreach ($toAdd as $tid) {
+            $addLink->execute([$account_id, $item_id, $tid]);
+          }
+          // Status auf 'in_abrechnung' setzen
+          $placeholders = implode(',', array_fill(0, count($toAdd), '?'));
+          $st = $pdo->prepare(sprintf("UPDATE times SET status='in_abrechnung' WHERE account_id=? AND id IN ($placeholders)"));
+          $st->execute(array_merge([$account_id], $toAdd));
+        }
+
+        // Links entfernen
+        if ($toRemove) {
+          foreach ($toRemove as $tid) {
+            $delLink->execute([$account_id, $item_id, $tid]);
+          }
+          // Nur verwaiste Zeiten zurück auf 'offen'
+          $inRem = implode(',', array_fill(0, count($toRemove), '?'));
+          $sqlOpen = "
+            UPDATE times t
+            LEFT JOIN invoice_item_times iit
+              ON iit.account_id=t.account_id AND iit.time_id=t.id
+            SET t.status='offen'
+            WHERE t.account_id=? AND t.id IN ($inRem) AND iit.time_id IS NULL
+          ";
+          $st = $pdo->prepare($sqlOpen);
+          $st->execute(array_merge([$account_id], $toRemove));
+        }
+
+        $sum_net   += $net;
+        $sum_gross += $gross;
       }
+
+      // -------------------------------------------
+      // 3) Summen + Kopfdaten aktualisieren
+      // -------------------------------------------
+      // Falls du lieber serverseitig aus invoice_items summierst:
+      // $sum = $pdo->prepare("SELECT COALESCE(SUM(total_net),0), COALESCE(SUM(total_gross),0) FROM invoice_items WHERE account_id=? AND invoice_id=?");
+      // $sum->execute([$account_id, (int)$invoice['id']]);
+      // [$sum_net, $sum_gross] = $sum->fetch(PDO::FETCH_NUM);
+
+      $updInv = $pdo->prepare("UPDATE invoices SET issue_date=?, due_date=?, total_net=?, total_gross=? WHERE account_id=? AND id=?");
+      $updInv->execute([$issue_date, $due_date, $sum_net, $sum_gross, $account_id, (int)$invoice['id']]);
 
       $pdo->commit();
-      $ok = 'Rechnung gespeichert.';
-      // Neu laden aktueller Daten unten
+
+      // zurück zur Firma oder zurück zur Rechnung – wie es bei dir üblich ist:
+      redirect(url('/invoices/edit.php').'?id='.(int)$invoice['id']);
     } catch (Throwable $e) {
       $pdo->rollBack();
-      $err = 'Speichern fehlgeschlagen: '.$e->getMessage();
+      $err = 'Rechnung konnte nicht gespeichert werden: '.$e->getMessage();
     }
   }
 }
 
 // ---------- Anzeige-Daten laden (nach evtl. Save/Delete) ----------
-$invoice = $pdo->prepare("SELECT * FROM invoices WHERE id = ? AND account_id = ?");
-$invoice->execute([$invoice_id, $account_id]);
-$invoice = $invoice->fetch();
+// ---------- Anzeige-Daten laden (nach evtl. Save/Delete) ----------
+$invStmt = $pdo->prepare("SELECT * FROM invoices WHERE id = ? AND account_id = ?");
+$invStmt->execute([$invoice_id, $account_id]);
+$invoice = $invStmt->fetch();
 
-$items = load_invoice_items($pdo, $account_id, $invoice_id);
-$itemIds = array_map(fn($r)=>(int)$r['item_id'], $items);
+$rawItems = load_invoice_items($pdo, $account_id, $invoice_id);
+$itemIds  = array_map(fn($r)=>(int)$r['item_id'], $rawItems);
 $timesByItem = load_times_by_item($pdo, $account_id, $itemIds);
 
-// Für Partial $groups nach Projekt gruppieren
-$byProj = [];
-foreach ($items as $r) {
-  $pid = (int)($r['project_id'] ?? 0);
-  $ptitle = $r['project_title'] ?? '';
-  if (!isset($byProj[$pid])) {
-    $byProj[$pid] = ['project_id'=>$pid, 'project_title'=>$ptitle, 'rows'=>[]];
-  }
+/**
+ * Das Partial rendert im EDIT-Modus, wenn $groups leer ist und $items befüllt sind.
+ * Wir liefern $items im erwarteten Format (time_entries[] etc.).
+ */
+$items  = [];
+foreach ($rawItems as $r) {
   $iid = (int)$r['item_id'];
-
-  // „Row“-Struktur so benennen, wie das Partial es vom NEW-Flow kennt:
-  $times = $timesByItem[$iid] ?? [];
-  $byProj[$pid]['rows'][] = [
-    'item_id'     => $iid,                      // echte Item-ID
-    'task_id'     => $iid,                      // Alias für Partial-Names
-    'task_desc'   => (string)$r['description'], // Textfeld
-    'description' => (string)$r['description'],
-    'unit_price'  => (float)$r['unit_price'],
-    'vat_rate'    => (float)$r['vat_rate'],
-    'quantity'    => (float)$r['quantity'],
-    'hourly_rate' => (float)$r['unit_price'],   // fürs Partial
-    'tax_rate'    => (float)$r['vat_rate'],     // fürs Partial
-    'times'       => $times,                    // expandierbare Liste
+  $items[] = [
+    'id'            => $iid,
+    'project_id'    => (int)($r['project_id'] ?? 0),
+    'project_title' => (string)($r['project_title'] ?? ''),
+    'description'   => (string)($r['description'] ?? ''),
+    'hourly_rate'   => (float)($r['unit_price'] ?? 0),
+    'tax_rate'      => (float)($r['vat_rate'] ?? 19),
+    'quantity'      => (float)($r['quantity'] ?? 0),
+    // EDIT-Part erwartet time_entries[] mit selected=true
+    'time_entries'  => array_map(function($t){
+        return [
+            'id'         => (int)($t['id'] ?? $t['time_id'] ?? 0),
+            'minutes'    => (int)($t['minutes'] ?? 0),
+            'started_at' => $t['started_at'] ?? null,
+            'ended_at'   => $t['ended_at'] ?? null,
+            'selected'   => true,
+        ];
+    }, $timesByItem[$iid] ?? []),
   ];
 }
-$groups = array_values($byProj);
+// WICHTIG: $groups leer lassen, damit das Partial den EDIT-Zweig nimmt.
+$groups = [];
 
 // ---------- View ----------
 ?>
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h3>Rechnung bearbeiten</h3>
   <div>
-    <a class="btn btn-outline-secondary" href="<?=hurl($return_to)?>">Zurück</a>
+    <a class="btn btn-outline-secondary" href="<?=h(url($return_to))?>">Zurück</a>
   </div>
 </div>
 
@@ -405,16 +411,13 @@ $groups = array_values($byProj);
             <h5 class="card-title">Positionen / Zeiten</h5>
 
             <?php
-              // Partial wie im NEW-Flow – nur Modus/Name-Mapping setzen:
-              $mode = 'edit';
-              $rowName = 'items';               // -> name="items[<id>][...]"
-              $timesName = 'times_selected';    // -> name="times_selected[<id>][]"
-              require __DIR__ . '/_items_table.php';
+                // Partial im EDIT-Modus verwenden
+                $mode = 'edit';
+                $rowName = 'items';        // erzeugt name="items[...][...]"
+                $timesName = 'time_ids';   // (vom EDIT-Part ignoriert, aber ok)
+                require __DIR__ . '/_items_table.php';
             ?>
 
-            <div class="mt-3 text-end">
-              <button class="btn btn-primary">Speichern</button>
-            </div>
           </div>
         </div>
       </div>
@@ -456,7 +459,7 @@ $groups = array_values($byProj);
       </div>
 
       <div class="col-12 text-end">
-        <a class="btn btn-outline-secondary" href="<?=hurl($return_to)?>">Abbrechen</a>
+        <a class="btn btn-outline-secondary" href="<?=h(url($return_to))?>">Abbrechen</a>
         <button class="btn btn-primary">Speichern</button>
       </div>
     </form>

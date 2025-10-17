@@ -168,8 +168,14 @@ if (empty($groups) && !empty($items)) {
       $net    = ($sumMin/60.0) * (float)$it['hourly_rate'];
       $gross  = $net * (1 + ((float)$it['tax_rate']/100));
       ?>
-      <tr class="inv-item-row" data-row="<?=$idx?>" data-project="<?=$pid?>">
-        <td class="inv-toggle" title="Details ein-/ausklappen">▸</td>
+      <tr class="inv-item-row" data-row="<?=$idx?>" data-project="<?=$pid?>" aria-expanded="false">
+        <td class="text-center">
+            <button type="button" class="inv-toggle-btn" aria-label="Details ein-/ausklappen">
+            <svg class="chev" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M6 12l4-4-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            </button>
+        </td>
         <td>
           <input type="hidden" name="items[<?=$idx?>][id]" value="<?= (int)$it['id'] ?>">
           <input type="hidden" name="items[<?=$idx?>][project_id]" value="<?=$pid?>">
