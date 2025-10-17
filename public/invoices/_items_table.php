@@ -6,6 +6,15 @@
  * EDIT expects: $items  (inkl. time_entries[] und project_title)
  */
 
+// --- Kompatibilitäts-Header: nur Namensvariablen, keine Optik-Änderung ---
+$mode      = $mode      ?? 'new';
+$rowName   = $rowName   ?? ($mode === 'edit' ? 'items' : 'tasks');
+$timesName = $timesName ?? ($mode === 'edit' ? 'times_selected' : 'time_ids');
+
+// Für die bestehenden name="-Attribute" im Markup:
+$NAME_TASKS = $rowName;
+$NAME_TIMES = $timesName;
+
 function _fmt_hhmm($min){ $h=intdiv($min,60); $r=$min%60; return sprintf('%02d:%02d',$h,$r); }
 ?>
 <style>
@@ -110,11 +119,12 @@ if (!empty($groups)) {
                 <?php foreach ($row['times'] as $t): $tid=(int)$t['id']; $m=(int)$t['minutes']; ?>
                   <tr>
                     <td>
-                      <input class="form-check-input time-checkbox"
-                             type="checkbox"
-                             name="items[<?=$idx?>][time_ids][]"
-                             value="<?=$tid?>" checked
-                             data-min="<?=$m?>">
+                        <input type="checkbox"
+                            class="inv-time form-check-input"
+                            name="<?=$NAME_TIMES?>[]"
+                            value="<?= (int)$t['id'] ?>"
+                            checked>
+
                     </td>
                     <td><?=h($t['started_at'])?> – <?=h($t['ended_at'])?></td>
                     <td class="text-end"><?=_fmt_hhmm($m)?></td>
