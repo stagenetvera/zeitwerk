@@ -180,7 +180,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <option value="offen"        <?=$st==='offen'?'selected':''?>>offen</option>
             <option value="warten"       <?=$st==='warten'?'selected':''?>>warten</option>
             <option value="angeboten"    <?=$st==='angeboten'?'selected':''?>>angeboten</option>
-            <option value="fakturierbar" <?=$st==='fakturierbar'?'selected':''?>>fakturierbar</option>
             <option value="abgeschlossen"<?=$st==='abgeschlossen'?'selected':''?>>abgeschlossen</option>
           </select>
         </div>

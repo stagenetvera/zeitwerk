@@ -44,7 +44,7 @@ $priorities = array_values(array_filter(array_map(function($r){ return $r['prior
 $where = ['ta.account_id = :acc'];
 $params = [':acc'=>$account_id];
 
-$where[] = "(ta.status IS NULL OR ta.status NOT IN ('abgeschlossen','angeboten'))";
+$where[] = "(ta.status IS NULL OR ta.status NOT IN ('abgeschlossen','angeboten','in_abrechnung'))";
 
 if ($company_id) { $where[] = 'c.id = :cid'; $params[':cid'] = $company_id; }
 if ($project_id) { $where[] = 'p.id = :pid'; $params[':pid'] = $project_id; }
