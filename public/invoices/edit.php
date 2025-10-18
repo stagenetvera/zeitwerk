@@ -170,12 +170,12 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
     $will_be_issued = in_array($new_status, ['gestellt','gemahnt','bezahlt','storniert'], true);
 
     if (empty($invoice['invoice_number']) && $will_be_issued) {
-    $assign_number = true;
+        $assign_number = true;
     }
 
     $number = $invoice['invoice_number'] ?? null;
     if ($assign_number) {
-    $number = inv_allocate_number($pdo, $account_id, new DateTimeImmutable($issue_date ?: 'today'));
+        $number = assign_invoice_number_if_needed($pdo, $account_id, (int)$invoice['id'], $issue_date);
     }
 
 
@@ -191,6 +191,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
     try {
       $sum_net   = 0.0;
       $sum_gross = 0.0;
+
 
       if ($canEditItems) {
         // -----------------------

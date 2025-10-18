@@ -49,7 +49,7 @@ try {
         <li class="nav-item"><a class="nav-link" href="<?=url('/times/index.php')?>">Zeiten</a></li>
         <li class="nav-item"><a class="nav-link" href="<?=url('/offers/index.php')?>">Angebote</a></li>
         <li class="nav-item"><a class="nav-link" href="<?=url('/invoices/index.php')?>">Rechnungen</a></li>
-        <li class="nav-item"><a class="nav-link" href="<?=url('/settings/invoices.php')?>">Einstellungen</a></li>
+        <li class="nav-item"><a class="nav-link" href="<?=url('/settings/index.php')?>">Einstellungen</a></li>
 
         <?php endif; ?>
       </ul>

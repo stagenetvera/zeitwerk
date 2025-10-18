@@ -7,7 +7,19 @@
  $user       = auth_user();
  $account_id = (int)$user['account_id'];
 
- function hurl($s)
+ require_once __DIR__ . '/../../src/lib/settings.php';
+$settings = get_account_settings($pdo, $account_id);
+
+// Defaults
+$DEFAULT_TAX     = (float)$settings['default_vat_rate'];      // ersetzt deine bisherige 19.0-Konstante
+$DEFAULT_DUE_DAYS= (int)$settings['default_due_days'];
+$DEFAULT_SCHEME  = $settings['default_tax_scheme'];           // 'standard'|'tax_exempt'|'reverse_charge'
+$DEFAULT_DUE_DAYS = (int)($settings['default_due_days'] ?? 14);
+
+$issue_default = date('Y-m-d');
+$due_default   = date('Y-m-d', strtotime('+' . max(0,$DEFAULT_DUE_DAYS) . ' days'));
+
+function hurl($s)
  {return htmlspecialchars($s, ENT_QUOTES, 'UTF-8');}
  function fmt_money($v)
  {return number_format((float)$v, 2, ',', '.');}
@@ -122,7 +134,7 @@
 
  $groups = []; // [ [project_id,title, rows:[ {task_id, task_desc, hourly_rate, tax_rate, times:[{id, minutes, started_at, ended_at}]} ] ] ]
 
- $DEFAULT_TAX = 19.0; // %; gern später dynamisch je Firma
+ $DEFAULT_TAX = (float)$settings['default_vat_rate']; // %; gern später dynamisch je Firma
  $byProject   = [];
  foreach ($rows as $r) {
   $pid = (int)$r['project_id'];
@@ -140,7 +152,7 @@
     'task_id'     => $taskId,
     'task_desc'   => $r['task_desc'],
     'hourly_rate' => (float)$r['effective_rate'],
-    'tax_rate'    => $DEFAULT_TAX,
+    'tax_rate' => ($DEFAULT_SCHEME === 'standard') ? (float)$settings['default_vat_rate'] : 0.0,
     'times'       => [],
    ];
   }
@@ -444,11 +456,12 @@ $updInv->execute([$sum_net, $sum_gross, $invoice_id, $account_id]);
       <div class="row g-3">
         <div class="col-md-3">
           <label class="form-label">Rechnungsdatum</label>
-          <input type="date" name="issue_date" class="form-control" value="<?php echo h($_POST['issue_date'] ?? date('Y-m-d')) ?>">
+          <input type="date" name="issue_date" class="form-control" value="<?php echo h($_POST['issue_date'] ?? $issue_default) ?>">
         </div>
         <div class="col-md-3">
           <label class="form-label">Fällig bis</label>
-          <input type="date" name="due_date" class="form-control" value="<?php echo h($_POST['due_date'] ?? date('Y-m-d', strtotime('+14 days'))) ?>">
+   		  <input type="date" name="due_date" class="form-control"
+       		value="<?= h($_POST['due_date'] ?? $due_default) ?>">
         </div>
       </div>
     </div>
