@@ -15,7 +15,6 @@ function is_safe_return($url) {
   return str_starts_with($url, '/');
 }
 
-$return_to = $_POST['return_to'] ?? '';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
   if (is_safe_return($return_to)) redirect($return_to); else redirect('/times/index.php');
@@ -23,6 +22,26 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 }
 
 $id = isset($_POST['id']) ? (int)$_POST['id'] : 0;
+$return_to = pick_return_to('/times/index.php');
+
+$st = $pdo->prepare('SELECT status FROM times WHERE id = ? AND account_id = ?');
+$st->execute([$id, (int)auth_user()['account_id']]);
+$cur = $st->fetch();
+
+if (!$cur) {
+  echo '<div class="alert alert-danger">Zeiteintrag nicht gefunden.</div>';
+  echo '<a class="btn btn-outline-secondary" href="'.h($return_to).'">Zurück</a>';
+  require __DIR__ . '/../../src/layout/footer.php';
+  exit;
+}
+
+if (($cur['status'] ?? '') === 'abgerechnet') {
+  echo '<div class="alert alert-warning">Abgerechnete Zeiten können nicht gelöscht werden.</div>';
+  echo '<a class="btn btn-outline-secondary" href="'.h($return_to).'">Zurück</a>';
+  require __DIR__ . '/../../src/layout/footer.php';
+  exit;
+}
+
 if ($id <= 0) {
   flash('Ungültige Zeit-ID.', 'danger');
   if (is_safe_return($return_to)) redirect($return_to); else redirect('/times/index.php');

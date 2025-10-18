@@ -12,6 +12,15 @@ $id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
 $st = $pdo->prepare('SELECT * FROM times WHERE id = ? AND account_id = ? AND user_id = ?');
 $st->execute([$id,$account_id,$user_id]);
 $time = $st->fetch();
+
+if ($time && ($time['status'] ?? null) === 'abgerechnet') {
+  $return_to = pick_return_to('/times/index.php');
+  echo '<div class="alert alert-warning">Dieser Zeiteintrag ist bereits <strong>abgerechnet</strong> und kann hier nicht mehr geändert werden.</div>';
+  echo '<a class="btn btn-outline-secondary" href="'.h($return_to).'">Zurück</a>';
+  require __DIR__ . '/../../src/layout/footer.php';
+  exit;
+}
+
 if (!$time) { echo '<div class="alert alert-danger">Zeit nicht gefunden.</div>'; require __DIR__ . '/../../src/layout/footer.php'; exit; }
 
 // Aufgabenliste
@@ -26,9 +35,13 @@ $tasks = $ts->fetchAll();
 
 $err = $ok = null;
 if ($_SERVER['REQUEST_METHOD']==='POST') {
+  // Status nie aus Formular übernehmen:
+  if (isset($_POST['status'])) {
+      unset($_POST['status']);
+  }
+
   $task_id = isset($_POST['task_id']) && $_POST['task_id'] !== '' ? (int)$_POST['task_id'] : null;
   $billable = isset($_POST['billable']) ? 1 : 0;
-  $status = $_POST['status'] ?? 'offen';
   $started_at = trim($_POST['started_at'] ?? '');
   $ended_at = trim($_POST['ended_at'] ?? '');
 
@@ -46,8 +59,25 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
       }
     }
     if (!$err) {
-      $upd = $pdo->prepare('UPDATE times SET task_id=?, started_at=?, ended_at=?, minutes=?, billable=?, status=? WHERE id=? AND account_id=? AND user_id=?');
-      $upd->execute([$task_id,$start->format('Y-m-d H:i:s'), $end? $end->format('Y-m-d H:i:s') : null, $minutes,$billable,$status,$id,$account_id,$user_id]);
+      $upd = $pdo->prepare("
+        UPDATE times
+          SET task_id = :task_id,
+              started_at = :started_at,
+              ended_at = :ended_at,
+              minutes = :minutes,
+              billable = :billable
+        WHERE id = :id AND account_id = :acc AND user_id = :uid
+      ");
+      $upd->execute([
+        ':task_id'    => $task_id ?: null,
+        ':started_at' => $started_at,
+        ':ended_at'   => $ended_at ?: null,
+        ':minutes'    => $minutes ?: null,
+        ':billable'   => $billable ? 1 : 0,
+        ':id'         => $id,
+        ':acc'        => $account_id,
+        ':uid'        => $user_id,
+      ]);
       $ok = 'Gespeichert.';
       flash('Zeit gespeichert.', 'success');
       redirect($return_to);
@@ -90,13 +120,7 @@ function fmt_dt_local($s) {
         </div>
       </div>
       <div class="row">
-        <div class="col-md-4 mb-3">
-          <label class="form-label">Status</label>
-          <select name="status" class="form-select">
-            <option value="offen" <?=$time['status']==='offen'?'selected':''?>>offen</option>
-            <option value="abgerechnet" <?=$time['status']==='abgerechnet'?'selected':''?>>abgerechnet</option>
-          </select>
-        </div>
+
         <div class="col-md-4 mb-3 form-check mt-4">
           <input class="form-check-input" type="checkbox" name="billable" id="billable" <?=$time['billable']?'checked':''?>>
           <label class="form-check-label" for="billable">fakturierbar</label>

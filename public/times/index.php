@@ -58,6 +58,7 @@ if ($end < $start) { $tmp=$start; $start=$end; $end=$tmp; }
 $start_dt = $start.' 00:00:00';
 $end_dt   = $end.' 23:59:59';
 
+
 $per_page = 20;
 $page = page_int($_GET['page'] ?? 1);
 $offset = ($page-1)*$per_page;
@@ -256,13 +257,23 @@ function qs($base,$arr){return htmlspecialchars($base.'?'.http_build_query($arr)
               <td><?= ($r['billable'] ?? 0) ? 'ja' : 'nein' ?></td>
               <td><?= h($r['status'] ?? '—') ?></td>
               <td class="text-nowrap text-end">
-                <a class="btn btn-sm btn-outline-secondary" href="<?=url('/times/edit.php')?>?id=<?=$r['id']?>&return_to=<?=urlencode($_SERVER['REQUEST_URI'])?>">Bearbeiten</a>
-                <form class="d-inline" method="post" action="<?=url('/times/delete.php')?>" onsubmit="return confirm('Diesen Zeiteintrag wirklich löschen?');">
-                  <?=csrf_field()?>
-                  <input type="hidden" name="id" value="<?=$r['id']?>">
-                  <input type="hidden" name="return_to" value="<?=h($_SERVER['REQUEST_URI'])?>">
-                  <button class="btn btn-sm btn-outline-danger">Löschen</button>
-                </form>
+                <?php $locked = (isset($r['status']) && $r['status'] === 'abgerechnet'); ?>
+
+                <?php if ($locked): ?>
+                  <span class="badge bg-secondary">abgerechnet – gesperrt</span>
+                <?php else: ?>
+                  <a class="btn btn-sm btn-outline-secondary"
+                    href="<?=url('/times/edit.php')?>?id=<?=$r['id']?>&return_to=<?=urlencode($_SERVER['REQUEST_URI'])?>">
+                    Bearbeiten
+                  </a>
+                  <form class="d-inline" method="post" action="<?=url('/times/delete.php')?>"
+                        onsubmit="return confirm('Diesen Zeiteintrag wirklich löschen?');">
+                    <?=csrf_field()?>
+                    <input type="hidden" name="id" value="<?=$r['id']?>">
+                    <input type="hidden" name="return_to" value="<?=h($_SERVER['REQUEST_URI'])?>">
+                    <button class="btn btn-sm btn-outline-danger">Löschen</button>
+                  </form>
+                <?php endif; ?>
               </td>
             </tr>
           <?php endforeach; ?>
