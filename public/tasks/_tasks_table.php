@@ -91,6 +91,21 @@ if (!function_exists('fmt_minutes')) {
               </form>
             <?php endif; ?>
 
+            <?php
+                $is_done = isset($r['status']) && $r['status'] === 'abgeschlossen';
+            ?>
+            <form method="post"
+                action="<?= url('/tasks/complete.php') ?>"
+                class="d-inline ms-1">
+            <?= csrf_field() ?>
+            <?= return_to_hidden($_SERVER['REQUEST_URI'] ?? '') ?>
+            <input type="hidden" name="id" value="<?= $tid ?>">
+            <button class="btn btn-sm btn-outline-primary"
+                    <?= $is_done ? 'disabled title="Schon abgeschlossen"' : '' ?>>
+                Fertig
+            </button>
+            </form>
+
             <a class="btn btn-sm btn-outline-secondary"
                href="<?= url('/tasks/edit.php') ?>?id=<?= $tid ?>&return_to=<?= urlencode($rt) ?>">
               Bearbeiten
