@@ -10,7 +10,8 @@ csrf_check();
 $user       = auth_user();
 $account_id = (int)$user['account_id'];
 
-$return_to = pick_return_to('/companies/index.php');
+$rt_target  = pick_return_to('/companies/index.php');
+
 $settings  = get_account_settings($pdo, $account_id);
 
 // ---------- Input & Datensatz laden ----------
@@ -71,7 +72,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $upd->execute([$name, $address, $rate, $vat, $status, $tax_scheme, $vat_val, $id, $account_id]);
 
     flash('Firma gespeichert.', 'success');
-    redirect($return_to);
+    redirect($rt_target);
     exit;
   } else {
     // Felder für Re-Render füllen
@@ -101,7 +102,7 @@ $acct_vat_js = number_format((float)$settings['default_vat_rate'], 2, '.', ''); 
     <form method="post">
       <?= csrf_field() ?>
       <input type="hidden" name="id" value="<?= (int)$company['id'] ?>">
-      <?= return_to_hidden($return_to) ?>
+      <?= return_to_hidden($rt_target) ?>
 
       <div class="mb-3">
         <label class="form-label">Name</label>
@@ -203,7 +204,8 @@ $acct_vat_js = number_format((float)$settings['default_vat_rate'], 2, '.', ''); 
 
       <div class="d-flex gap-2">
         <button class="btn btn-primary">Speichern</button>
-        <a class="btn btn-outline-secondary" href="<?= h(url($return_to)) ?>">Abbrechen</a>
+
+        <a class="btn btn-outline-secondary" href="<?= h(url($rt_target)) ?>">Abbrechen</a>
       </div>
     </form>
   </div>

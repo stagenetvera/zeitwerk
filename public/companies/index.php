@@ -149,7 +149,7 @@ foreach ($statuses as $st) { $persist['status[]'][] = $st; }
               </a>
               <!-- Bearbeiten -->
               <a class="btn btn-sm btn-outline-secondary btn-icon"
-                 href="<?= url('/companies/edit.php') ?>?id=<?= (int)$r['id'] ?>&return_to=<?= urlencode($_SERVER['REQUEST_URI'] ?? $base) ?>"
+                 href="<?= url('/companies/edit.php') ?>?id=<?= (int)$r['id'] ?>&return_to=/companies/index.php"
                  title="Bearbeiten" aria-label="Bearbeiten">
                 <i class="bi bi-pencil"></i>
                 <span class="visually-hidden">Bearbeiten</span>
