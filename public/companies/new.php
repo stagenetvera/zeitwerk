@@ -14,7 +14,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
   $address = trim($_POST['address'] ?? '');
   $rate = $_POST['hourly_rate'] !== '' ? (float)$_POST['hourly_rate'] : null;
   $vat = trim($_POST['vat_id'] ?? '');
-  $status = $_POST['status'] ?? 'laufend';
+  $status = $_POST['status'] ?? 'aktiv';
   if ($name) {
     $ins = $pdo->prepare('INSERT INTO companies(account_id,name,address,hourly_rate,vat_id,status) VALUES(?,?,?,?,?,?)');
     $ins->execute([$account_id,$name,$address,$rate,$vat,$status]);
@@ -42,7 +42,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
         <input type="text" name="vat_id" class="form-control"></div>
       <div class="col-md-4 mb-3"><label class="form-label">Status</label>
         <select name="status" class="form-select">
-          <option value="laufend">laufend</option>
+          <option value="aktiv">aktiv</option>
           <option value="abgeschlossen">abgeschlossen</option>
         </select>
       </div>
