@@ -15,6 +15,8 @@
  * Benötigt globale Helper: h(), url(), csrf_field(), return_to_hidden().
  */
 
+$taskless_running = !empty($has_running) && (empty($running_task_id) || (int)$running_task_id === 0);
+
 $show_company = !empty($show_company);
 
 if (!function_exists('fmt_minutes')) {
