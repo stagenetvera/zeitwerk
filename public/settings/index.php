@@ -60,26 +60,69 @@ function hurl($s){ return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
         <div class="form-text">0 = gleiches Datum wie Rechnungsdatum</div>
       </div>
 
-      <div class="col-md-3">
-        <label class="form-label">Default-Steuersatz (%)</label>
-        <input type="number" step="0.01" class="form-control" name="default_vat_rate"
-               value="<?= h(number_format((float)$set['default_vat_rate'], 2, '.', '')) ?>">
-      </div>
+      <?php
+        // Zahl als JS-kompatible Dezimalzahl vorbereiten (Punkt statt Komma)
+        $as_std_rate_js = '19.00';
+        $as_scheme = $set['default_tax_scheme'] ?? 'standard';
+      ?>
       <div class="col-md-3">
         <label class="form-label">Default-Steuerart</label>
-        <select class="form-select" name="default_tax_scheme">
-          <?php
-          $opts = [
-            'standard'       => 'Standard (MwSt berechnen)',
-            'tax_exempt'     => 'Steuerfrei (0 %)',
-            'reverse_charge' => 'Reverse Charge (0 %, Hinweis erforderlich)',
-          ];
-          foreach ($opts as $k=>$label):
-          ?>
-            <option value="<?= h($k) ?>" <?= $set['default_tax_scheme']===$k?'selected':'' ?>><?= h($label) ?></option>
-          <?php endforeach; ?>
+        <select
+          name="default_tax_scheme"
+          id="as_tax_scheme"
+          class="form-select"
+          data-rate-standard="<?= $as_std_rate_js ?>"
+          data-rate-tax-exempt="0.00"
+          data-rate-reverse-charge="0.00"
+        >
+          <option value="standard"       <?= $as_scheme==='standard'?'selected':'' ?>>standard (mit MwSt)</option>
+          <option value="tax_exempt"     <?= $as_scheme==='tax_exempt'?'selected':'' ?>>steuerfrei</option>
+          <option value="reverse_charge" <?= $as_scheme==='reverse_charge'?'selected':'' ?>>Reverse-Charge</option>
         </select>
+        <div class="form-text">Beim Wechsel der Steuerart wird der Steuersatz unten automatisch vorbelegt.</div>
       </div>
+      <div class="col-md-3">
+        <label class="form-label">Default-Steuersatz (%)</label>
+        <input
+          type="number"
+          step="0.01"
+          min="0"
+          max="100"
+          name="default_vat_rate"
+          id="as_vat_rate"
+          class="form-control"
+          value="<?= isset($set['default_vat_rate']) ? h(number_format((float)$set['default_vat_rate'], 2, '.', '')) : '' ?>"
+        >
+        <div class="form-text">Wird durch die Steuerart vorbelegt, kann aber jederzeit überschrieben werden.</div>
+      </div>
+      <script>
+        document.addEventListener('DOMContentLoaded', function () {
+          var sel = document.getElementById('as_tax_scheme');
+          var vat = document.getElementById('as_vat_rate');
+          if (!sel || !vat) return;
+
+          // Defaults aus den data-Attributen des Selects lesen
+          var defaults = {
+            standard:       sel.dataset.rateStandard       || '19.00',
+            tax_exempt:     sel.dataset.rateTaxExempt      || '0.00',
+            reverse_charge: sel.dataset.rateReverseCharge  || '0.00'
+          };
+
+          function applyByScheme() {
+            var scheme = sel.value;
+            // Steuerart führt → Feld aktiv mit Default belegen (User kann danach überschreiben)
+            vat.value = (defaults[scheme] != null ? defaults[scheme] : defaults.standard);
+          }
+
+          // Beim Wechsel der Steuerart immer vorbelegen
+          sel.addEventListener('change', applyByScheme);
+          sel.addEventListener('input',  applyByScheme); // falls manche Browser 'input' statt 'change' feuern
+
+          // Beim ersten Laden nur dann setzen, wenn das Feld leer ist (bestehende Werte nicht überschreiben)
+          if (!vat.value) applyByScheme();
+        });
+        </script>
+
 
       <div class="col-12">
         <label class="form-label">Einleitender Text auf Rechnungen</label>
