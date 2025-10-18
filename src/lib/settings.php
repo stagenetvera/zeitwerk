@@ -104,3 +104,20 @@ function save_account_settings(PDO $pdo, int $account_id, array $in): void {
     $ins->execute([$account_id, $pattern, $nextSeq, $vat, $scheme, $dueDays, $intro, $iban, $bic, $sender]);
   }
 }
+
+/**
+ * Ermittelt die effektiven Steuer-Defaults für eine Firma:
+ * - nimmt Firmen-Override, wenn vorhanden
+ * - sonst Account-Standard
+ */
+function get_effective_tax_defaults(array $acct, ?array $company): array {
+  $scheme = $company && $company['default_tax_scheme'] !== null
+    ? (string)$company['default_tax_scheme']
+    : (string)$acct['default_tax_scheme'];
+
+  $vat = $company && $company['default_vat_rate'] !== null
+    ? (float)$company['default_vat_rate']
+    : (float)$acct['default_vat_rate'];
+
+  return [$scheme, $vat];
+}
