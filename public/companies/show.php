@@ -115,7 +115,18 @@
    // Fetch rows
    $ps = $pdo->prepare("SELECT p.id, p.title, p.status, p.hourly_rate AS project_rate,
                             c.hourly_rate AS company_rate,
-                            COALESCE(p.hourly_rate, c.hourly_rate) AS effective_rate
+                            COALESCE(p.hourly_rate, c.hourly_rate) AS effective_rate,
+                            EXISTS (
+                                SELECT 1
+                                FROM times tm
+                                JOIN tasks t2
+                                  ON t2.id = tm.task_id AND t2.account_id = tm.account_id
+                                WHERE tm.account_id = p.account_id
+                                  AND t2.project_id = p.id
+                                  AND tm.status IN ('abgerechnet','in_abrechnung')
+                                LIMIT 1
+                              ) AS has_billed
+
                      FROM projects p
                      JOIN companies c ON c.id = p.company_id AND c.account_id = p.account_id
                      WHERE $WHEREP
@@ -157,7 +168,16 @@
       SELECT SUM(tt.minutes) FROM times tt
       WHERE tt.account_id = t.account_id AND tt.user_id = :uid AND tt.task_id = t.id AND tt.minutes IS NOT NULL
     ), 0) AS spent_minutes,
-    og.position AS sort_pos
+    og.position AS sort_pos,
+    EXISTS (
+      SELECT 1
+      FROM times tt
+      WHERE tt.account_id = t.account_id
+        AND tt.task_id    = t.id
+        AND tt.status IN ('abgerechnet','in_abrechnung')
+      LIMIT 1
+    ) AS has_billed
+
   FROM tasks t
   JOIN projects p ON p.id = t.project_id AND p.account_id = t.account_id
   LEFT JOIN task_ordering_global og ON og.account_id = t.account_id AND og.task_id = t.id
@@ -313,11 +333,25 @@
               <td>€                      <?php echo h(number_format((float)$p['effective_rate'], 2, ',', '.')) ?><?php echo $p['project_rate'] === null ? ' <small class="text-muted">(von Firma)</small>' : '' ?></td>
               <td class="text-end">
                 <a class="btn btn-sm btn-outline-secondary" href="<?php echo url('/projects/edit.php') ?>?id=<?php echo $p['id'] ?>">Bearbeiten</a>
-                <form method="post" action="<?php echo url('/projects/delete.php') ?>" class="d-inline" onsubmit="return confirm('Projekt wirklich löschen?');">
-                  <?php echo csrf_field() ?>
-                  <input type="hidden" name="id" value="<?php echo $p['id'] ?>">
-                  <button class="btn btn-sm btn-outline-danger">Löschen</button>
-                </form>
+
+                <?php if (empty($p['has_billed'])): ?>
+                  <form method="post" action="<?= url('/projects/delete.php') ?>"
+                        class="d-inline"
+                        onsubmit="return confirm('Wollen Sie dieses Projekt wirklich löschen? Zugewiesene Aufgaben, sowie nicht abgerechnete Zeiten werden damit ebenfalls gelöscht.');">
+                    <?= csrf_field() ?>
+                    <?= return_to_hidden($return_to) ?>
+                    <input type="hidden" name="id" value="<?= (int)$p['id'] ?>">
+                    <button class="btn btn-sm btn-outline-danger">Löschen</button>
+                  </form>
+
+              <?php else: ?>
+                <button class="btn btn-sm btn-outline-danger" disabled
+                        title="Dieses Projekt enthält Zeiten im Status ‚in Abrechnung‘/‚abgerechnet‘. Löschen nicht erlaubt.">
+                  Löschen
+                </button>
+              <?php endif; ?>
+
+
               </td>
             </tr>
           <?php endforeach; ?>
@@ -407,7 +441,15 @@ $sqlTasks = "SELECT
       SELECT SUM(tt.minutes) FROM times tt
       WHERE tt.account_id = t.account_id AND tt.user_id = :uid AND tt.task_id = t.id AND tt.minutes IS NOT NULL
     ), 0) AS spent_minutes,
-    og.position AS sort_pos
+    og.position AS sort_pos,
+    EXISTS (
+      SELECT 1
+      FROM times tt
+      WHERE tt.account_id = t.account_id
+        AND tt.task_id    = t.id
+        AND tt.status IN ('abgerechnet','in_abrechnung')
+      LIMIT 1
+    ) AS has_billed
   FROM tasks t
   JOIN projects p ON p.id = t.project_id AND p.account_id = t.account_id
   LEFT JOIN task_ordering_global og ON og.account_id = t.account_id AND og.task_id = t.id
@@ -545,13 +587,22 @@ $running_time_id = $has_running ? (int)$__running['id'] : 0;
                    href="<?= url('/tasks/edit.php') ?>?id=<?= $tid ?>&return_to=<?= urlencode($_SERVER['REQUEST_URI'] ?? '') ?>">
                   Bearbeiten
                 </a>
-                <form method="post" action="<?= url('/tasks/delete.php') ?>" class="d-inline"
-                      onsubmit="return confirm('Aufgabe wirklich löschen?');">
-                  <?= csrf_field() ?>
-                  <?= return_to_hidden($return_to) ?>
-                  <input type="hidden" name="id" value="<?= $tid ?>">
-                  <button class="btn btn-sm btn-outline-danger">Löschen</button>
-                </form>
+                <?php if (empty($r['has_billed'])): ?>
+                  <form method="post" action="<?= url('/tasks/delete.php') ?>"
+                        class="d-inline"
+                        onsubmit="return confirm('Wollen Sie diese Aufgabe wirklich löschen? Zugewiesene, nicht abgerechnete Zeiten werden damit ebenfalls gelöscht.');">
+                    <?= csrf_field() ?>
+                    <?= return_to_hidden($return_to) ?>
+                    <input type="hidden" name="id" value="<?= $tid ?>">
+                    <button class="btn btn-sm btn-outline-danger">Löschen</button>
+                  </form>
+                <?php else: ?>
+                  <button class="btn btn-sm btn-outline-danger" disabled
+                          title="Diese Aufgabe enthält Zeiten im Status ‚in Abrechnung‘/‚abgerechnet‘. Löschen nicht erlaubt.">
+                    Löschen
+                  </button>
+                <?php endif; ?>
+
               </td>
             </tr>
           <?php endforeach; ?>
