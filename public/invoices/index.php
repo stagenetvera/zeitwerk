@@ -177,44 +177,20 @@ foreach ($status as $st) $persist['status[]'][] = $st;
 
 <div class="card">
   <div class="card-body p-0">
-    <div class="table-responsive">
-      <table class="table table-striped table-hover mb-0">
-        <thead>
-          <tr>
-            <th>Firma</th>
-            <th>#</th>
-            <th>Rechnungsdatum</th>
-            <th>Fällig</th>
-            <th>Status</th>
-            <th class="text-end">Netto</th>
-            <th class="text-end">Brutto</th>
-            <th class="text-end">Aktionen</th>
-          </tr>
-        </thead>
-        <tbody>
-          <?php foreach ($rows as $r): ?>
-            <tr>
-              <td>
-                <a href="<?=url('/companies/show.php')?>?id=<?=$r['company_id']?>"><?=h($r['company_name'])?></a>
-              </td>
-              <td><?=h($r['invoice_number'] ?: ('INV-'.$r['id']))?></td>
-              <td><?= h($r['issue_date'] ?: '—') ?></td>
-              <td><?= h($r['due_date']   ?: '—') ?></td>
-              <td><?= h($r['status']) ?></td>
-              <td class="text-end"><?= fmt_money($r['total_net']) ?></td>
-              <td class="text-end"><?= fmt_money($r['total_gross']) ?></td>
-              <td class="text-end">
-                <a class="btn btn-sm btn-outline-secondary" href="<?=url('/invoices/edit.php')?>?id=<?=$r['id']?>">Öffnen</a>
-                <a class="btn btn-sm btn-outline-secondary" href="<?=url('/invoices/export_xml.php')?>?id=<?=$r['id']?>">XML</a>
-              </td>
-            </tr>
-          <?php endforeach; ?>
-          <?php if (!$rows): ?>
-            <tr><td colspan="8" class="text-center text-muted">Keine Rechnungen für diesen Filter.</td></tr>
-          <?php endif; ?>
-        </tbody>
-      </table>
-    </div>
+
+    <?php
+    // Example: ensure your SELECT provides company fields when using the 'with_company' mode:
+    // SELECT i.id, i.invoice_number, i.issue_date, i.due_date, i.status, i.total_net, i.total_gross,
+    //        c.id AS company_id, c.name AS company_name
+    // FROM invoices i
+    // JOIN companies c ON c.id = i.company_id AND c.account_id = i.account_id
+    // WHERE i.account_id = :acc
+    // ... (filters, order, limit/offset)
+
+    $invoice_table_mode = 'with_company';
+    $empty_message = 'Keine Rechnungen gefunden.';
+    require __DIR__ . '/_table.php';
+    ?>
     <div class="p-2 d-flex justify-content-end">
       <?= render_pagination_keep($base, $persist, $page, $pages) ?>
     </div>

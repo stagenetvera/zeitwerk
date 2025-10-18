@@ -734,40 +734,12 @@ foreach ($inv_status as $st)       { $inv_keep['inv_status[]'][] = $st; }
       </div>
     </form>
 
-    <div class="table-responsive">
-      <table class="table table-striped table-hover mb-0">
-        <thead>
-          <tr>
-            <th>#</th>
-            <th>Rechnungsdatum</th>
-            <th>Fällig</th>
-            <th>Status</th>
-            <th class="text-end">Netto</th>
-            <th class="text-end">Brutto</th>
-            <th class="text-end">Aktionen</th>
-          </tr>
-        </thead>
-        <tbody>
-        <?php foreach ($invoices as $inv): ?>
-          <tr>
-            <td><?=h($inv['invoice_number'] ?: ('INV-'.$inv['id']))?></td>
-            <td><?= h($inv['issue_date'] ?: '—') ?></td>
-            <td><?= h($inv['due_date'] ?: '—') ?></td>
-            <td><?= h($inv['status']) ?></td>
-            <td class="text-end"><?= number_format((float)$inv['total_net'], 2, ',', '.') ?></td>
-            <td class="text-end"><?= number_format((float)$inv['total_gross'], 2, ',', '.') ?></td>
-            <td class="text-end">
-              <a class="btn btn-sm btn-outline-secondary" href="<?=url('/invoices/edit.php')?>?id=<?=$inv['id']?>">Öffnen</a>
-              <a class="btn btn-sm btn-outline-secondary" href="<?=url('/invoices/export_xml.php')?>?id=<?=$inv['id']?>">XML</a>
-            </td>
-          </tr>
-        <?php endforeach; ?>
-        <?php if (!$invoices): ?>
-          <tr><td colspan="7" class="text-center text-muted">Keine Rechnungen für diesen Filter.</td></tr>
-        <?php endif; ?>
-        </tbody>
-      </table>
-    </div>
+    <?php
+      $invoice_table_mode = 'without_company';
+      $empty_message = 'Keine Rechnungen für diesen Filter.';
+      require __DIR__ . '/../invoices/_table.php';
+    ?>
+
     <div class="mt-2 d-flex justify-content-end">
       <?= render_pagination_named_keep(url('/companies/show.php'), 'inv_page', $inv_page, $inv_pages, $inv_keep) ?>
     </div>
