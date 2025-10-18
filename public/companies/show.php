@@ -507,93 +507,12 @@ $running_time_id = $has_running ? (int)$__running['id'] : 0;
       </div>
     </form>
 
-    <div class="table-responsive">
-      <table class="table table-striped table-hover mb-0">
-        <thead>
-          <tr>
-            <th>Projekt</th>
-            <th>Aufgabe</th>
-            <th>Priorität</th>
-            <th>Status</th>
-            <th>Deadline</th>
-            <th>Geschätzt</th>
-            <th>Aufgelaufene Zeit</th>
-            <th class="text-end">Aktionen</th>
-          </tr>
-        </thead>
-        <tbody>
-          <?php foreach ($tasks as $r): ?>
-            <?php
-              $planned = $r['planned_minutes'] !== null ? (int)$r['planned_minutes'] : 0;
-              $total   = (int)$r['spent_minutes'];
-              $badge = '';
-              if ($planned > 0) {
-                $ratio = $total / $planned;
-                if ($ratio >= 1.0) $badge = 'badge bg-danger';
-                elseif ($ratio >= 0.8) $badge = 'badge bg-warning text-dark';
-                else $badge = 'badge bg-success';
-              }
-              $tid = (int)$r['task_id'];
-            ?>
-            <tr>
-              <td><?= h($r['project_title']) ?></td>
-              <td><?= h($r['description']) ?></td>
-              <td><?= h($r['priority'] ?? '—') ?></td>
-              <td><?= h($r['status'] ?? '—') ?></td>
-              <td><?= $r['deadline'] ? h($r['deadline']) : '—' ?></td>
-              <td><?= $planned ? fmt_minutes($planned) : '—' ?></td>
-              <td>
-                <?php if ($badge): ?>
-                  <span class="<?= $badge ?>"><?= fmt_minutes($total) ?></span>
-                <?php else: ?>
-                  <?= fmt_minutes($total) ?>
-                <?php endif; ?>
-              </td>
-              <td class="text-end">
-                <?php if ($has_running && $running_task_id === $tid): ?>
-                  <form method="post" action="<?= url('/times/stop.php') ?>" class="d-inline me-1">
-                    <?= csrf_field() ?>
-                    <?= return_to_hidden($return_to) ?>
-                    <input type="hidden" name="id" value="<?= $running_time_id ?>">
-                    <button class="btn btn-sm btn-warning">Stop</button>
-                  </form>
-                <?php else: ?>
-                  <form method="post" action="<?= url('/times/start.php') ?>" class="d-inline me-1">
-                    <?= csrf_field() ?>
-                    <?= return_to_hidden($return_to) ?>
-                    <input type="hidden" name="task_id" value="<?= $tid ?>">
-                    <button class="btn btn-sm btn-success">Start</button>
-                  </form>
-                <?php endif; ?>
-                <a class="btn btn-sm btn-outline-secondary"
-                   href="<?= url('/tasks/edit.php') ?>?id=<?= $tid ?>&return_to=<?= urlencode($_SERVER['REQUEST_URI'] ?? '') ?>">
-                  Bearbeiten
-                </a>
-                <?php if (empty($r['has_billed'])): ?>
-                  <form method="post" action="<?= url('/tasks/delete.php') ?>"
-                        class="d-inline"
-                        onsubmit="return confirm('Wollen Sie diese Aufgabe wirklich löschen? Zugewiesene, nicht abgerechnete Zeiten werden damit ebenfalls gelöscht.');">
-                    <?= csrf_field() ?>
-                    <?= return_to_hidden($return_to) ?>
-                    <input type="hidden" name="id" value="<?= $tid ?>">
-                    <button class="btn btn-sm btn-outline-danger">Löschen</button>
-                  </form>
-                <?php else: ?>
-                  <button class="btn btn-sm btn-outline-danger" disabled
-                          title="Diese Aufgabe enthält Zeiten im Status ‚in Abrechnung‘/‚abgerechnet‘. Löschen nicht erlaubt.">
-                    Löschen
-                  </button>
-                <?php endif; ?>
-              </td>
-            </tr>
-          <?php endforeach; ?>
+    <?php
+      // In companies/show: ohne Firmen-Spalte
+      $show_company = false;
+      require __DIR__ . '/../tasks/_tasks_table.php';
 
-          <?php if (!$tasks): ?>
-            <tr><td colspan="8" class="text-center text-muted">Keine Aufgaben nach diesem Filter.</td></tr>
-          <?php endif; ?>
-        </tbody>
-      </table>
-    </div>
+    ?>
 
     <div class="p-2 d-flex justify-content-end">
       <?= render_pagination_named_keep(url('/companies/show.php'), 'task_page', $task_page, $tasks_pages, $keep_tasks) ?>
