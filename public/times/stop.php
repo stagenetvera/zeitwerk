@@ -1,5 +1,6 @@
 <?php
-require __DIR__ . '/../../src/layout/header.php';
+require __DIR__ . '/../../src/bootstrap.php';  // << keine Ausgabe!
+
 require_login();
 csrf_check();
 $user = auth_user();

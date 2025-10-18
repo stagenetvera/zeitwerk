@@ -76,18 +76,25 @@ if (!function_exists('fmt_minutes')) {
           </td>
           <td class="text-end">
             <?php if (!empty($has_running) && (int)$running_task_id === $tid): ?>
-              <form method="post" action="<?= url('/times/stop.php') ?>" class="d-inline me-1">
+              <form method="post" action="<?= url('/times/stop.php') ?>" class="d-inline">
                 <?= csrf_field() ?>
                 <?= return_to_hidden($rt) ?>
                 <input type="hidden" name="id" value="<?= (int)($running_time_id ?? 0) ?>">
-                <button class="btn btn-sm btn-warning">Stop</button>
+                <button class="btn btn-sm btn-warning btn-icon" title="Stop" aria-label="Stop">
+                    <i class="bi bi-stop-fill"></i>
+                    <span class="visually-hidden">Stop</span>
+                </button>
               </form>
             <?php else: ?>
-              <form method="post" action="<?= url('/times/start.php') ?>" class="d-inline me-1">
+              <form method="post" action="<?= url('/times/start.php') ?>" class="d-inline">
                 <?= csrf_field() ?>
                 <?= return_to_hidden($rt) ?>
                 <input type="hidden" name="task_id" value="<?= $tid ?>">
-                <button class="btn btn-sm btn-success">Start</button>
+
+                <button class="btn btn-sm btn-success btn-icon" title="Start" aria-label="Start">
+                    <i class="bi bi-play-fill"></i>
+                    <span class="visually-hidden">Start</span>
+                </button>
               </form>
             <?php endif; ?>
 
@@ -96,19 +103,21 @@ if (!function_exists('fmt_minutes')) {
             ?>
             <form method="post"
                 action="<?= url('/tasks/complete.php') ?>"
-                class="d-inline ms-1">
-            <?= csrf_field() ?>
-            <?= return_to_hidden($_SERVER['REQUEST_URI'] ?? '') ?>
-            <input type="hidden" name="id" value="<?= $tid ?>">
-            <button class="btn btn-sm btn-outline-primary"
-                    <?= $is_done ? 'disabled title="Schon abgeschlossen"' : '' ?>>
-                Fertig
-            </button>
+                class="d-inline">
+                <?= csrf_field() ?>
+                <?= return_to_hidden($_SERVER['REQUEST_URI'] ?? '') ?>
+                <input type="hidden" name="id" value="<?= $tid ?>">
+                <button class="btn btn-sm btn-outline-primary btn-icon"
+                        <?= $is_done ? 'disabled title="Schon abgeschlossen" aria-disabled="true"' : 'title="Fertig" aria-label="Fertig"' ?>>
+                <i class="bi bi-check2"></i>
+                <span class="visually-hidden">Fertig</span>
+                </button>
             </form>
 
             <a class="btn btn-sm btn-outline-secondary"
                href="<?= url('/tasks/edit.php') ?>?id=<?= $tid ?>&return_to=<?= urlencode($rt) ?>">
-              Bearbeiten
+              <i class="bi bi-pencil"></i>
+              <span class="visually-hidden">Bearbeiten</span>
             </a>
 
             <?php if (empty($r['has_billed'])): ?>
@@ -118,12 +127,16 @@ if (!function_exists('fmt_minutes')) {
                 <?= csrf_field() ?>
                 <?= return_to_hidden($rt) ?>
                 <input type="hidden" name="id" value="<?= $tid ?>">
-                <button class="btn btn-sm btn-outline-danger">Löschen</button>
+                <button class="btn btn-sm btn-outline-danger btn-icon" title="Löschen" aria-label="Löschen">
+                    <i class="bi bi-trash"></i>
+                    <span class="visually-hidden">Löschen</span>
+                </button>
               </form>
             <?php else: ?>
               <button class="btn btn-sm btn-outline-danger" disabled
                       title="Diese Aufgabe enthält Zeiten im Status ‚in Abrechnung‘/‚abgerechnet‘. Löschen nicht erlaubt.">
-                Löschen
+                <i class="bi bi-trash"></i>
+                    <span class="visually-hidden">Löschen</span>
               </button>
             <?php endif; ?>
           </td>

@@ -1,6 +1,6 @@
 <?php
 // public/tasks/complete.php
-require __DIR__ . '/../../src/layout/header.php';
+require __DIR__ . '/../../src/bootstrap.php';  // << keine Ausgabe!
 require_once __DIR__ . '/../../src/lib/flash.php';
 require_login();
 csrf_check();

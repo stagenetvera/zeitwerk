@@ -271,7 +271,8 @@ function qs($base,$arr){return htmlspecialchars($base.'?'.http_build_query($arr)
                     <?=csrf_field()?>
                     <input type="hidden" name="id" value="<?=$r['id']?>">
                     <input type="hidden" name="return_to" value="<?=h($_SERVER['REQUEST_URI'])?>">
-                    <button class="btn btn-sm btn-outline-danger">Löschen</button>
+                    <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i>
+                    <span class="visually-hidden">Löschen</span></button>
                   </form>
                 <?php endif; ?>
               </td>

@@ -35,12 +35,17 @@ $companies = $stmt->fetchAll();
             <td><?=h($c['vat_id'] ?? '')?></td>
             <td class="text-truncate" style="max-width: 380px;"><?=nl2br(h($c['address'] ?? ''))?></td>
             <td class="text-end">
-              <a class="btn btn-sm btn-outline-primary" href="<?=url('/companies/show.php')?>?id=<?=$c['id']?>">Anzeigen</a>
-              <a class="btn btn-sm btn-outline-secondary" href="<?=url('/companies/edit.php')?>?id=<?=$c['id']?>">Bearbeiten</a>
+              <a class="btn btn-sm btn-outline-primary" href="<?=url('/companies/show.php')?>?id=<?=$c['id']?>"><i class="bi bi-eye"></i>
+    <span class="visually-hidden">Ansehen</span></a>
+              <a class="btn btn-sm btn-outline-secondary" href="<?=url('/companies/edit.php')?>?id=<?=$c['id']?>">
+                <i class="bi bi-pencil"></i>
+              <span class="visually-hidden">Bearbeiten</span>
+              </a>
               <form class="d-inline" method="post" action="<?=url('/companies/delete.php')?>" onsubmit="return confirm('Diese Firma wirklich löschen?');">
                 <?=csrf_field()?>
                 <input type="hidden" name="id" value="<?=$c['id']?>">
-                <button class="btn btn-sm btn-outline-danger">Löschen</button>
+                <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i>
+                    <span class="visually-hidden">Löschen</span></button>
               </form>
             </td>
           </tr>

@@ -43,7 +43,8 @@ $offers = $stmt->fetchAll();
             <td><?=h($o['status'])?></td>
             <td><?=h($o['hourly_rate'] ?? '')?></td>
             <td class="text-end">
-              <a class="btn btn-sm btn-outline-secondary" href="<?=url('/offers/edit.php')?>?id=<?=$o['id']?>">Bearbeiten</a>
+              <a class="btn btn-sm btn-outline-secondary" href="<?=url('/offers/edit.php')?>?id=<?=$o['id']?>"><i class="bi bi-pencil"></i>
+              <span class="visually-hidden">Bearbeiten</span></a>
               <?php if ($o['status']==='offen'): ?>
                 <form class="d-inline" method="post" action="<?=url('/offers/accept_post.php')?>">
                   <?=csrf_field()?>
@@ -54,7 +55,8 @@ $offers = $stmt->fetchAll();
               <form class="d-inline" method="post" action="<?=url('/offers/delete.php')?>" onsubmit="return confirm('Dieses Angebot löschen?');">
                 <?=csrf_field()?>
                 <input type="hidden" name="id" value="<?=$o['id']?>">
-                <button class="btn btn-sm btn-outline-danger">Löschen</button>
+                <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i>
+                    <span class="visually-hidden">Löschen</span></button>
               </form>
             </td>
           </tr>

@@ -33,6 +33,21 @@ try {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Zeitwerk</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <!-- Bootstrap Icons -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+
+  <style>
+    /* kompakte, konsistente Icon-Buttons */
+    .btn-icon{
+      display:inline-flex; align-items:center; justify-content:center;
+      width: 1.9rem; height: 1.9rem; padding: 0; line-height: 1;
+    }
+    .btn-icon i{ font-size: 1.05rem; line-height: 1; }
+    /* Optional: gleiche Optik auch bei .btn-sm erzwingen */
+    .btn.btn-sm.btn-icon{ width: 1.9rem; height: 1.9rem; }
+
+
+  </style>
 </head>
 <body class="bg-light">
 <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
@@ -115,7 +130,6 @@ try {
                       <?php endif; ?>
                     </span>
                   </div>
-
                 </div>
               </div>
             </div>

@@ -255,11 +255,15 @@ function fmt_minutes($m)
                     <td><?= h($k['email'] ?? '') ?></td>
                     <td><?= h($k['phone'] ?? '') ?></td>
                     <td class="text-end">
-                      <a class="btn btn-sm btn-outline-secondary" href="<?= url('/contacts/edit.php') ?>?id=<?= $k['id'] ?>">Bearbeiten</a>
+                      <a class="btn btn-sm btn-outline-secondary" href="<?= url('/contacts/edit.php') ?>?id=<?= $k['id'] ?>"><i class="bi bi-pencil"></i>
+              <span class="visually-hidden">Bearbeiten</span>
+
+                      </a>
                       <form method="post" action="<?= url('/contacts/delete.php') ?>" class="d-inline" onsubmit="return confirm('Kontakt wirklich löschen?');">
                         <?= csrf_field() ?>
                         <input type="hidden" name="id" value="<?= $k['id'] ?>">
-                        <button class="btn btn-sm btn-outline-danger">Löschen</button>
+                        <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i>
+                    <span class="visually-hidden">Löschen</span></button>
                       </form>
                     </td>
                   </tr>
@@ -317,7 +321,8 @@ function fmt_minutes($m)
               <td><?= h($p['status']) ?></td>
               <td>€ <?= h(number_format((float)$p['effective_rate'], 2, ',', '.')) ?><?= $p['project_rate'] === null ? ' <small class="text-muted">(von Firma)</small>' : '' ?></td>
               <td class="text-end">
-                <a class="btn btn-sm btn-outline-secondary" href="<?= url('/projects/edit.php') ?>?id=<?= $p['id'] ?>">Bearbeiten</a>
+                <a class="btn btn-sm btn-outline-secondary" href="<?= url('/projects/edit.php') ?>?id=<?= $p['id'] ?>"><i class="bi bi-pencil"></i>
+              <span class="visually-hidden">Bearbeiten</span></a>
 
                 <?php if (empty($p['has_billed'])): ?>
                   <form method="post" action="<?= url('/projects/delete.php') ?>"
@@ -326,12 +331,14 @@ function fmt_minutes($m)
                     <?= csrf_field() ?>
                     <?= return_to_hidden($return_to) ?>
                     <input type="hidden" name="id" value="<?= (int)$p['id'] ?>">
-                    <button class="btn btn-sm btn-outline-danger">Löschen</button>
+                    <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i>
+                    <span class="visually-hidden">Löschen</span></button>
                   </form>
                 <?php else: ?>
                   <button class="btn btn-sm btn-outline-danger" disabled
                           title="Dieses Projekt enthält Zeiten im Status ‚in Abrechnung‘/‚abgerechnet‘. Löschen nicht erlaubt.">
-                    Löschen
+                    <i class="bi bi-trash"></i>
+                    <span class="visually-hidden">Löschen</span>
                   </button>
                 <?php endif; ?>
               </td>

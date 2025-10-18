@@ -149,6 +149,20 @@ $keep = [
       // Im Dashboard: mit Firmen-Spalte
       $show_company = true;
       $tasks = $rows;
+      // Laufenden Timer ermitteln (für Start/Stop-Icon im Partial)
+      $runStmt = $pdo->prepare('
+        SELECT id, task_id
+        FROM times
+        WHERE account_id = ? AND user_id = ? AND ended_at IS NULL
+        ORDER BY id DESC
+        LIMIT 1
+      ');
+      $runStmt->execute([$account_id, $user_id]);
+      $running = $runStmt->fetch();
+
+      $has_running      = (bool)$running;
+      $running_task_id  = $running && $running['task_id'] ? (int)$running['task_id'] : 0;
+      $running_time_id  = $running ? (int)$running['id'] : 0;
       require __DIR__ . '/../tasks/_tasks_table.php';
 
     ?>
