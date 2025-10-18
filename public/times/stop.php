@@ -17,6 +17,50 @@ $err=null; $ok=null;
 
 $return_to = pick_return_to('/dashboard/index.php');
 
+/**
+ * NEU: Quick-Stop auf GET, wenn die Aufgabe bereits gesetzt ist.
+ * Kein Formular, sofort beenden und zurück.
+ */
+if ($_SERVER['REQUEST_METHOD'] !== 'POST' && !empty($running['task_id'])) {
+  try {
+    $pdo->beginTransaction();
+
+    // Pro-User serialisieren (Mutex)
+    $pdo->prepare('SELECT id FROM users WHERE id = ? AND account_id = ? FOR UPDATE')
+        ->execute([$user_id, $account_id]);
+
+    // Laufenden Timer exklusiv sperren
+    $rs = $pdo->prepare('
+      SELECT * FROM times
+      WHERE account_id = ? AND user_id = ? AND ended_at IS NULL
+      ORDER BY id DESC
+      LIMIT 1
+      FOR UPDATE
+    ');
+    $rs->execute([$account_id, $user_id]);
+    $cur = $rs->fetch();
+
+    if ($cur && !empty($cur['task_id'])) {
+      $now    = new DateTimeImmutable('now');
+      $start  = new DateTimeImmutable($cur['started_at']);
+      $diff_s = max(0, $now->getTimestamp() - $start->getTimestamp());
+      $minutes= max(1, (int)round($diff_s / 60));
+
+      $stp = $pdo->prepare('
+        UPDATE times
+        SET ended_at = ?, minutes = ?
+        WHERE id = ? AND account_id = ? AND user_id = ? AND ended_at IS NULL
+      ');
+      $stp->execute([$now->format('Y-m-d H:i:s'), $minutes, (int)$cur['id'], $account_id, $user_id]);
+    }
+
+    $pdo->commit();
+    redirect($return_to);
+  } catch (Throwable $e) {
+    if ($pdo->inTransaction()) $pdo->rollBack();
+    // Fallback: Wenn Quick-Stop fehlschlägt, zeig das Formular (unten)
+  }
+}
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   try {
@@ -136,6 +180,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $err = 'Timer-Stop fehlgeschlagen.';
   }
 }
+
 // Daten nur für das Auswahl-Formular laden, falls noch keine Aufgabe gesetzt ist
 if (!$running['task_id']) {
   $cs = $pdo->prepare('SELECT id, name FROM companies WHERE account_id = ? ORDER BY name');
@@ -254,7 +299,6 @@ if (!$running['task_id']) {
   }
 
   function fillProjects(cid){
-    // Grundzustand
     elProject.innerHTML = '';
     const opt0 = document.createElement('option');
     opt0.value = '';
@@ -263,7 +307,6 @@ if (!$running['task_id']) {
     elProject.disabled = !cid;
 
     resetTaskSelect('– optional: vorhandene Aufgabe wählen –');
-
     if (!cid) return;
 
     const cand = projects.filter(p => String(p.company_id) === String(cid));
@@ -274,7 +317,6 @@ if (!$running['task_id']) {
       elProject.appendChild(o);
     });
 
-    // Auto-Select, wenn genau ein Projekt vorhanden ist
     if (cand.length === 1) {
       elProject.value = String(cand[0].id);
       elProject.disabled = false;
@@ -291,9 +333,7 @@ if (!$running['task_id']) {
     elTask.disabled = !pid;
     if (!pid) return;
 
-    // Kandidaten im gewählten Projekt
     const cand = tasks.filter(function(t){ return String(t.project_id) === String(pid); });
-
     cand.forEach(function(t){
       const o = document.createElement('option');
       o.value = String(t.id);
@@ -301,20 +341,17 @@ if (!$running['task_id']) {
       elTask.appendChild(o);
     });
 
-    // ✅ Neu: Auto-Select, wenn genau 1 Aufgabe vorhanden
     if (cand.length === 1) {
       elTask.value = String(cand[0].id);
       elTask.disabled = false;
     }
 
-    // (Optional) Wenn gar keine Aufgaben existieren, automatisch „Neue Aufgabe anlegen“ öffnen
     if (cand.length === 0 && tgNew && boxNew) {
       tgNew.checked = true;
       boxNew.classList.remove('d-none');
     }
   }
 
-  // Events
   elCompany.addEventListener('change', function(){ fillProjects(this.value); });
   elProject.addEventListener('change', function(){ fillTasks(this.value); });
   tgNew && tgNew.addEventListener('change', function(){
@@ -322,12 +359,11 @@ if (!$running['task_id']) {
     else { boxNew.classList.add('d-none'); }
   });
 
-  // --- Initiales Auto-Select ---
-  // Firma: wenn nur 1 echte Option (ohne placeholder) -> auto-select
+  // Auto-Select Firma, falls nur eine vorhanden ist
   const nonEmptyCompanyOptions = Array.from(elCompany.options).filter(o => o.value !== '');
   if (nonEmptyCompanyOptions.length === 1) {
     elCompany.value = nonEmptyCompanyOptions[0].value;
-    fillProjects(elCompany.value); // ruft bei Bedarf auto-select fürs Projekt auf
+    fillProjects(elCompany.value);
   }
 })();
 </script>

@@ -4,6 +4,8 @@ require_once __DIR__ . '/../bootstrap.php';
 require_once __DIR__ . '/../lib/flash.php';
 $user = auth_user();
 
+$return_to = $_SERVER['REQUEST_URI'] ?? url('/dashboard/index.php');
+
 $__rt_running = null;
 try {
   $rt = $pdo->prepare("
@@ -58,9 +60,20 @@ try {
             $running = get_running_time($pdo, (int)$user['account_id'], (int)$user['id']);
           ?>
           <?php if ($running): ?>
-            <a class="btn btn-warning me-2" href="<?=url('/times/stop.php')?>">Timer stoppen</a>
+            <form method="post" action="<?= url('/times/stop.php') ?>" class="d-inline">
+              <?= csrf_field() ?>
+              <input type="hidden" name="id" value="<?= $__rt_running['id'] ?>">
+              <?= return_to_hidden($return_to) ?>
+              <button class="btn btn-warning me-2">Timer stoppen</button>
+            </form>
           <?php else: ?>
-            <a class="btn btn-outline-success me-2" href="<?=url('/times/start.php')?>">Timer starten</a>
+            <form method="post" action="<?= url('/times/start.php') ?>" class="d-inline">
+              <?= csrf_field() ?>
+              <input type="hidden" name="return_to" value="<?= h(url($return_to)) ?>">
+              <button class="btn me-2 btn-success">Timer starten</button>
+            </form>
+
+
           <?php endif; ?>
           <span class="navbar-text me-3">👤 <?=h($user['name'])?></span>
           <a class="btn btn-outline-light" href="<?=url('/logout.php')?>">Logout</a>
