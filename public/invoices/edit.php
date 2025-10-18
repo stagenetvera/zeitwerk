@@ -1,6 +1,7 @@
 <?php
 // public/invoices/edit.php
 require __DIR__ . '/../../src/layout/header.php';
+require_once __DIR__ . '/../../src/lib/invoice_number.php';
 require_login();
 csrf_check();
 
@@ -154,16 +155,30 @@ function delete_item_with_times(PDO $pdo, int $account_id, int $invoice_id, int 
 $err = null; $ok = null;
 
 if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['action']==='save') {
-  // Kopf-Felder
-  $issue_date = $_POST['issue_date'] ?? $invoice['issue_date'];
-  $due_date   = $_POST['due_date']   ?? $invoice['due_date'];
 
-  // Status aus Formular (whitelist)
-  $allowed_status = ['in_vorbereitung','gestellt','gemahnt','bezahlt','storniert'];
-  $new_status = $_POST['status'] ?? ($invoice['status'] ?? 'in_vorbereitung');
-  if (!in_array($new_status, $allowed_status, true)) {
-    $new_status = $invoice['status'] ?? 'in_vorbereitung';
-  }
+     // Status aus Formular (whitelist)
+    $allowed_status = ['in_vorbereitung','gestellt','gemahnt','bezahlt','storniert'];
+    $new_status = $_POST['status'] ?? ($invoice['status'] ?? 'in_vorbereitung');
+    if (!in_array($new_status, $allowed_status, true)) {
+        $new_status = $invoice['status'] ?? 'in_vorbereitung';
+    }
+
+    $issue_date = $_POST['issue_date'] ?? ($invoice['issue_date'] ?? date('Y-m-d'));
+    $due_date   = $_POST['due_date']   ?? $invoice['due_date'];
+
+    $assign_number = false;
+    $will_be_issued = in_array($new_status, ['gestellt','gemahnt','bezahlt','storniert'], true);
+
+    if (empty($invoice['invoice_number']) && $will_be_issued) {
+    $assign_number = true;
+    }
+
+    $number = $invoice['invoice_number'] ?? null;
+    if ($assign_number) {
+    $number = inv_allocate_number($pdo, $account_id, new DateTimeImmutable($issue_date ?: 'today'));
+    }
+
+
 
   // Items dürfen nur verändert werden, solange die Rechnung in Vorbereitung ist
   $canEditItems = (($invoice['status'] ?? '') === 'in_vorbereitung');
@@ -314,8 +329,22 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
       [$sum_net, $sum_gross] = $sumSt->fetch(PDO::FETCH_NUM);
 
       // Rechnungskopf inkl. Status speichern
-      $pdo->prepare("UPDATE invoices SET issue_date=?, due_date=?, status=?, total_net=?, total_gross=? WHERE account_id=? AND id=?")
-          ->execute([$issue_date, $due_date, $new_status, $sum_net, $sum_gross, $account_id, (int)$invoice['id']]);
+
+      if ($assign_number) {
+        $updInv = $pdo->prepare("
+            UPDATE invoices
+            SET issue_date=?, due_date=?, status=?, invoice_number=?, total_net=?, total_gross=?
+            WHERE account_id=? AND id=?
+        ");
+        $updInv->execute([$issue_date, $due_date, $new_status, $number, $sum_net, $sum_gross, $account_id, (int)$invoice['id']]);
+      } else {
+        $updInv = $pdo->prepare("
+            UPDATE invoices
+            SET issue_date=?, due_date=?, status=?, total_net=?, total_gross=?
+            WHERE account_id=? AND id=?
+        ");
+        $updInv->execute([$issue_date, $due_date, $new_status, $sum_net, $sum_gross, $account_id, (int)$invoice['id']]);
+      }
 
       // Times-Status an Rechnungsstatus anpassen (nur wenn Änderung)
       if ($new_status !== ($invoice['status'] ?? '')) {

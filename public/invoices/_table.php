@@ -38,7 +38,7 @@ if (!isset($invoices) && isset($rows) && is_array($rows)) {
       <?php if (!empty($invoices)): ?>
         <?php foreach ($invoices as $inv): ?>
           <tr>
-            <td><?= h($inv['invoice_number'] ?: ('INV-' . (int)$inv['id'])) ?></td>
+            <td><?= h($inv['invoice_number'] ?: '—') ?></td>
 
             <?php if ($showCompany): ?>
               <td>
