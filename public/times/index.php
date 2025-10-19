@@ -264,7 +264,8 @@ function qs($base,$arr){return htmlspecialchars($base.'?'.http_build_query($arr)
                 <?php else: ?>
                   <a class="btn btn-sm btn-outline-secondary"
                     href="<?=url('/times/edit.php')?>?id=<?=$r['id']?>&return_to=<?=urlencode($_SERVER['REQUEST_URI'])?>">
-                    Bearbeiten
+                    <i class="bi bi-pencil"></i>
+                    <span class="visually-hidden">Bearbeiten</span>
                   </a>
                   <form class="d-inline" method="post" action="<?=url('/times/delete.php')?>"
                         onsubmit="return confirm('Diesen Zeiteintrag wirklich löschen?');">
