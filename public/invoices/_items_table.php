@@ -343,12 +343,86 @@ if (empty($groups) && !empty($items)) {
     recalcRow(tr);
   }
 
-  // 1) Robuste Delegation (nutzt .closest, nicht classList.contains)
+  function toggleTaxReason(){
+    var wrap = document.getElementById('tax-exemption-reason-wrap');
+    if (!wrap) return; // Feld existiert ggf. (noch) nicht
+    var any = false;
+    document.querySelectorAll('.inv-tax-sel').forEach(function(sel){
+      if (sel.value !== 'standard') any = true;
+    });
+    wrap.style.display = any ? '' : 'none';
+    var ta = document.getElementById('tax-exemption-reason');
+    if (!any && ta) ta.value = '';
+  }
+
+  // === Robust: Delegation & Guards ===
   var root = document.getElementById('invoice-items');
+  if (!root) return; // keine Tabelle auf der Seite
+
+  // Clicks: Aufklapper & Entfernen
+  root.addEventListener('click', function(e){
+    // Aufklappen/Schließen
+    var btn = e.target.closest && e.target.closest('.inv-toggle-btn');
+    if (btn && root.contains(btn)) {
+      var tr = btn.closest('tr.inv-item-row'); if (!tr) return;
+      var row = tr.getAttribute('data-row');
+      var det = document.querySelector('.inv-details[data-row="'+row+'"]'); if (!det) return;
+      var open = det.style.display === 'table-row';
+      det.style.display = open ? 'none' : 'table-row';
+      tr.setAttribute('aria-expanded', String(!open));
+      return; // nichts weiter tun
+    }
+
+    // Entfernen-Button
+    var del = e.target.closest && e.target.closest('.btn-remove-item');
+    if (del && root.contains(del)) {
+      if (!confirm('Diese Position aus der Rechnung entfernen?')) return;
+
+      var tr = del.closest('tr.inv-item-row'); if (!tr) return;
+      var rowId = tr.getAttribute('data-row');
+      var pid   = tr.getAttribute('data-project');
+
+      // ggf. ID auf die Hidden-Blacklist setzen (Edit-Modus)
+      var idInput = tr.querySelector('input[name^="items["][name$="[id]"]');
+      if (idInput && idInput.value) {
+        var trash = document.getElementById('invoice-hidden-trash');
+        if (trash) {
+          var hidden = document.createElement('input');
+          hidden.type = 'hidden';
+          hidden.name = 'items_deleted[]';
+          hidden.value = idInput.value;
+          trash.appendChild(hidden);
+        }
+      }
+
+      // Detail-Zeile und Hauptzeile entfernen
+      var det = document.querySelector('.inv-details[data-row="'+rowId+'"]');
+      if (det) det.remove();
+      tr.remove();
+
+      // Projekt-Header leeren, wenn keine Zeile mehr
+      if (pid) {
+        var still = document.querySelectorAll('.inv-item-row[data-project="'+pid+'"]').length;
+        if (still === 0) {
+          var head = document.querySelector('.inv-group-head[data-project="'+pid+'"]');
+          if (head) head.remove();
+        }
+      }
+
+      // Feld „Begründung“ evtl. ausblenden
+      toggleTaxReason();
+      return;
+    }
+  });
+
+  // Änderungen: Steuerart, Zeit-Checkboxen
   root.addEventListener('change', function(e){
     var sel = e.target.closest && e.target.closest('.inv-tax-sel');
-    if (sel && root.contains(sel)) updateVatFromScheme(sel);
-
+    if (sel && root.contains(sel)) {
+      updateVatFromScheme(sel);
+      toggleTaxReason();
+      return;
+    }
     if (e.target.closest && e.target.closest('.time-checkbox')) {
       var tr = e.target.closest('tr')
                        .closest('tbody').closest('table')
@@ -357,12 +431,7 @@ if (empty($groups) && !empty($items)) {
     }
   });
 
-  // 2) Zusätzliche direkte Listener an allen Selects (falls jemand stopPropagation nutzt)
-  document.querySelectorAll('.inv-tax-sel').forEach(function(s){
-    s.addEventListener('change', function(){ updateVatFromScheme(s); });
-  });
-
-  // 3) Eingaben in Rate/Steuersatz -> neu berechnen
+  // Eingaben: Stundensatz / Steuersatz
   root.addEventListener('input', function(e){
     if (e.target.closest && (e.target.closest('.rate') || e.target.closest('.inv-vat-input'))){
       var tr = e.target.closest('tr.inv-item-row');
@@ -370,7 +439,7 @@ if (empty($groups) && !empty($items)) {
     }
   });
 
-  // 4) Initial: falls VAT leer, per Scheme vorbesetzen, dann rechnen
+  // Initialisierung
   document.querySelectorAll('tr.inv-item-row').forEach(function(tr){
     var sel = tr.querySelector('.inv-tax-sel');
     var vat = tr.querySelector('.inv-vat-input');
@@ -380,5 +449,6 @@ if (empty($groups) && !empty($items)) {
       recalcRow(tr);
     }
   });
+  toggleTaxReason();
 })();
 </script>

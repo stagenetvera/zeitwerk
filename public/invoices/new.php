@@ -1,116 +1,78 @@
 <?php
- // public/invoices/new.php
- require __DIR__ . '/../../src/layout/header.php';
- require_once __DIR__ . '/../../src/lib/settings.php';
- require_login();
- csrf_check();
+// public/invoices/new.php
+require __DIR__ . '/../../src/layout/header.php';
+require_once __DIR__ . '/../../src/lib/settings.php';
+require_login();
+csrf_check();
 
- $user       = auth_user();
- $account_id = (int)$user['account_id'];
+$user       = auth_user();
+$account_id = (int)$user['account_id'];
 
 $settings = get_account_settings($pdo, $account_id);
 
-// Defaults
-$DEFAULT_TAX     = (float)$settings['default_vat_rate'];      // ersetzt deine bisherige 19.0-Konstante
-$DEFAULT_DUE_DAYS= (int)$settings['default_due_days'];
-$DEFAULT_SCHEME  = $settings['default_tax_scheme'];           // 'standard'|'tax_exempt'|'reverse_charge'
+// Defaults aus Account-Einstellungen
+$DEFAULT_TAX      = (float)$settings['default_vat_rate'];
+$DEFAULT_SCHEME   = $settings['default_tax_scheme']; // 'standard'|'tax_exempt'|'reverse_charge'
 $DEFAULT_DUE_DAYS = (int)($settings['default_due_days'] ?? 14);
 
 $issue_default = date('Y-m-d');
-$due_default   = date('Y-m-d', strtotime('+' . max(0,$DEFAULT_DUE_DAYS) . ' days'));
+$due_default   = date('Y-m-d', strtotime('+' . max(0, $DEFAULT_DUE_DAYS) . ' days'));
 
-function hurl($s)
- {return htmlspecialchars($s, ENT_QUOTES, 'UTF-8');}
- function fmt_money($v)
- {return number_format((float)$v, 2, ',', '.');}
- function fmt_minutes_to_hours($m)
- {return round(((int)$m) / 60, 2);}
+function hurl($s){ return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
+function fmt_money($v){ return number_format((float)$v, 2, ',', '.'); }
+function fmt_minutes_to_hours($m){ return round(((int)$m)/60, 2); }
+function fmt_minutes_hhmm(int $m): string { $h=intdiv($m,60); $r=$m%60; return sprintf('%02d:%02d',$h,$r); }
 
- // ...
- /** Summe Minuten für eine Menge von Time-IDs dieser Firma/Account */
- function sum_minutes_for_times(PDO $pdo, int $account_id, array $ids): int
- {
-  $ids = array_values(array_filter(array_map('intval', $ids), fn($v) => $v > 0));
-  if (! $ids) {
-   return 0;
-  }
-
-  $in     = implode(',', array_fill(0, count($ids), '?'));
-  $params = array_merge([$account_id], $ids);
-  $st     = $pdo->prepare("SELECT COALESCE(SUM(minutes),0) AS m FROM times WHERE account_id = ? AND id IN ($in)");
-  $st->execute($params);
+/** Summe Minuten über Time-IDs (Account-sicher) */
+function sum_minutes_for_times(PDO $pdo, int $account_id, array $ids): int {
+  $ids = array_values(array_filter(array_map('intval', $ids), fn($v)=>$v>0));
+  if (!$ids) return 0;
+  $in = implode(',', array_fill(0, count($ids), '?'));
+  $st = $pdo->prepare("SELECT COALESCE(SUM(minutes),0) FROM times WHERE account_id=? AND id IN ($in)");
+  $st->execute(array_merge([$account_id], $ids));
   return (int)$st->fetchColumn();
- }
+}
 
- // ---- Daten für neue Rechnung: offene, fakturierbare Zeiten der Firma, gruppiert nach Projekten -> Tasks -> Times
- function fmt_minutes_hhmm(int $m): string
- {
-  $h = intdiv($m, 60);
-  $r = $m % 60;
-  return sprintf('%02d:%02d', $h, $r);
- }
-
- // Normalisiert $_POST['time_ids'] zu: [task_id => [time_id, ...]]
- function normalize_times_selection($timesForm, PDO $pdo, int $account_id): array
- {
-  if (empty($timesForm)) {
-   return [];
-  }
-
-  // Fall A: schon verschachtelt: time_ids[task_id][] = time_id
+/** Normalisiert $_POST['time_ids'] zu: [task_id => [time_id,...]] */
+function normalize_times_selection($timesForm, PDO $pdo, int $account_id): array {
+  if (empty($timesForm)) return [];
   $isNested = false;
-  foreach ($timesForm as $k => $v) {
-   if (is_array($v)) {$isNested = true;
-    break;}
-  }
+  foreach ($timesForm as $v) { if (is_array($v)) { $isNested = true; break; } }
   if ($isNested) {
-   $out = [];
-   foreach ($timesForm as $tid => $ids) {
-    $tid = (int)$tid;
-    $ids = array_values(array_unique(array_map('intval', (array)$ids)));
-    if ($tid > 0 && $ids) {
-     $out[$tid] = $ids;
+    $out = [];
+    foreach ($timesForm as $tid => $ids) {
+      $tid = (int)$tid;
+      $ids = array_values(array_unique(array_map('intval', (array)$ids)));
+      if ($tid > 0 && $ids) $out[$tid] = $ids;
     }
-
-   }
-   return $out;
+    return $out;
   }
-
-  // Fall B: flaches Array: time_ids[] = 123,124,...
+  // flach -> nachladen
   $flat = array_values(array_unique(array_map('intval', (array)$timesForm)));
-  if (! $flat) {
-   return [];
-  }
-
+  if (!$flat) return [];
   $in = implode(',', array_fill(0, count($flat), '?'));
-  $st = $pdo->prepare("SELECT id, task_id FROM times WHERE account_id = ? AND id IN ($in)");
+  $st = $pdo->prepare("SELECT id, task_id FROM times WHERE account_id=? AND id IN ($in)");
   $st->execute(array_merge([$account_id], $flat));
-
   $out = [];
   while ($row = $st->fetch()) {
-   $tid = (int)$row['task_id'];
-   $id  = (int)$row['id'];
-   if ($tid > 0) {
-    $out[$tid][] = $id;
-   }
-
+    $tid = (int)$row['task_id']; $id = (int)$row['id'];
+    if ($tid > 0) $out[$tid][] = $id;
   }
   return $out;
- }
+}
 
- // $company muss schon bestimmt sein; ansonsten company_id aus GET/POST holen.
- $company_id = (int)($_GET['company_id'] ?? $_POST['company_id'] ?? 0);
+// --------- Kontext / Daten laden ----------
+$company_id = (int)($_GET['company_id'] ?? $_POST['company_id'] ?? 0);
 
- // -------- return_to ----------
- $return_to = pick_return_to('/companies/show.php?id=' . $company_id);
+// return_to
+$return_to = pick_return_to('/companies/show.php?id='.$company_id);
 
- // Alle offenen billable Zeiten dieser Firma, inkl. Projekt/Task
- $q = $pdo->prepare("
+// Offene Zeiten der Firma für das NEW-Partial ($groups)
+$q = $pdo->prepare("
   SELECT
     t.id          AS time_id,
-    t.minutes     AS minutes,
+    t.minutes,
     t.started_at, t.ended_at,
-    t.billable,
     ta.id         AS task_id,
     ta.description AS task_desc,
     p.id          AS project_id,
@@ -119,9 +81,9 @@ function hurl($s)
     c.id          AS company_id,
     c.name        AS company_name
   FROM times t
-  JOIN tasks ta      ON ta.id = t.task_id AND ta.account_id = t.account_id
-  JOIN projects p    ON p.id = ta.project_id AND p.account_id = ta.account_id
-  JOIN companies c   ON c.id = p.company_id AND c.account_id = p.account_id
+  JOIN tasks ta    ON ta.id = t.task_id AND ta.account_id = t.account_id
+  JOIN projects p  ON p.id = ta.project_id AND p.account_id = ta.account_id
+  JOIN companies c ON c.id = p.company_id AND c.account_id = p.account_id
   WHERE t.account_id = :acc
     AND c.id         = :cid
     AND t.billable   = 1
@@ -129,362 +91,297 @@ function hurl($s)
     AND t.minutes IS NOT NULL
   ORDER BY p.title, ta.id, t.started_at
 ");
- $q->execute([':acc' => $account_id, ':cid' => $company_id]);
- $rows = $q->fetchAll();
+$q->execute([':acc'=>$account_id, ':cid'=>$company_id]);
+$rows = $q->fetchAll();
 
- $groups = []; // [ [project_id,title, rows:[ {task_id, task_desc, hourly_rate, tax_rate, times:[{id, minutes, started_at, ended_at}]} ] ] ]
-
- $DEFAULT_TAX = (float)$settings['default_vat_rate']; // %; gern später dynamisch je Firma
- $byProject   = [];
- foreach ($rows as $r) {
+$groups = []; // für _items_table.php (NEW-Modus)
+$byProject = [];
+foreach ($rows as $r) {
   $pid = (int)$r['project_id'];
-  if (! isset($byProject[$pid])) {
-   $byProject[$pid] = [
-    'project_id'    => $pid,
-    'project_title' => $r['project_title'],
-    'rows'          => [],
-   ];
+  if (!isset($byProject[$pid])) {
+    $byProject[$pid] = ['project_id'=>$pid, 'project_title'=>$r['project_title'], 'rows'=>[]];
   }
   $taskId = (int)$r['task_id'];
-  // Key je Task in diesem Projekt
-  if (! isset($byProject[$pid]['rows'][$taskId])) {
-   $byProject[$pid]['rows'][$taskId] = [
-    'task_id'     => $taskId,
-    'task_desc'   => $r['task_desc'],
-    'hourly_rate' => (float)$r['effective_rate'],
-    'tax_rate' => ($DEFAULT_SCHEME === 'standard') ? (float)$settings['default_vat_rate'] : 0.0,
-    'times'       => [],
-   ];
+  if (!isset($byProject[$pid]['rows'][$taskId])) {
+    $byProject[$pid]['rows'][$taskId] = [
+      'task_id'     => $taskId,
+      'task_desc'   => $r['task_desc'],
+      'hourly_rate' => (float)$r['effective_rate'],
+      'tax_rate'    => ($DEFAULT_SCHEME === 'standard') ? (float)$settings['default_vat_rate'] : 0.0,
+      'times'       => [],
+    ];
   }
   $byProject[$pid]['rows'][$taskId]['times'][] = [
-   'id'         => (int)$r['time_id'],
-   'minutes'    => (int)$r['minutes'],
-   'started_at' => $r['started_at'],
-   'ended_at'   => $r['ended_at'],
+    'id'         => (int)$r['time_id'],
+    'minutes'    => (int)$r['minutes'],
+    'started_at' => $r['started_at'],
+    'ended_at'   => $r['ended_at'],
   ];
- }
- // Reihen in numerische Arrays umwandeln
- foreach ($byProject as &$g) {
-  $g['rows'] = array_values($g['rows']);
- }
- unset($g);
- $groups = array_values($byProject);
+}
+foreach ($byProject as &$g) { $g['rows'] = array_values($g['rows']); } unset($g);
+$groups = array_values($byProject);
 
- $err = null;
- $ok  = null;
+// Firmenliste (für Auswahl)
+$cs = $pdo->prepare('SELECT id, name FROM companies WHERE account_id = ? ORDER BY name');
+$cs->execute([$account_id]);
+$companies = $cs->fetchAll();
 
- // -------- Firmenliste ----------
- $cs = $pdo->prepare('SELECT id, name FROM companies WHERE account_id = ? ORDER BY name');
- $cs->execute([$account_id]);
- $companies = $cs->fetchAll();
-
- // Gewählte Firma
- $company_id = isset($_GET['company_id']) ? (int)$_GET['company_id'] : (int)($_POST['company_id'] ?? 0);
-
- // Prüfen ob Firma zum Account gehört (bei Auswahl)
- $company = null;
- if ($company_id) {
+// geprüfte Firma laden
+$company = null;
+if ($company_id) {
   $cchk = $pdo->prepare('SELECT * FROM companies WHERE id = ? AND account_id = ?');
   $cchk->execute([$company_id, $account_id]);
   $company = $cchk->fetch();
-  if (! $company) {
-   $err        = 'Ungültige Firma.';
-   $company_id = 0;
+  if (!$company) {
+    $err = 'Ungültige Firma.'; $company_id = 0;
   }
- }
+}
 
+$err = $err ?? null;
+$ok  = null;
 
-
- // -------- Zeiten / Aufgaben der Firma laden (nur Anzeige) ----------
- $taskRows = [];
- if ($company_id) {
-  // Alle offenen, fakturierbaren Zeiten, die zu dieser Firma gehören
-  // Gruppiert nach Task, inkl. Stundensatz (effektiv) über Projekt/Firma
-  $sql = "
-    SELECT
-      t.id                 AS task_id,
-      t.description        AS task_description,
-      p.id                 AS project_id,
-      p.title              AS project_title,
-      COALESCE(p.hourly_rate, c.hourly_rate) AS rate,
-      SUM(tm.minutes)      AS sum_minutes,
-      GROUP_CONCAT(tm.id ORDER BY tm.id) AS time_ids_csv
-    FROM times tm
-    JOIN tasks t     ON t.id = tm.task_id AND t.account_id = tm.account_id
-    JOIN projects p  ON p.id = t.project_id AND p.account_id = t.account_id
-    JOIN companies c ON c.id = p.company_id AND c.account_id = p.account_id
-    WHERE
-      tm.account_id = :acc
-      AND c.id = :cid
-      AND tm.status = 'offen'
-      AND tm.billable = 1
-    GROUP BY t.id, t.description, p.id, p.title, COALESCE(p.hourly_rate, c.hourly_rate)
-    ORDER BY p.title, t.id DESC
-  ";
-  $st = $pdo->prepare($sql);
-  $st->execute([':acc' => $account_id, ':cid' => $company_id]);
-  $taskRows = $st->fetchAll();
- }
-
- // -------- Speichern ----------
- if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'save') {
+// ---------- Speichern ----------
+if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['action']==='save') {
   $company_id = (int)($_POST['company_id'] ?? 0);
   $issue_date = $_POST['issue_date'] ?? date('Y-m-d');
-  $due_date   = $_POST['due_date'] ?? date('Y-m-d', strtotime('+14 days'));
+  $due_date   = $_POST['due_date']   ?? date('Y-m-d', strtotime('+14 days'));
 
-  if (! $company_id) {
-   $err = 'Bitte eine Firma auswählen.';
+  // Firma validieren
+  if (!$company_id) {
+    $err = 'Bitte eine Firma auswählen.';
   } else {
-   // Firma validieren
-   $cchk = $pdo->prepare('SELECT id FROM companies WHERE id = ? AND account_id = ?');
-   $cchk->execute([$company_id, $account_id]);
-   if (! $cchk->fetchColumn()) {
-    $err = 'Ungültige Firma.';
-   }
+    $cchk = $pdo->prepare('SELECT id FROM companies WHERE id = ? AND account_id = ?');
+    $cchk->execute([$company_id, $account_id]);
+    if (!$cchk->fetchColumn()) $err = 'Ungültige Firma.';
   }
 
-  // Eingaben aus dem Formular
-  $tasksForm = $_POST['tasks'] ?? [];
-  $timesRaw  = $_POST['time_ids'] ?? []; // kann flach oder verschachtelt sein
-  $manual    = $_POST['manual'] ?? [];
+  // Eingaben einsammeln
+  $itemsForm = $_POST['items']   ?? []; // items[idx][task_id|description|hourly_rate|tax_scheme|vat_rate]
+  $timesRaw  = $_POST['time_ids']?? []; // time_ids[task_id][] = time_id (oder flach)
+  $manual    = $_POST['manual']  ?? []; // manuelle Positionen
+  $tax_reason= trim($_POST['tax_exemption_reason'] ?? '');
 
-  // Zuordnung time_ids => [task_id => [time_id,...]] herstellen
+  // Times normalisieren
   $timesByTask = normalize_times_selection($timesRaw, $pdo, $account_id);
 
-  // Mindestens irgendetwas muss drin sein
+  // Mindestens irgendetwas?
   $hasAnyItem = false;
-  if (! $err) {
-   // Primär: gibt es ausgewählte Zeiten?
-   if (! empty($timesByTask)) {
-    $hasAnyItem = true;
-   }
-
-   // Fallback: alte tasks[tid][include]-Checkboxen
-   if (! $hasAnyItem) {
-    foreach (($tasksForm ?? []) as $tid => $row) {
-     if (! empty($row['include'])) {$hasAnyItem = true;
-      break;}
-    }
-   }
-
-   // Manuelle Positionen
-   if (! $hasAnyItem && is_array($manual)) {
-    foreach ($manual as $m) {
-     if (trim($m['description'] ?? '') !== '') {$hasAnyItem = true;
-      break;}
-    }
-   }
-
-   if (! $hasAnyItem) {
-    $err = 'Keine Position ausgewählt.';
-   }
-
+  if (!empty($timesByTask)) $hasAnyItem = true;
+  if (!$hasAnyItem && is_array($manual)) {
+    foreach ($manual as $m) { if (trim($m['description'] ?? '') !== '') { $hasAnyItem = true; break; } }
   }
-  if (! $err) {
-   $pdo->beginTransaction();
-   try {
-    // 1) Rechnung anlegen
-    $insInv = $pdo->prepare("
-        INSERT INTO invoices (account_id, company_id, status, issue_date, due_date, total_net, total_gross)
-        VALUES (?,?,?,?,?,?,?)
+  if (!$hasAnyItem && is_array($itemsForm)) {
+    foreach ($itemsForm as $row) {
+      if (!empty($row['task_id'])) { $hasAnyItem = true; break; }
+    }
+  }
+  if (!$hasAnyItem && !$err) $err = 'Keine Position ausgewählt.';
+
+  if (!$err) {
+    try {
+      // Eff. Defaults aus Firma/Account
+      $coStmt = $pdo->prepare('SELECT * FROM companies WHERE id = ? AND account_id = ?');
+      $coStmt->execute([$company_id, $account_id]);
+      $company = $coStmt->fetch();
+
+      $eff_vat_default    = (isset($company['default_vat_rate']) && $company['default_vat_rate'] !== null)
+        ? (float)$company['default_vat_rate'] : (float)$settings['default_vat_rate'];
+      $eff_scheme_default = $company['default_tax_scheme'] ?? ($settings['default_tax_scheme'] ?? 'standard');
+
+      // --- PROPERTIES VORAB SAMMELN (damit wir hasNonStandard vor dem Rechnung-Insert kennen) ---
+      $propsByTask    = []; // task_id => [description, rate, vat, scheme]
+      $hasNonStandard = false;
+
+      foreach ($itemsForm as $row) {
+        $tid = (int)($row['task_id'] ?? 0);
+        if (!$tid) continue;
+
+        $desc = trim((string)($row['description'] ?? ''));
+        $rate = ($row['hourly_rate'] !== '' && $row['hourly_rate'] !== null)
+                  ? (float)str_replace(',', '.', (string)$row['hourly_rate']) : 0.0;
+
+        $scheme = $row['tax_scheme'] ?? $eff_scheme_default;
+
+        $vat_input = $row['vat_rate'] ?? ($row['tax_rate'] ?? '');
+        if ($vat_input !== '' && $vat_input !== null) {
+          $vat = (float)str_replace(',', '.', (string)$vat_input);
+        } else {
+          $vat = ($scheme === 'standard') ? $eff_vat_default : 0.0;
+        }
+        $vat = max(0.0, min(100.0, (float)$vat));
+        if ($scheme !== 'standard') $hasNonStandard = true;
+
+        $propsByTask[$tid] = [
+          'description' => $desc,
+          'rate'        => (float)$rate,
+          'vat'         => (float)$vat,
+          'scheme'      => $scheme,
+        ];
+      }
+
+      // Manuelle Positionen in hasNonStandard berücksichtigen (0% => nicht standard)
+      if (is_array($manual)) {
+        foreach ($manual as $m) {
+          if (trim($m['description'] ?? '') === '') continue;
+          $vatm = isset($m['vat_rate']) ? (float)str_replace(',', '.', (string)$m['vat_rate']) : $eff_vat_default;
+          if ($vatm <= 0.0) { $hasNonStandard = true; break; }
+        }
+      }
+
+      // Pflichtprüfung: Begründung erforderlich, sobald mind. eine Position nicht 'standard' ist
+      if ($hasNonStandard && $tax_reason === '') {
+        throw new RuntimeException('Bitte Begründung für die Steuerbefreiung angeben.');
+      }
+
+      // ---------------- TRANSAKTION ----------------
+      $pdo->beginTransaction();
+
+      // 1) Rechnung anlegen (tax_exemption_reason jetzt korrekt bekannt)
+      $insInv = $pdo->prepare("
+        INSERT INTO invoices (
+          account_id, company_id, status, issue_date, due_date,
+          total_net, total_gross, tax_exemption_reason
+        ) VALUES (?,?,?,?,?,?,?,?)
       ");
-    $insInv->execute([
-     $account_id, $company_id, 'in_vorbereitung', $issue_date, $due_date, 0.00, 0.00,
-    ]);
-    $invoice_id = (int)$pdo->lastInsertId();
+      $insInv->execute([
+        $account_id, $company_id, 'in_vorbereitung', $issue_date, $due_date,
+        0.00, 0.00, ($hasNonStandard ? $tax_reason : ''),
+      ]);
+      $invoice_id = (int)$pdo->lastInsertId();
 
-    // 2) Positionen vorbereiten
-$insItem = $pdo->prepare("
-  INSERT INTO invoice_items
-    (account_id, invoice_id, project_id, task_id, description, quantity, unit_price, vat_rate, total_net, total_gross, position)
-  VALUES (?,?,?,?,?,?,?,?,?,?,?)
-");
-$insLink = $pdo->prepare("
-  INSERT INTO invoice_item_times (account_id, invoice_item_id, time_id)
-  VALUES (?,?,?)
-");
-$setTimeStatus = $pdo->prepare("
-  UPDATE times SET status = 'in_abrechnung' WHERE account_id = ? AND id = ?
-");
+      // 2) Statements für Positionen/Links/Times
+      $insItem = $pdo->prepare("
+        INSERT INTO invoice_items
+          (account_id, invoice_id, project_id, task_id, description, quantity, unit_price, vat_rate, total_net, total_gross, position, tax_scheme)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+      ");
+      $insLink = $pdo->prepare("INSERT INTO invoice_item_times (account_id, invoice_item_id, time_id) VALUES (?,?,?)");
+      $setTimeStatus = $pdo->prepare("UPDATE times SET status='in_abrechnung' WHERE account_id=? AND id=?");
+      $getTaskProject = $pdo->prepare("SELECT project_id FROM tasks WHERE account_id=? AND id=?");
 
+      $pos = 1; $sum_net = 0.00; $sum_gross = 0.00;
 
-// ---------- Effektive Defaultwerte aus Firma/Account ----------
-$eff_vat_default = (isset($company['default_vat_rate']) && $company['default_vat_rate'] !== null)
-  ? (float)$company['default_vat_rate']
-  : (float)$settings['default_vat_rate'];
+      // 2a) Normale Erstellung – pro Task explizit ausgewählte Zeiten
+      foreach ($timesByTask as $task_id => $picked) {
+        $task_id = (int)$task_id;
+        $picked  = array_values(array_filter(array_map('intval', (array)$picked), fn($v)=>$v>0));
+        if (!$picked) continue;
 
-$eff_scheme_default = $company['default_tax_scheme'] ?? ($settings['default_tax_scheme'] ?? 'standard');
+        $p      = $propsByTask[$task_id] ?? ['description'=>'','rate'=>0.0,'vat'=>$eff_vat_default,'scheme'=>$eff_scheme_default];
+        $desc   = $p['description'];
+        $rate   = (float)$p['rate'];
+        $vat    = (float)$p['vat'];
+        $scheme = $p['scheme'];
 
-// ---------- Formular-Felder einsammeln ----------
-$itemsForm   = $_POST['items']    ?? []; // items[idx][task_id|description|hourly_rate|tax_scheme|vat_rate]
-$manual      = $_POST['manual']   ?? []; // manual[idx][description|quantity|unit_price|vat_rate]
-$timesRaw    = $_POST['time_ids'] ?? []; // time_ids[task_id][] = time_id
-$timesByTask = normalize_times_selection($timesRaw, $pdo, $account_id);
+        // Projekt
+        $getTaskProject->execute([$account_id, $task_id]);
+        $project_id = ($pid = $getTaskProject->fetchColumn()) ? (int)$pid : null;
 
-// Map: task_id => { description, rate, vat }
-$propsByTask = [];
-foreach ($itemsForm as $row) {
-  $tid = isset($row['task_id']) ? (int)$row['task_id'] : 0;
-  if (!$tid) continue;
+        // Mengen & Summen (Netto aus ungerundetem Stundenwert!)
+        $minutes   = sum_minutes_for_times($pdo, $account_id, $picked);
+        $qty_hours = $minutes / 60;
+        $qty       = round($qty_hours, 3);           // DECIMAL(10,3)
+        $net       = round($qty_hours * $rate, 2);   // NICHT aus $qty
+        $gross     = round($net * (1 + $vat/100), 2);
 
-  $desc = trim((string)($row['description'] ?? ''));
+        // Position
+        $insItem->execute([
+          $account_id, $invoice_id, $project_id, $task_id, $desc,
+          $qty, $rate, $vat, $net, $gross, $pos++, $scheme,
+        ]);
+        $item_id = (int)$pdo->lastInsertId();
 
-  // Stundensatz (Komma zulassen)
-  $rate = isset($row['hourly_rate']) && $row['hourly_rate'] !== ''
-    ? (float)str_replace(',', '.', (string)$row['hourly_rate'])
-    : 0.0;
+        // Zeiten verknüpfen + Status
+        foreach ($picked as $time_id) {
+          $insLink->execute([$account_id, $item_id, (int)$time_id]);
+          $setTimeStatus->execute([$account_id, (int)$time_id]);
+        }
 
-  // VAT: bevorzugt 'vat_rate', danach (BC) 'tax_rate'
-  $vat_input = null;
-  if (array_key_exists('vat_rate', $row) && $row['vat_rate'] !== '') {
-    $vat_input = (float)str_replace(',', '.', (string)$row['vat_rate']);
-  } elseif (array_key_exists('tax_rate', $row) && $row['tax_rate'] !== '') {
-    $vat_input = (float)str_replace(',', '.', (string)$row['tax_rate']);
-  }
+        $sum_net += $net; $sum_gross += $gross;
+      }
 
-  $scheme = $row['tax_scheme'] ?? $eff_scheme_default;
-  $vat    = $vat_input;
-  if ($vat === null) {
-    // Wenn kein expliziter Satz eingegeben: aus Scheme ableiten
-    $vat = ($scheme === 'standard') ? $eff_vat_default : 0.0; // tax_exempt/reverse_charge => 0%
-  }
-  $vat = max(0.0, min(100.0, (float)$vat)); // Clamp
+      // 2b) Fallback – keine expliziten time_ids, aber Items vorhanden -> alle offenen billable Zeiten je Task
+      if ($sum_net == 0.0 && $sum_gross == 0.0 && !empty($propsByTask)) {
+        $getOpenTimes = $pdo->prepare("
+          SELECT id FROM times
+          WHERE account_id=? AND task_id=? AND status='offen' AND billable=1 AND minutes IS NOT NULL
+        ");
+        foreach ($propsByTask as $task_id => $p) {
+          $getOpenTimes->execute([$account_id, (int)$task_id]);
+          $picked = array_map(fn($r)=>(int)$r['id'], $getOpenTimes->fetchAll());
+          if (!$picked) continue;
 
-  $propsByTask[$tid] = [
-    'description' => $desc,
-    'rate'        => (float)$rate,
-    'vat'         => (float)$vat,
-  ];
-}
+          $desc   = $p['description'];
+          $rate   = (float)$p['rate'];
+          $vat    = (float)$p['vat'];
+          $scheme = $p['scheme'] ?? $eff_scheme_default;
 
-$getTaskProject = $pdo->prepare("SELECT project_id FROM tasks WHERE account_id = ? AND id = ?");
+          $getTaskProject->execute([$account_id, (int)$task_id]);
+          $project_id = ($pid = $getTaskProject->fetchColumn()) ? (int)$pid : null;
 
-$pos       = 1;
-$sum_net   = 0.00;
-$sum_gross = 0.00;
+          $minutes   = sum_minutes_for_times($pdo, $account_id, $picked);
+          $qty_hours = $minutes / 60;
+          $qty       = round($qty_hours, 3);
+          $net       = round($qty_hours * $rate, 2);
+          $gross     = round($net * (1 + $vat/100), 2);
 
-/** 2a) Normale Erstellung: pro Task die explizit ausgewählten Zeiten abrechnen */
-foreach ($timesByTask as $task_id => $picked) {
-  $task_id = (int)$task_id;
-  $picked  = array_values(array_filter(array_map('intval', (array)$picked), fn($v)=>$v>0));
-  if (!$picked) continue;
+          $insItem->execute([
+            $account_id, $invoice_id, $project_id, (int)$task_id, $desc,
+            $qty, $rate, $vat, $net, $gross, $pos++, $scheme,
+          ]);
+          $item_id = (int)$pdo->lastInsertId();
 
-  // Eigenschaften aus items[...] (nicht aus tasks[...])
-  $p     = $propsByTask[$task_id] ?? ['description'=>'', 'rate'=>0.0, 'vat'=>$eff_vat_default];
-  $desc  = $p['description'];
-  $rate  = (float)$p['rate'];
-  $vat   = (float)$p['vat'];
+          foreach ($picked as $time_id) {
+            $insLink->execute([$account_id, $item_id, (int)$time_id]);
+            $setTimeStatus->execute([$account_id, (int)$time_id]);
+          }
 
-  // Projekt bestimmen
-  $getTaskProject->execute([$account_id, $task_id]);
-  $project_id = ($pid = $getTaskProject->fetchColumn()) ? (int)$pid : null;
+          $sum_net += $net; $sum_gross += $gross;
+        }
+      }
 
-  // Minuten summieren
-  $minutes = sum_minutes_for_times($pdo, $account_id, $picked);
-  $qty     = round($minutes / 60, 2);
+      // 2c) Manuelle Positionen (ohne Task/Projekt)
+      if (!empty($manual) && is_array($manual)) {
+        foreach ($manual as $m) {
+          $desc = trim($m['description'] ?? '');
+          if ($desc === '') continue;
 
-  $net   = round($qty * $rate, 2);
-  $gross = round($net * (1 + $vat/100), 2);
+          $qty   = isset($m['quantity'])   ? (float)str_replace(',', '.', (string)$m['quantity'])   : 0.0;
+          $price = isset($m['unit_price']) ? (float)str_replace(',', '.', (string)$m['unit_price']) : 0.0;
+          $vat   = isset($m['vat_rate'])   ? (float)str_replace(',', '.', (string)$m['vat_rate'])   : $eff_vat_default;
+          $vat   = max(0.0, min(100.0, (float)$vat));
 
-  // Position schreiben
-  $insItem->execute([
-    $account_id, $invoice_id, $project_id, $task_id, $desc,
-    $qty, $rate, $vat, $net, $gross, $pos++
-  ]);
-  $item_id = (int)$pdo->lastInsertId();
+          // Schema aus MwSt ableiten: >0 => standard, sonst steuerfrei
+          $scheme = ($vat > 0.0) ? 'standard' : 'tax_exempt';
 
-  // Zeiten verknüpfen + Status
-  foreach ($picked as $time_id) {
-    $insLink->execute([$account_id, $item_id, (int)$time_id]);
-    $setTimeStatus->execute([$account_id, (int)$time_id]);
-  }
+          $net   = round($qty * $price, 2);
+          $gross = round($net * (1 + $vat/100), 2);
 
-  $sum_net   += $net;
-  $sum_gross += $gross;
-}
+          $insItem->execute([
+            $account_id, $invoice_id, null, null, $desc,
+            $qty, $price, $vat, $net, $gross, $pos++, $scheme,
+          ]);
 
-/** 2b) Fallback: keine expliziten time_ids, aber Items vorhanden → alle offenen billable Zeiten pro Task abrechnen */
-if ($sum_net == 0.0 && $sum_gross == 0.0 && !empty($propsByTask)) {
-  $getOpenTimes = $pdo->prepare("
-    SELECT id FROM times
-    WHERE account_id = ? AND task_id = ? AND status = 'offen' AND billable = 1 AND minutes IS NOT NULL
-  ");
-  foreach ($propsByTask as $task_id => $p) {
-    $getOpenTimes->execute([$account_id, (int)$task_id]);
-    $picked = array_map(fn($r)=>(int)$r['id'], $getOpenTimes->fetchAll());
-    if (!$picked) continue;
+          $sum_net += $net; $sum_gross += $gross;
+        }
+      }
 
-    $desc = $p['description'];
-    $rate = (float)$p['rate'];
-    $vat  = (float)$p['vat'];
+      // 3) Summen aktualisieren
+      $updInv = $pdo->prepare("UPDATE invoices SET total_net=?, total_gross=? WHERE id=? AND account_id=?");
+      $updInv->execute([$sum_net, $sum_gross, $invoice_id, $account_id]);
 
-    $getTaskProject->execute([$account_id, (int)$task_id]);
-    $project_id = ($pid = $getTaskProject->fetchColumn()) ? (int)$pid : null;
+      $pdo->commit();
 
-    $minutes = sum_minutes_for_times($pdo, $account_id, $picked);
-    $qty     = round($minutes / 60, 2);
-
-    $net   = round($qty * $rate, 2);
-    $gross = round($net * (1 + $vat/100), 2);
-
-    $insItem->execute([
-      $account_id, $invoice_id, $project_id, (int)$task_id, $desc,
-      $qty, $rate, $vat, $net, $gross, $pos++
-    ]);
-    $item_id = (int)$pdo->lastInsertId();
-
-    foreach ($picked as $time_id) {
-      $insLink->execute([$account_id, $item_id, (int)$time_id]);
-      $setTimeStatus->execute([$account_id, (int)$time_id]);
+      // zurück zur Firma (dort wird vermutlich eine Flash-Meldung angezeigt)
+      redirect(url('/companies/show.php').'?id='.$company_id);
+    } catch (Throwable $e) {
+      if ($pdo->inTransaction()) { $pdo->rollBack(); }
+      $err = 'Rechnung konnte nicht angelegt werden. ('.$e->getMessage().')';
     }
-
-    $sum_net   += $net;
-    $sum_gross += $gross;
   }
 }
 
-/** 2c) Manuelle Positionen (ohne Task/Projekt) */
-if (!empty($manual) && is_array($manual)) {
-  foreach ($manual as $m) {
-    $desc = trim($m['description'] ?? '');
-    if ($desc === '') continue;
-
-    $qty    = isset($m['quantity'])   ? (float)str_replace(',', '.', (string)$m['quantity'])    : 0.0;
-    $price  = isset($m['unit_price']) ? (float)str_replace(',', '.', (string)$m['unit_price'])  : 0.0;
-    $vat    = isset($m['vat_rate'])   ? (float)str_replace(',', '.', (string)$m['vat_rate'])    : $eff_vat_default;
-    $vat    = max(0.0, min(100.0, (float)$vat));
-
-    $net   = round($qty * $price, 2);
-    $gross = round($net * (1 + $vat/100), 2);
-
-    $insItem->execute([
-      $account_id, $invoice_id, null, null, $desc,
-      $qty, $price, $vat, $net, $gross, $pos++
-    ]);
-
-    $sum_net   += $net;
-    $sum_gross += $gross;
-  }
-}
-
-// -------- Summen in der Rechnung aktualisieren --------
-$updInv = $pdo->prepare("UPDATE invoices SET total_net = ?, total_gross = ? WHERE id = ? AND account_id = ?");
-$updInv->execute([$sum_net, $sum_gross, $invoice_id, $account_id]);
-
-    // 3) Rechnungssummen aktualisieren
-
-    $pdo->commit();
-
-    // Zurück zur Firma
-    redirect(url('/companies/show.php') . '?id=' . $company_id);
-   } catch (Throwable $e) {
-    $pdo->rollBack();
-    $err = 'Rechnung konnte nicht angelegt werden. (' . $e->getMessage() . ')';
-   }
-  }
- }
-
- // -------- View ----------
+// -------- View ----------
 ?>
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h3>Neue Rechnung</h3>
@@ -493,16 +390,15 @@ $updInv->execute([$sum_net, $sum_gross, $invoice_id, $account_id]);
   </div>
 </div>
 
-<?php if ($err): ?>
+<?php if (!empty($err)): ?>
   <div class="alert alert-danger"><?php echo h($err) ?></div>
 <?php endif; ?>
-
 
 <?php if ($company_id): ?>
 <form method="post" id="invForm" action="<?php echo hurl(url('/invoices/new.php')) ?>">
   <?php echo csrf_field() ?>
   <input type="hidden" name="action" value="save">
-  <input type="hidden" name="company_id" value="<?php echo $company_id ?>">
+  <input type="hidden" name="company_id" value="<?php echo (int)$company_id ?>">
   <input type="hidden" name="return_to" value="<?php echo h($return_to) ?>">
 
   <div class="card mb-3">
@@ -514,9 +410,23 @@ $updInv->execute([$sum_net, $sum_gross, $invoice_id, $account_id]);
         </div>
         <div class="col-md-3">
           <label class="form-label">Fällig bis</label>
-   		  <input type="date" name="due_date" class="form-control"
-       		value="<?= h($_POST['due_date'] ?? $due_default) ?>">
+          <input type="date" name="due_date" class="form-control" value="<?php echo h($_POST['due_date'] ?? $due_default) ?>">
         </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card mb-3" id="tax-exemption-reason-wrap" style="display:none">
+    <div class="card-body">
+      <label class="form-label">Begründung für die Steuerbefreiung</label>
+      <textarea
+        class="form-control"
+        id="tax-exemption-reason"
+        name="tax_exemption_reason"
+        rows="2"
+        placeholder="z. B. § 19 UStG (Kleinunternehmer) / Reverse-Charge nach § 13b UStG / Art. 196 MwStSystRL"></textarea>
+      <div class="form-text">
+        Wird nur benötigt, wenn mindestens eine Position steuerfrei oder Reverse-Charge ist.
       </div>
     </div>
   </div>
@@ -524,14 +434,15 @@ $updInv->execute([$sum_net, $sum_gross, $invoice_id, $account_id]);
   <div class="card mb-4">
     <div class="card-body">
       <h5 class="card-title">Offene Zeiten / Aufgaben der Firma</h5>
-      <?php if (! $taskRows): ?>
+      <?php if (!$groups): ?>
         <div class="text-muted">Keine offenen, fakturierbaren Zeiten gefunden.</div>
       <?php else: ?>
-        <?php $mode = 'new';
-         $rowName            = 'tasks';
-         $timesName          = 'time_ids';
-        require __DIR__ . '/_items_table.php'; ?>
-
+        <?php
+          $mode = 'new';
+          $rowName   = 'tasks';
+          $timesName = 'time_ids';
+          require __DIR__ . '/_items_table.php';
+        ?>
       <?php endif; ?>
     </div>
   </div>
@@ -557,8 +468,8 @@ $updInv->execute([$sum_net, $sum_gross, $invoice_id, $account_id]);
             <label class="form-label">Einzelpreis (€)</label>
             <input type="number" step="0.01" class="form-control" name="__NAME__[unit_price]" value="0.00">
           </div>
-            <div class="col-md-1">
-            <label class="form-label">MWSt %</label>
+          <div class="col-md-1">
+            <label class="form-label">MwSt %</label>
             <input type="number" step="0.01" class="form-control" name="__NAME__[vat_rate]" value="19.00">
           </div>
           <div class="col-md-1">
@@ -576,24 +487,50 @@ $updInv->execute([$sum_net, $sum_gross, $invoice_id, $account_id]);
 </form>
 
 <script>
+// Manuelle Positionen
 (function(){
   const box = document.getElementById('manualBox');
   const tpl = document.getElementById('manualTpl');
   const add = document.getElementById('addManual');
+  if (!box || !tpl || !add) return;
   let idx = 0;
-
   function addRow(){
     const html = tpl.innerHTML.replaceAll('__NAME__', 'manual['+(idx++)+']');
-    const frag = document.createElement('div');
-    frag.innerHTML = html;
-    const row = frag.firstElementChild;
-    box.appendChild(row);
-    row.querySelector('.removeManual').addEventListener('click', function(){
-      row.remove();
-    });
+    const frag = document.createElement('div'); frag.innerHTML = html;
+    const row = frag.firstElementChild; box.appendChild(row);
+    row.querySelector('.removeManual').addEventListener('click', ()=>row.remove());
   }
-
   add.addEventListener('click', addRow);
+})();
+
+// Begründungsfeld ein-/ausblenden & required togglen,
+// sobald irgendeine Position nicht "standard" ist.
+(function(){
+  const wrap = document.getElementById('tax-exemption-reason-wrap');
+  const area = document.getElementById('tax-exemption-reason');
+  if (!wrap) return;
+
+  function hasNonStandard(){
+    let any = false;
+    document.querySelectorAll('.inv-tax-sel').forEach(sel=>{
+      if (sel.value && sel.value !== 'standard') any = true;
+    });
+    return any;
+  }
+  function update(){
+    const show = hasNonStandard();
+    wrap.style.display = show ? '' : 'none';
+    if (area) {
+      area.required = show;
+      if (!show) area.value = '';
+    }
+  }
+  document.addEventListener('change', (e)=>{
+    const t = e.target;
+    if (t && t.classList && t.classList.contains('inv-tax-sel')) update();
+  });
+  // Initial
+  update();
 })();
 </script>
 <?php endif; ?>

@@ -2,7 +2,7 @@
 // public/invoices/edit.php
 require __DIR__ . '/../../src/layout/header.php';
 require_once __DIR__ . '/../../src/lib/invoice_number.php';
-require_once __DIR__ . '/../../src/lib/settings.php';   // ← NEU
+require_once __DIR__ . '/../../src/lib/settings.php';
 require_login();
 csrf_check();
 
@@ -11,11 +11,9 @@ $account_id = (int)$user['account_id'];
 
 $settings = get_account_settings($pdo, $account_id);
 
-
 function hurl($s){ return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
 function fmt_money($v){ return number_format((float)$v, 2, ',', '.'); }
 function fmt_minutes_hhmm(int $m): string { $h=intdiv($m,60); $r=$m%60; return sprintf('%02d:%02d',$h,$r); }
-
 
 
 // Minuten über eine Menge Time-IDs (Account-sicher) summieren
@@ -48,7 +46,7 @@ $company_id = (int)$invoice['company_id'];
 $return_to = pick_return_to('/companies/show.php?id='.$company_id);
 
 // Firma laden (nur Anzeige)
-$cstmt = $pdo->prepare("SELECT * FROM companies WHERE id = ? AND account_id = ?"); // ← statt: id,name
+$cstmt = $pdo->prepare("SELECT * FROM companies WHERE id = ? AND account_id = ?");
 $cstmt->execute([$company_id, $account_id]);
 $company = $cstmt->fetch();
 
@@ -58,7 +56,7 @@ function load_invoice_items(PDO $pdo, int $account_id, int $invoice_id): array {
   $st = $pdo->prepare("
     SELECT
       ii.id AS item_id, ii.project_id, ii.task_id, ii.description,
-      ii.quantity, ii.unit_price, ii.vat_rate, ii.position,
+      ii.quantity, ii.unit_price, ii.vat_rate, ii.tax_scheme, ii.position,
       p.title AS project_title
     FROM invoice_items ii
     LEFT JOIN projects p
@@ -100,7 +98,6 @@ function load_times_by_item(PDO $pdo, int $account_id, array $itemIds): array {
 
 /** Setzt Status der Times für diese Rechnung gesammelt */
 function set_times_status_for_invoice(PDO $pdo, int $account_id, int $invoice_id, string $target): void {
-  // Zielstatus auf verlinkte Zeiten der Rechnung anwenden
   $upd = $pdo->prepare("
     UPDATE times t
     JOIN invoice_item_times iit
@@ -115,20 +112,16 @@ function set_times_status_for_invoice(PDO $pdo, int $account_id, int $invoice_id
 
 /** Entfernt einen Item-Eintrag inkl. Time-Links (und setzt deren Status zurück auf 'offen') */
 function delete_item_with_times(PDO $pdo, int $account_id, int $invoice_id, int $item_id): void {
-  // Welche Zeiten hängen dran?
   $ts = $pdo->prepare("SELECT time_id FROM invoice_item_times WHERE account_id = ? AND invoice_item_id = ?");
   $ts->execute([$account_id, $item_id]);
   $timeIds = array_map(fn($r)=>(int)$r['time_id'], $ts->fetchAll());
 
-  // Links löschen
   $delL = $pdo->prepare("DELETE FROM invoice_item_times WHERE account_id = ? AND invoice_item_id = ?");
   $delL->execute([$account_id, $item_id]);
 
-  // Item löschen (nur falls zur gleichen Rechnung gehört)
   $delI = $pdo->prepare("DELETE FROM invoice_items WHERE account_id = ? AND id = ? AND invoice_id = ?");
   $delI->execute([$account_id, $item_id, $invoice_id]);
 
-  // Zeiten-Status ggf. zurücksetzen (nur solche, die nun an KEINEM Item mehr hängen)
   if ($timeIds) {
     $in = implode(',', array_fill(0, count($timeIds), '?'));
     $params = array_merge([$account_id], $timeIds);
@@ -143,7 +136,6 @@ function delete_item_with_times(PDO $pdo, int $account_id, int $invoice_id, int 
       SET t.status = 'offen'
       WHERE t.account_id = ? AND t.id IN ($in) AND still_linked.time_id IS NULL
     ";
-    // params: [acc, timeIds..., acc, timeIds...]
     $pdo->prepare($sql)->execute(array_merge([$account_id], $timeIds, [$account_id], $timeIds));
   }
 }
@@ -153,34 +145,34 @@ $err = null; $ok = null;
 
 if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['action']==='save') {
 
-     // Status aus Formular (whitelist)
-    $allowed_status = ['in_vorbereitung','gestellt','gemahnt','bezahlt','storniert'];
-    $new_status = $_POST['status'] ?? ($invoice['status'] ?? 'in_vorbereitung');
-    if (!in_array($new_status, $allowed_status, true)) {
-        $new_status = $invoice['status'] ?? 'in_vorbereitung';
-    }
+  // Status aus Formular (whitelist)
+  $allowed_status = ['in_vorbereitung','gestellt','gemahnt','bezahlt','storniert'];
+  $new_status = $_POST['status'] ?? ($invoice['status'] ?? 'in_vorbereitung');
+  if (!in_array($new_status, $allowed_status, true)) {
+    $new_status = $invoice['status'] ?? 'in_vorbereitung';
+  }
 
-    $issue_date = $_POST['issue_date'] ?? ($invoice['issue_date'] ?? date('Y-m-d'));
-    $due_date   = $_POST['due_date']   ?? $invoice['due_date'];
+  $issue_date = $_POST['issue_date'] ?? ($invoice['issue_date'] ?? date('Y-m-d'));
+  $due_date   = $_POST['due_date']   ?? $invoice['due_date'];
 
-    $assign_number = false;
-    $will_be_issued = in_array($new_status, ['gestellt','gemahnt','bezahlt','storniert'], true);
+  $tax_reason = trim($_POST['tax_exemption_reason'] ?? '');
 
-    if (empty($invoice['invoice_number']) && $will_be_issued) {
-        $assign_number = true;
-    }
+  $assign_number = false;
+  $will_be_issued = in_array($new_status, ['gestellt','gemahnt','bezahlt','storniert'], true);
 
-    $number = $invoice['invoice_number'] ?? null;
-    if ($assign_number) {
-        $number = assign_invoice_number_if_needed($pdo, $account_id, (int)$invoice['id'], $issue_date);
-    }
+  if (empty($invoice['invoice_number']) && $will_be_issued) {
+      $assign_number = true;
+  }
 
-
+  $number = $invoice['invoice_number'] ?? null;
+  if ($assign_number) {
+      $number = assign_invoice_number_if_needed($pdo, $account_id, (int)$invoice['id'], $issue_date);
+  }
 
   // Items dürfen nur verändert werden, solange die Rechnung in Vorbereitung ist
   $canEditItems = (($invoice['status'] ?? '') === 'in_vorbereitung');
 
-  $itemsPosted   = $_POST['items'] ?? [];          // items[idx][id|description|hourly_rate|tax_rate|time_ids[]]
+  $itemsPosted   = $_POST['items'] ?? [];          // items[idx][id|description|hourly_rate|tax_scheme|vat_rate|time_ids[]]
   $deletedPosted = $_POST['items_deleted'] ?? [];  // array von invoice_item.id
 
   if (!$err) {
@@ -190,6 +182,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
       $sum_net   = 0.0;
       $sum_gross = 0.0;
 
+      $hasNonStandard = false;
 
       if ($canEditItems) {
         // -----------------------
@@ -200,7 +193,6 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
           if ($deletedIds) {
             $inDel = implode(',', array_fill(0, count($deletedIds), '?'));
 
-            // Time-IDs der Items ermitteln
             $getTimes = $pdo->prepare("
               SELECT time_id FROM invoice_item_times
               WHERE account_id=? AND invoice_item_id IN ($inDel)
@@ -208,15 +200,12 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
             $getTimes->execute(array_merge([$account_id], $deletedIds));
             $toOpen = array_map(fn($r)=>(int)$r['time_id'], $getTimes->fetchAll());
 
-            // Links löschen
             $pdo->prepare("DELETE FROM invoice_item_times WHERE account_id=? AND invoice_item_id IN ($inDel)")
                 ->execute(array_merge([$account_id], $deletedIds));
 
-            // Items löschen
             $pdo->prepare("DELETE FROM invoice_items WHERE account_id=? AND invoice_id=? AND id IN ($inDel)")
                 ->execute(array_merge([$account_id, (int)$invoice['id']], $deletedIds));
 
-            // Zeiten zurück auf 'offen', aber nur wenn sie nirgendwo mehr verknüpft sind
             if ($toOpen) {
               $toOpen = array_values(array_unique(array_filter($toOpen, fn($v)=>$v>0)));
               $inTimes = implode(',', array_fill(0, count($toOpen), '?'));
@@ -237,7 +226,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
         // -------------------------------------------
         $updItem = $pdo->prepare("
           UPDATE invoice_items
-             SET description=?, unit_price=?, vat_rate=?, quantity=?, total_net=?, total_gross=?
+             SET description=?, unit_price=?, vat_rate=?, quantity=?, total_net=?, total_gross=?, tax_scheme=?
            WHERE account_id=? AND invoice_id=? AND id=?
         ");
 
@@ -247,7 +236,6 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
         ");
         $addLink = $pdo->prepare("INSERT INTO invoice_item_times (account_id, invoice_item_id, time_id) VALUES (?,?,?)");
         $delLink = $pdo->prepare("DELETE FROM invoice_item_times WHERE account_id=? AND invoice_item_id=? AND time_id=?");
-
 
         $sum_minutes = function(PDO $pdo, int $account_id, array $ids): int {
           $ids = array_values(array_filter(array_map('intval', $ids), fn($v)=>$v>0));
@@ -265,33 +253,37 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
           $desc = trim($row['description'] ?? '');
           $rate = dec($row['hourly_rate'] ?? 0);
 
-          // Steuer: bevorzugt vat_rate, BC-Fallback tax_rate
-          $scheme = $row['tax_scheme'] ?? null;
-          $vatStr = $row['vat_rate']   ?? ($row['tax_rate'] ?? '');
+          // Steuer
+          $scheme = $row['tax_scheme'] ?? 'standard';
+          if ($scheme !== 'standard') { $hasNonStandard = true; }
+
+          // Pflichtprüfung: Begründung erforderlich, sobald mind. ein Item nicht 'standard' ist
+          if ($hasNonStandard && $tax_reason === '') {
+              throw new RuntimeException('Bitte Begründung für die Steuerbefreiung angeben.');
+          }
+          // bevorzugt vat_rate, BC-Fallback tax_rate
+          $vatStr = $row['vat_rate'] ?? ($row['tax_rate'] ?? '');
           $vat    = dec($vatStr);
 
-          // Scheme erzwingen: alles außer 'standard' => 0 %
+          // Nicht-standard => 0 %
           if ($scheme && $scheme !== 'standard') {
             $vat = 0.0;
           }
-
-          // Sicherheitsbegrenzung für die DB-Spalte DECIMAL(5,2)
           $vat = max(0.0, min(100.0, $vat));
 
-          // Zeiten aus dem Formular
+          // Zeiten aus Formular
           $newTimes = array_values(array_filter(array_map('intval', $row['time_ids'] ?? []), fn($v)=>$v>0));
-
 
           // Minuten/Quantity + Summen neu berechnen
           $minutes    = $sum_minutes($pdo, $account_id, $newTimes);
-          $qty_hours  = $minutes / 60;                 // volle Präzision für die Berechnung
-          $qty        = round($qty_hours, 3);          // invoice_items.quantity ist DECIMAL(10,3)
-          $net        = round($qty_hours * $rate, 2);  // NICHT aus dem gerundeten $qty berechnen
+          $qty_hours  = $minutes / 60;                 // volle Präzision
+          $qty        = round($qty_hours, 3);          // DECIMAL(10,3)
+          $net        = round($qty_hours * $rate, 2);  // aus ungerundetem qty_hours
           $gross      = round($net * (1 + $vat / 100), 2);
 
           // Item updaten
           $updItem->execute([
-            $desc, $rate, $vat, $qty, $net, $gross,
+            $desc, $rate, $vat, $qty, $net, $gross, ($scheme ?? 'standard'),
             $account_id, (int)$invoice['id'], $item_id
           ]);
 
@@ -303,9 +295,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
           $toAdd    = array_values(array_diff($newTimes, $currTimes));
           $toRemove = array_values(array_diff($currTimes, $newTimes));
 
-
-
-          // Links + Status aktualisieren
+          // Links + Status
           if ($toAdd) {
             foreach ($toAdd as $tid) { $addLink->execute([$account_id, $item_id, $tid]); }
             $ph = implode(',', array_fill(0, count($toAdd), '?'));
@@ -325,33 +315,44 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
             $pdo->prepare($sqlOpen)->execute(array_merge([$account_id], $toRemove));
           }
         }
+
+      } else {
+        // Items nicht editierbar -> Non-Standard aus DB prüfen
+        $cnt = $pdo->prepare("
+          SELECT COUNT(*) FROM invoice_items
+          WHERE account_id=? AND invoice_id=? AND (tax_scheme IS NOT NULL AND tax_scheme <> 'standard')
+        ");
+        $cnt->execute([$account_id, (int)$invoice['id']]);
+        $hasNonStandard = ((int)$cnt->fetchColumn()) > 0;
       }
 
       // -------------------------------------------
       // 3) Summen und Status updaten
       // -------------------------------------------
-      // Summen immer sauber aus invoice_items ziehen
-      $sumSt = $pdo->prepare("SELECT COALESCE(SUM(total_net),0), COALESCE(SUM(total_gross),0)
-                              FROM invoice_items WHERE account_id=? AND invoice_id=?");
+      $sumSt = $pdo->prepare("
+        SELECT COALESCE(SUM(total_net),0), COALESCE(SUM(total_gross),0)
+        FROM invoice_items WHERE account_id=? AND invoice_id=?
+      ");
       $sumSt->execute([$account_id, (int)$invoice['id']]);
       [$sum_net, $sum_gross] = $sumSt->fetch(PDO::FETCH_NUM);
 
-      // Rechnungskopf inkl. Status speichern
+      // tax_exemption_reason nur speichern, wenn Non-Standard vorhanden
+      $reasonToSave = $hasNonStandard ? $tax_reason : '';
 
       if ($assign_number) {
         $updInv = $pdo->prepare("
-            UPDATE invoices
-            SET issue_date=?, due_date=?, status=?, invoice_number=?, total_net=?, total_gross=?
-            WHERE account_id=? AND id=?
+          UPDATE invoices
+            SET issue_date=?, due_date=?, status=?, invoice_number=?, total_net=?, total_gross=?, tax_exemption_reason=?
+          WHERE account_id=? AND id=?
         ");
-        $updInv->execute([$issue_date, $due_date, $new_status, $number, $sum_net, $sum_gross, $account_id, (int)$invoice['id']]);
+        $updInv->execute([$issue_date, $due_date, $new_status, $number, $sum_net, $sum_gross, $reasonToSave, $account_id, (int)$invoice['id']]);
       } else {
         $updInv = $pdo->prepare("
-            UPDATE invoices
-            SET issue_date=?, due_date=?, status=?, total_net=?, total_gross=?
-            WHERE account_id=? AND id=?
+          UPDATE invoices
+            SET issue_date=?, due_date=?, status=?, total_net=?, total_gross=?, tax_exemption_reason=?
+          WHERE account_id=? AND id=?
         ");
-        $updInv->execute([$issue_date, $due_date, $new_status, $sum_net, $sum_gross, $account_id, (int)$invoice['id']]);
+        $updInv->execute([$issue_date, $due_date, $new_status, $sum_net, $sum_gross, $reasonToSave, $account_id, (int)$invoice['id']]);
       }
 
       // Times-Status an Rechnungsstatus anpassen (nur wenn Änderung)
@@ -370,7 +371,6 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
 
       $pdo->commit();
       $ok = 'Rechnung gespeichert.';
-      // Nach dem Speichern auf der gleichen Seite bleiben
       redirect(url('/invoices/edit.php').'?id='.(int)$invoice['id']);
     } catch (Throwable $e) {
       $pdo->rollBack();
@@ -378,6 +378,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
     }
   }
 }
+
 // ---------- Anzeige-Daten laden (nach evtl. Save/Delete) ----------
 $invStmt = $pdo->prepare("SELECT * FROM invoices WHERE id = ? AND account_id = ?");
 $invStmt->execute([$invoice_id, $account_id]);
@@ -387,9 +388,14 @@ $rawItems = load_invoice_items($pdo, $account_id, $invoice_id);
 $itemIds  = array_map(fn($r)=>(int)$r['item_id'], $rawItems);
 $timesByItem = load_times_by_item($pdo, $account_id, $itemIds);
 
+// Für initiale Anzeige des Begründungs-Felds (wenn Items non-standard ODER bereits ein Text gespeichert ist)
+$hasNonStandardDisplay = false;
+foreach ($rawItems as $r) {
+  if (!empty($r['tax_scheme']) && $r['tax_scheme'] !== 'standard') { $hasNonStandardDisplay = true; break; }
+}
+
 /**
- * Das Partial rendert im EDIT-Modus, wenn $groups leer ist und $items befüllt sind.
- * Wir liefern $items im erwarteten Format (time_entries[] etc.).
+ * Partial im EDIT-Modus: $groups leer lassen, $items füllen.
  */
 $items  = [];
 foreach ($rawItems as $r) {
@@ -400,22 +406,21 @@ foreach ($rawItems as $r) {
     'project_title' => (string)($r['project_title'] ?? ''),
     'description'   => (string)($r['description'] ?? ''),
     'hourly_rate'   => (float)($r['unit_price'] ?? 0),
-    'vat_rate'      => (float)($r['vat_rate'] ?? 0),   // <-- statt 'tax_rate'
+    'vat_rate'      => (float)($r['vat_rate'] ?? 0),
+    'tax_scheme'    => $r['tax_scheme'] ?? null,
     'quantity'      => (float)($r['quantity'] ?? 0),
     'time_entries'  => array_map(function($t){
-        return [
-            'id'         => (int)($t['id'] ?? $t['time_id'] ?? 0),
-            'minutes'    => (int)($t['minutes'] ?? 0),
-            'started_at' => $t['started_at'] ?? null,
-            'ended_at'   => $t['ended_at'] ?? null,
-            'selected'   => true,
-        ];
+      return [
+        'id'         => (int)($t['id'] ?? $t['time_id'] ?? 0),
+        'minutes'    => (int)($t['minutes'] ?? 0),
+        'started_at' => $t['started_at'] ?? null,
+        'ended_at'   => $t['ended_at'] ?? null,
+        'selected'   => true,
+      ];
     }, $timesByItem[$iid] ?? []),
   ];
-
 }
-// WICHTIG: $groups leer lassen, damit das Partial den EDIT-Zweig nimmt.
-$groups = [];
+$groups = []; // wichtig für EDIT-Zweig
 
 // ---------- View ----------
 ?>
@@ -465,17 +470,33 @@ $groups = [];
         </select>
       </div>
 
+      <div class="card mb-3" id="tax-exemption-reason-wrap" style="<?= ($hasNonStandardDisplay || !empty($invoice['tax_exemption_reason'])) ? '' : 'display:none' ?>">
+        <div class="card-body">
+          <label class="form-label">Begründung für die Steuerbefreiung</label>
+          <textarea
+            class="form-control"
+            id="tax-exemption-reason"
+            name="tax_exemption_reason"
+            rows="2"
+            <?= ($hasNonStandardDisplay || !empty($invoice['tax_exemption_reason'])) ? 'required' : '' ?>
+            placeholder="z. B. § 19 UStG (Kleinunternehmer) / Reverse-Charge nach § 13b UStG / Art. 196 MwStSystRL"><?= h($invoice['tax_exemption_reason'] ?? '') ?></textarea>
+          <div class="form-text">
+            Wird nur benötigt, wenn mindestens eine Position steuerfrei oder Reverse-Charge ist.
+          </div>
+        </div>
+      </div>
+
       <div class="col-12">
         <div class="card mt-3">
           <div class="card-body">
             <h5 class="card-title">Positionen / Zeiten</h5>
 
             <?php
-                // Partial im EDIT-Modus verwenden
-                $mode = 'edit';
-                $rowName = 'items';        // erzeugt name="items[...][...]"
-                $timesName = 'time_ids';   // (vom EDIT-Part ignoriert, aber ok)
-                require __DIR__ . '/_items_table.php';
+              // Partial im EDIT-Modus verwenden
+              $mode = 'edit';
+              $rowName = 'items';        // erzeugt name="items[...][...]"
+              $timesName = 'time_ids';   // (vom EDIT-Part ignoriert, aber ok)
+              require __DIR__ . '/_items_table.php';
             ?>
 
           </div>
@@ -527,8 +548,8 @@ $groups = [];
 </div>
 
 <script>
+// Manuelle Positionen (Add/Remove)
 (function(){
-  // Manuelle Positionen (Add/Remove), identisch zu new.php
   const box = document.getElementById('manualBox');
   const tpl = document.getElementById('manualTpl');
   const add = document.getElementById('addManual');
@@ -544,6 +565,35 @@ $groups = [];
     }
     add.addEventListener('click', addRow);
   }
+})();
+
+// Begründungsfeld ein-/ausblenden, wenn irgendeine Position nicht "standard" ist
+(function(){
+  const wrap = document.getElementById('tax-exemption-reason-wrap');
+  const area = document.getElementById('tax-exemption-reason');
+  if (!wrap) return;
+
+  function hasNonStandard(){
+    let any = false;
+    document.querySelectorAll('.inv-tax-sel').forEach(sel=>{
+      if (sel.value && sel.value !== 'standard') any = true;
+    });
+    return any;
+  }
+  function update(){
+    const show = hasNonStandard();
+    wrap.style.display = show ? '' : 'none';
+    if (area) {
+      area.required = show;   // ← Pflichtfeld setzen
+      if (!show) area.value = '';
+    }
+  }
+  document.addEventListener('change', (e)=>{
+    const t = e.target;
+    if (t && t.classList && t.classList.contains('inv-tax-sel')) update();
+  });
+  // Initial
+  update();
 })();
 </script>
 
