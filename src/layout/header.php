@@ -70,6 +70,28 @@
     tbody#dashTaskBody tr {
       transition: transform 150ms ease;
     }
+
+  .flash-stack{
+    position: fixed;
+    top: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1100; /* over navs/dropdowns */
+    width: min(720px, calc(100vw - 32px));
+    pointer-events: none; /* clicks pass through stack except alerts */
+  }
+  .flash-stack .alert{
+    pointer-events: auto;
+    margin: 0 0 .5rem 0;
+    box-shadow: 0 .5rem 1rem rgba(0,0,0,.15);
+    border-radius: .5rem;
+    opacity: 1;
+    transform: translateY(0);
+    transition: opacity .35s ease, transform .35s ease;
+  }
+  .flash-stack .alert.flash-enter{ opacity: 0; transform: translateY(-6px); }
+  .flash-stack .alert.flash-leave{ opacity: 0; transform: translateY(-6px); }
+
   </style>
 </head>
 <body class="bg-light">

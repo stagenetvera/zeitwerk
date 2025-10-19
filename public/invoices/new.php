@@ -532,6 +532,31 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
   // Initial
   update();
 })();
+
+// Flash-Meldungen nach 5s automatisch ausblenden.
+// Greift auf .alert.alert-flash oder [data-flash] (empfohlen im Flash-Partial).
+(function(){
+  const AUTO_MS = 5000;
+  const candidates = document.querySelectorAll('.alert.alert-flash, .alert[data-flash]');
+  candidates.forEach(el=>{
+    setTimeout(()=>{
+      try {
+        if (window.bootstrap && window.bootstrap.Alert) {
+          const inst = bootstrap.Alert.getOrCreateInstance(el);
+          // Wenn fade/show-Klassen vorhanden sind, nutze Bootstrap-Close
+          inst.close();
+        } else {
+          // Fallback: sanft ausblenden
+          el.style.transition = 'opacity 300ms ease';
+          el.style.opacity = '0';
+          setTimeout(()=>{ el.remove(); }, 320);
+        }
+      } catch(e) {
+        el.remove();
+      }
+    }, AUTO_MS);
+  });
+})();
 </script>
 <?php endif; ?>
 
