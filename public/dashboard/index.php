@@ -163,78 +163,85 @@ $keep = [
       $has_running      = (bool)$running;
       $running_task_id  = $running && $running['task_id'] ? (int)$running['task_id'] : 0;
       $running_time_id  = $running ? (int)$running['id'] : 0;
+      $table_body_id = 'dashTaskBody';
+      $is_sortable = true;
       require __DIR__ . '/../tasks/_tasks_table.php';
 
     ?>
+
       <script>
-(function(){
-  var tbody = document.getElementById('dashTaskBody');
-  if (!tbody) return;
+        (function(){
+          var tbody = document.getElementById('dashTaskBody');
+          if (!tbody) return;
 
-  function getCsrf() {
-    var m = document.querySelector('meta[name="csrf-token"]');
-    if (m && m.content) return m.content;
-    var i = document.querySelector('input[name="csrf_token"]');
-    return i ? i.value : '';
-  }
+          // Fallback: sicherstellen, dass alle Handles draggable sind
+          tbody.querySelectorAll('.drag-handle').forEach(function(h){
+            if (!h.hasAttribute('draggable')) h.setAttribute('draggable','true');
+          });
 
-  var dragEl = null;
+          function getCsrf() {
+            var m = document.querySelector('meta[name="csrf-token"]');
+            if (m && m.content) return m.content;
+            var i = document.querySelector('input[name="csrf_token"]');
+            return i ? i.value : '';
+          }
 
-  tbody.addEventListener('dragstart', function(e){
-    var tr = e.target.closest('tr[data-task-id]');
-    if (!tr) return;
-    dragEl = tr;
-    tr.classList.add('dragging');
-    e.dataTransfer.effectAllowed = 'move';
-    try { e.dataTransfer.setData('text/plain', tr.dataset.taskId); } catch(_) {}
-  });
+          var dragEl = null;
 
-  tbody.addEventListener('dragend', function(){
-    if (dragEl) dragEl.classList.remove('dragging');
-    dragEl = null;
-  });
+          // WICHTIG: Capture-Modus (3. Argument = true)
+          tbody.addEventListener('dragstart', function(e){
+            var tr = e.target.closest('tr[data-task-id]');
+            if (!tr) return;
+            dragEl = tr;
+            tr.classList.add('dragging');
+            if (e.dataTransfer) {
+              e.dataTransfer.effectAllowed = 'move';
+              try { e.dataTransfer.setData('text/plain', tr.dataset.taskId); } catch(_) {}
+            }
+          }, true);
 
-  tbody.addEventListener('dragover', function(e){
-    e.preventDefault();
-    var tr = e.target.closest('tr[data-task-id]');
-    if (!tr || tr === dragEl) return;
-    var rect = tr.getBoundingClientRect();
-    var after = (e.clientY - rect.top) > (rect.height / 2);
-    tbody.insertBefore(dragEl, after ? tr.nextSibling : tr);
-  });
+          tbody.addEventListener('dragend', function(){
+            if (dragEl) dragEl.classList.remove('dragging');
+            dragEl = null;
+          });
 
-  tbody.addEventListener('drop', function(e){
-    e.preventDefault();
-    saveOrder();
-  });
+          tbody.addEventListener('dragover', function(e){
+            e.preventDefault();
+            if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+            var tr = e.target.closest('tr[data-task-id]');
+            if (!tr || tr === dragEl) return;
+            var rect = tr.getBoundingClientRect();
+            var after = (e.clientY - rect.top) > (rect.height / 2);
+            tbody.insertBefore(dragEl, after ? tr.nextSibling : tr);
+          });
 
-  function saveOrder(){
-    var order = Array.from(tbody.querySelectorAll('tr[data-task-id]'))
-      .map(function(tr){ return tr.dataset.taskId; });
+          tbody.addEventListener('drop', function(e){
+            e.preventDefault();
+            saveOrder();
+          });
 
-    // FormData mit csrf_token + order[]
-    var fd = new FormData(document.getElementById('dndCsrf'));
-    order.forEach(function(id){
-      fd.append('order[]', id);
-    });
+          function saveOrder(){
+            var order = Array.from(tbody.querySelectorAll('tr[data-task-id]'))
+              .map(function(tr){ return tr.dataset.taskId; });
 
-    fetch('<?=url('/tasks/order_save_global.php')?>', {
-      method: 'POST',
-      credentials: 'same-origin',
-      body: fd
-    })
-    .then(function(r){ return r.json(); })
-    .then(function(j){
-      if (!j || !j.ok) {
-        console.error('Order-Save fehlgeschlagen', j);
-      }
-    })
-    .catch(function(err){
-      console.error('Order-Save Fehler', err);
-    });
-  }
-})();
-</script>
+            var fd = new FormData(document.getElementById('dndCsrf'));
+            order.forEach(function(id){ fd.append('order[]', id); });
+
+            fetch('<?=url('/tasks/order_save_global.php')?>', {
+              method: 'POST',
+              credentials: 'same-origin',
+              body: fd
+            })
+            .then(function(r){ return r.json(); })
+            .then(function(j){
+              if (!j || !j.ok) console.error('Order-Save fehlgeschlagen', j);
+            })
+            .catch(function(err){
+              console.error('Order-Save Fehler', err);
+            });
+          }
+        })();
+        </script>
     </div>
   </div>
 </div>

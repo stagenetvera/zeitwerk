@@ -18,6 +18,7 @@
 $taskless_running = !empty($has_running) && (empty($running_task_id) || (int)$running_task_id === 0);
 
 $show_company = !empty($show_company);
+$is_sortable = $is_sortable ?? false;
 
 if (!function_exists('fmt_minutes')) {
   function fmt_minutes($m){
@@ -27,10 +28,14 @@ if (!function_exists('fmt_minutes')) {
   }
 }
 ?>
+<?php
+    $table_body_id = $table_body_id ?? 'dashTaskBody';
+?>
 <div class="table-responsive">
-  <table class="table table-striped table-hover mb-0">
+  <table class="table  table-hover mb-0">
     <thead>
       <tr>
+        <?php if ($is_sortable): ?><th style="width:32px"></th><?php endif; ?>
         <?php if ($show_company): ?><th>Firma</th><?php endif; ?>
         <th>Projekt</th>
         <th>Aufgabe</th>
@@ -42,7 +47,7 @@ if (!function_exists('fmt_minutes')) {
         <th class="text-end">Aktionen</th>
       </tr>
     </thead>
-    <tbody>
+    <tbody id="<?= h($table_body_id) ?>">
       <?php foreach ($tasks as $r): ?>
         <?php
           $planned = $r['planned_minutes'] !== null ? (int)$r['planned_minutes'] : 0;
@@ -59,7 +64,13 @@ if (!function_exists('fmt_minutes')) {
           $tid = (int)$r['task_id'];
           $rt  = $return_to ?? ($_SERVER['REQUEST_URI'] ?? '');
         ?>
-        <tr>
+        <tr data-task-id="<?= (int)$r['task_id'] ?>"
+            <?= $is_sortable ? 'draggable="true" class="can-drag"' : '' ?>
+            >
+          <?php if ($show_company): ?>
+            <td title="Ziehen, um zu sortieren">↕</td>
+
+          <?php endif; ?>
           <?php if ($show_company): ?>
             <td><?= h($r['company_name'] ?? '—') ?></td>
           <?php endif; ?>
@@ -147,7 +158,7 @@ if (!function_exists('fmt_minutes')) {
 
       <?php if (!$tasks): ?>
         <tr>
-          <td colspan="<?= $show_company ? 9 : 8 ?>" class="text-center text-muted">
+          <td colspan="<?= ($show_company ? 10 : 8) ?>" class="text-center text-muted">
             Keine Aufgaben nach diesem Filter.
           </td>
         </tr>

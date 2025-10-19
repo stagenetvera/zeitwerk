@@ -1,13 +1,13 @@
 <?php
-require_once __DIR__ . '/../bootstrap.php';
+ require_once __DIR__ . '/../bootstrap.php';
 
-require_once __DIR__ . '/../lib/flash.php';
-$user = auth_user();
+ require_once __DIR__ . '/../lib/flash.php';
+ $user = auth_user();
 
-$return_to = $_SERVER['REQUEST_URI'] ?? url('/dashboard/index.php');
+ $return_to = $_SERVER['REQUEST_URI'] ?? url('/dashboard/index.php');
 
-$__rt_running = null;
-try {
+ $__rt_running = null;
+ try {
   $rt = $pdo->prepare("
     SELECT t.id, t.task_id, t.started_at,
            ta.description AS task_desc,
@@ -21,9 +21,9 @@ try {
   ");
   $rt->execute([(int)$user['account_id'], (int)$user['id']]);
   $__rt_running = $rt->fetch();
-} catch (Throwable $e) {
+ } catch (Throwable $e) {
   // optional: still bleiben; Anzeige einfach weglassen
-}
+ }
 ?>
 <!doctype html>
 <html lang="de">
@@ -46,72 +46,95 @@ try {
     /* Optional: gleiche Optik auch bei .btn-sm erzwingen */
     .btn.btn-sm.btn-icon{ width: 1.9rem; height: 1.9rem; }
 
+    .drag-handle {
+      cursor: grab;
+      user-select: none;
+      /* opacity: .6; */
+    }
+    tr.dragging {
+      opacity: .6;
+    }
+    tr.placeholder td {
+      padding: 0 !important;
+    }
+    tr.placeholder td::after {
+      content: "";
+      display:block;
+      height: 12px;
+      border: 2px dashed #bbb;
+      border-radius: 6px;
+      margin: 4px 0;
+    }
 
+    /* Für FLIP – sanfter Move */
+    tbody#dashTaskBody tr {
+      transition: transform 150ms ease;
+    }
   </style>
 </head>
 <body class="bg-light">
 <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
   <div class="container-fluid">
-    <a class="navbar-brand" href="<?=url('/index.php')?>">Zeitwerk</a>
+    <a class="navbar-brand" href="<?php echo url('/index.php') ?>">Zeitwerk</a>
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#nav" aria-controls="nav" aria-expanded="false" aria-label="Toggle navigation">
       <span class="navbar-toggler-icon"></span>
     </button>
     <div class="collapse navbar-collapse" id="nav">
       <ul class="navbar-nav me-auto mb-2 mb-lg-0">
         <?php if ($user): ?>
-          <li class="nav-item"><a class="nav-link" href="<?=url('/dashboard/index.php')?>">Dashboard</a></li>
-          <li class="nav-item"><a class="nav-link" href="<?=url('/companies/index.php')?>">Firmen</a></li>
-        <li class="nav-item"><a class="nav-link" href="<?=url('/times/index.php')?>">Zeiten</a></li>
-        <li class="nav-item"><a class="nav-link" href="<?=url('/offers/index.php')?>">Angebote</a></li>
-        <li class="nav-item"><a class="nav-link" href="<?=url('/invoices/index.php')?>">Rechnungen</a></li>
-        <li class="nav-item"><a class="nav-link" href="<?=url('/settings/index.php')?>">Einstellungen</a></li>
+          <li class="nav-item"><a class="nav-link" href="<?php echo url('/dashboard/index.php') ?>">Dashboard</a></li>
+          <li class="nav-item"><a class="nav-link" href="<?php echo url('/companies/index.php') ?>">Firmen</a></li>
+        <li class="nav-item"><a class="nav-link" href="<?php echo url('/times/index.php') ?>">Zeiten</a></li>
+        <li class="nav-item"><a class="nav-link" href="<?php echo url('/offers/index.php') ?>">Angebote</a></li>
+        <li class="nav-item"><a class="nav-link" href="<?php echo url('/invoices/index.php') ?>">Rechnungen</a></li>
+        <li class="nav-item"><a class="nav-link" href="<?php echo url('/settings/index.php') ?>">Einstellungen</a></li>
 
         <?php endif; ?>
       </ul>
       <div class="d-flex">
         <?php if ($user): ?>
-          <a class="btn btn-outline-success me-2" href="<?=url('/tasks/new.php')?>">Neue Aufgabe</a>
+          <a class="btn btn-outline-success me-2" href="<?php echo url('/tasks/new.php') ?>">Neue Aufgabe</a>
           <?php
-            $running = get_running_time($pdo, (int)$user['account_id'], (int)$user['id']);
+           $running = get_running_time($pdo, (int)$user['account_id'], (int)$user['id']);
           ?>
           <?php if ($running): ?>
-            <form method="post" action="<?= url('/times/stop.php') ?>" class="d-inline">
-              <?= csrf_field() ?>
-              <input type="hidden" name="id" value="<?= $__rt_running['id'] ?>">
-              <?= return_to_hidden($return_to) ?>
+            <form method="post" action="<?php echo url('/times/stop.php') ?>" class="d-inline">
+              <?php echo csrf_field() ?>
+              <input type="hidden" name="id" value="<?php echo $__rt_running['id'] ?>">
+              <?php echo return_to_hidden($return_to) ?>
               <button class="btn btn-warning me-2">Timer stoppen</button>
             </form>
           <?php else: ?>
-            <form method="post" action="<?= url('/times/start.php') ?>" class="d-inline">
-              <?= csrf_field() ?>
-              <input type="hidden" name="return_to" value="<?= h(url($return_to)) ?>">
+            <form method="post" action="<?php echo url('/times/start.php') ?>" class="d-inline">
+              <?php echo csrf_field() ?>
+              <input type="hidden" name="return_to" value="<?php echo h(url($return_to)) ?>">
               <button class="btn me-2 btn-success">Timer starten</button>
             </form>
 
 
           <?php endif; ?>
-          <span class="navbar-text me-3">👤 <?=h($user['name'])?></span>
-          <a class="btn btn-outline-light" href="<?=url('/logout.php')?>">Logout</a>
+          <span class="navbar-text me-3">👤 <?php echo h($user['name']) ?></span>
+          <a class="btn btn-outline-light" href="<?php echo url('/logout.php') ?>">Logout</a>
         <?php else: ?>
-          <a class="btn btn-outline-light me-2" href="<?=url('/login.php')?>">Login</a>
-          <a class="btn btn-success" href="<?=url('/register.php')?>">Registrieren</a>
+          <a class="btn btn-outline-light me-2" href="<?php echo url('/login.php') ?>">Login</a>
+          <a class="btn btn-success" href="<?php echo url('/register.php') ?>">Registrieren</a>
         <?php endif; ?>
       </div>
     </div>
   </div>
 </nav>
-<?php if (!empty($__rt_running)): ?>
+<?php if (! empty($__rt_running)): ?>
             <?php
-              $rt_id   = (int)$__rt_running['id'];
-              $rt_task = (string)($__rt_running['task_desc'] ?? '');
-              $rt_proj = (string)($__rt_running['project_title'] ?? '');
-              // Startzeit als UNIX-Timestamp (für JS)
-              try {
-                $rt_started_ts = (new DateTimeImmutable($__rt_running['started_at']))->getTimestamp();
-              } catch (Throwable $e) {
-                $rt_started_ts = time();
-              }
-              $return_to = $_SERVER['REQUEST_URI'] ?? '/';
+             $rt_id   = (int)$__rt_running['id'];
+             $rt_task = (string)($__rt_running['task_desc'] ?? '');
+             $rt_proj = (string)($__rt_running['project_title'] ?? '');
+             // Startzeit als UNIX-Timestamp (für JS)
+             try {
+              $rt_started_ts = (new DateTimeImmutable($__rt_running['started_at']))->getTimestamp();
+             } catch (Throwable $e) {
+              $rt_started_ts = time();
+             }
+             $return_to = $_SERVER['REQUEST_URI'] ?? '/';
             ?>
             <div class="border-bottom bg-light">
               <div class="container py-2">
@@ -119,14 +142,14 @@ try {
                   <div class="d-flex align-items-center gap-2">
                     <span class="text-muted">⏱</span>
                     <span class="d-inline-block" style="width:70px">
-                      <strong id="rt-elapsed" data-start="<?= (int)$rt_started_ts ?>">00:00:00</strong>
+                      <strong id="rt-elapsed" data-start="<?php echo (int)$rt_started_ts ?>">00:00:00</strong>
                     </span>
                     <span class="text-muted">
                       <?php if ($rt_proj): ?>
-                        <span class="mx-1">•</span><?= h($rt_proj) ?>
+                        <span class="mx-1">•</span><?php echo h($rt_proj) ?>
                       <?php endif; ?>
                       <?php if ($rt_task): ?>
-                        <span class="mx-1">•</span><?= h($rt_task) ?>
+                        <span class="mx-1">•</span><?php echo h($rt_task) ?>
                       <?php endif; ?>
                     </span>
                   </div>
