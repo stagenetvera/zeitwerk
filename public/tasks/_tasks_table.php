@@ -61,6 +61,29 @@ if (!function_exists('fmt_minutes')) {
             else                    $badge = 'badge bg-success';
           }
 
+          $badge_deadline = '';
+          $deadlineStr = $r['deadline'] ?? null;
+          if (!empty($deadlineStr)) {
+              $dlTs = strtotime($deadlineStr);
+              if ($dlTs !== false) {
+                  $today = strtotime('today');
+                  if ($dlTs < $today) {
+                      // Deadline bereits vorbei
+                      $badge_deadline = 'badge bg-danger';
+                  } else {
+                      // Diff in vollen Tagen ab heute
+                      $diffDays = (int) floor(($dlTs - $today) / 86400);
+                      if ($diffDays <= 2) {
+                          // innerhalb der nächsten 2 Tage (inkl. heute)
+                          $badge_deadline = 'badge bg-warning text-dark';
+                      } else {
+                          // weiter in der Zukunft als 2 Tage
+                          $badge_deadline = 'badge bg-success';
+                      }
+                  }
+              }
+          }
+
           $tid = (int)$r['task_id'];
           $rt  = $return_to ?? ($_SERVER['REQUEST_URI'] ?? '');
         ?>
@@ -78,7 +101,12 @@ if (!function_exists('fmt_minutes')) {
           <td><?= h($r['description'] ?? '') ?></td>
           <td><?= h($r['priority'] ?? '—') ?></td>
           <td><?= h($r['status'] ?? '—') ?></td>
-          <td><?= !empty($r['deadline']) ? h($r['deadline']) : '—' ?></td>
+          <td><?php if ($badge_deadline): ?>
+            <span class="<?= $badge_deadline ?>"><?= !empty($r['deadline']) ? h($r['deadline']) : '—' ?></span>
+            <?php else: ?>
+                <?= !empty($r['deadline']) ? h($r['deadline']) : '—' ?>
+            <?php endif; ?>
+            </td>
           <td><?= $planned ? fmt_minutes($planned) : '—' ?></td>
           <td>
             <?php if ($badge): ?>
