@@ -11,14 +11,25 @@ $company_id = isset($_POST['company_id']) ? (int)$_POST['company_id']
             : (isset($_GET['company_id']) ? (int)$_GET['company_id'] : 0);
 
 // Firmenliste
-$cs = $pdo->prepare('SELECT id, name FROM companies WHERE account_id = ? ORDER BY name');
+$cs = $pdo->prepare("
+  SELECT id, name
+  FROM companies
+  WHERE account_id = ? AND status = 'aktiv'
+  ORDER BY name
+");
 $cs->execute([$account_id]);
 $companies = $cs->fetchAll();
 
 // Projekte (abhängig von Firma)
 $projects = [];
 if ($company_id) {
-  $ps = $pdo->prepare('SELECT id, title FROM projects WHERE account_id = ? AND company_id = ? ORDER BY title');
+
+  $ps = $pdo->prepare("
+    SELECT id, company_id, title
+    FROM projects
+    WHERE account_id = ?  AND company_id = ? AND status IN ('offen','angeboten')
+    ORDER BY title
+  ");
   $ps->execute([$account_id, $company_id]);
   $projects = $ps->fetchAll();
   // Wenn genau 1 Projekt existiert, als Default setzen (nur für Anzeige)
@@ -58,6 +69,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST["action"]) && $_POST["
     }
   }
 
+  // $project_id kommt aus POST
+  $chk = $pdo->prepare("
+    SELECT COUNT(*)
+    FROM projects p
+    JOIN companies c ON c.id = p.company_id AND c.account_id = p.account_id
+    WHERE p.account_id = ? AND p.id = ?
+      AND p.status IN ('offen','angeboten')
+      AND c.status = 'aktiv'
+  ");
+  $chk->execute([$account_id, $project_id]);
+  if (!$chk->fetchColumn()) {
+    $ok = false;
+    $err = 'Ungültige Projekt-/Firmenauswahl (Firma muss aktiv, Projekt offen/angeboten sein).';
+  }
 
   if ($ok) {
     $ins = $pdo->prepare('INSERT INTO tasks(account_id, project_id, description, planned_minutes, priority, deadline, status, billable) VALUES (?,?,?,?,?,?,?,?)');

@@ -99,14 +99,31 @@ try {
         $pdo->rollBack();
         $err = 'Bitte Projekt wählen und eine Aufgabenbeschreibung angeben.';
       } else {
-        $chk = $pdo->prepare('SELECT COUNT(*) FROM projects WHERE id = ? AND account_id = ?' . ($company_id ? ' AND company_id = ?' : ''));
-        $params = [$project_id, $account_id];
+        // ------------------------------------------
+        // Schritt 2b: Sicherheits-Check vor INSERT
+        // Nur erlauben, wenn Firma aktiv UND Projekt offen/angeboten
+        // ------------------------------------------
+        $chk = $pdo->prepare("
+          SELECT COUNT(*)
+          FROM projects p
+          JOIN companies c
+            ON c.id = p.company_id
+           AND c.account_id = p.account_id
+          WHERE p.account_id = ?
+            AND p.id = ?
+            AND p.status IN ('offen','angeboten')
+            AND c.status = 'aktiv'
+            " . ($company_id ? " AND c.id = ? " : "") . "
+        ");
+        $params = [$account_id, $project_id];
         if ($company_id) $params[] = $company_id;
         $chk->execute($params);
+
         if (!$chk->fetchColumn()) {
           $pdo->rollBack();
-          $err = 'Ungültige Projekt-/Firmenauswahl.';
+          $err = 'Ungültige Projekt-/Firmenauswahl. Firma muss aktiv und Projekt offen/angeboten sein.';
         } else {
+          // OK → neue Aufgabe anlegen
           $ins = $pdo->prepare('
             INSERT INTO tasks (account_id, project_id, description, planned_minutes, priority, deadline, status)
             VALUES (?,?,?,?,?,?,?)
@@ -178,16 +195,33 @@ if (!$running) {
   exit;
 }
 
-// Auswahl-Listen
-$cs = $pdo->prepare('SELECT id, name FROM companies WHERE account_id = ? ORDER BY name');
+// Auswahl-Listen (gefiltert!)
+$cs = $pdo->prepare("
+  SELECT id, name
+  FROM companies
+  WHERE account_id = ? AND status = 'aktiv'
+  ORDER BY name
+");
 $cs->execute([$account_id]);
 $companies = $cs->fetchAll();
 
-$ps = $pdo->prepare('SELECT id, company_id, title FROM projects WHERE account_id = ? ORDER BY title');
+$ps = $pdo->prepare("
+  SELECT id, company_id, title
+  FROM projects
+  WHERE account_id = ? AND status IN ('offen','angeboten')
+  ORDER BY title
+");
 $ps->execute([$account_id]);
 $projects = $ps->fetchAll();
 
-$tsAll = $pdo->prepare('SELECT id, project_id, description, status FROM tasks WHERE account_id = ? ORDER BY description');
+// Nur nicht-abgeschlossene Aufgaben (für die Projekt-Auswahl im JS gefiltert)
+$tsAll = $pdo->prepare("
+  SELECT id, project_id, description, status
+  FROM tasks
+  WHERE account_id = ?
+    AND (status IS NULL OR status <> 'abgeschlossen')
+  ORDER BY description
+");
 $tsAll->execute([$account_id]);
 $tasksAll = $tsAll->fetchAll();
 ?>
