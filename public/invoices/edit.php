@@ -2,21 +2,49 @@
 // public/invoices/edit.php
 require __DIR__ . '/../../src/layout/header.php';
 require_once __DIR__ . '/../../src/lib/invoice_number.php';
+require_once __DIR__ . '/../../src/lib/settings.php';   // ← NEU
 require_login();
 csrf_check();
 
 $user       = auth_user();
 $account_id = (int)$user['account_id'];
 
+$settings = get_account_settings($pdo, $account_id);
+
+
 function hurl($s){ return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
 function fmt_money($v){ return number_format((float)$v, 2, ',', '.'); }
 function fmt_minutes_hhmm(int $m): string { $h=intdiv($m,60); $r=$m%60; return sprintf('%02d:%02d',$h,$r); }
 
 // Komma-Dezimal in Float
+// Komma-/Punkt-Dezimal robust in Float wandeln
 function dec($s) {
   if ($s === null) return 0.0;
   if (is_float($s) || is_int($s)) return (float)$s;
-  $s = str_replace(['.', ','], ['', '.'], (string)$s);
+  $s = trim((string)$s);
+
+  // NBSP/Spaces als Tausendertrenner entfernen
+  $s = str_replace(["\xC2\xA0", ' '], '', $s);
+
+  $posComma = strrpos($s, ',');
+  $posDot   = strrpos($s, '.');
+
+  if ($posComma !== false && $posDot !== false) {
+    // Das spätere Zeichen ist das Dezimaltrennzeichen
+    if ($posComma > $posDot) {
+      // EU: 1.234,56
+      $s = str_replace('.', '', $s);
+      $s = str_replace(',', '.', $s);
+    } else {
+      // US: 1,234.56
+      $s = str_replace(',', '', $s);
+      // Punkt bleibt Dezimalpunkt
+    }
+  } else {
+    // Nur eines vorhanden → Komma zu Punkt
+    $s = str_replace(',', '.', $s);
+  }
+
   $n = (float)$s;
   return is_finite($n) ? $n : 0.0;
 }
@@ -51,7 +79,7 @@ $company_id = (int)$invoice['company_id'];
 $return_to = pick_return_to('/companies/show.php?id='.$company_id);
 
 // Firma laden (nur Anzeige)
-$cstmt = $pdo->prepare("SELECT id, name FROM companies WHERE id = ? AND account_id = ?");
+$cstmt = $pdo->prepare("SELECT * FROM companies WHERE id = ? AND account_id = ?"); // ← statt: id,name
 $cstmt->execute([$company_id, $account_id]);
 $company = $cstmt->fetch();
 
@@ -250,14 +278,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
         $addLink = $pdo->prepare("INSERT INTO invoice_item_times (account_id, invoice_item_id, time_id) VALUES (?,?,?)");
         $delLink = $pdo->prepare("DELETE FROM invoice_item_times WHERE account_id=? AND invoice_item_id=? AND time_id=?");
 
-        // Hilfsfunktion
-        $dec = function($s){
-          if ($s === null) return 0.0;
-          if (is_float($s) || is_int($s)) return (float)$s;
-          $s = str_replace(['.', ','], ['', '.'], (string)$s);
-          $n = (float)$s;
-          return is_finite($n) ? $n : 0.0;
-        };
+
         $sum_minutes = function(PDO $pdo, int $account_id, array $ids): int {
           $ids = array_values(array_filter(array_map('intval', $ids), fn($v)=>$v>0));
           if (!$ids) return 0;
@@ -271,10 +292,20 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
           $item_id = isset($row['id']) ? (int)$row['id'] : 0;
           if ($item_id <= 0) continue;
 
-          $desc = trim($row['description'] ?? '');
-          $rate = $dec($row['hourly_rate'] ?? 0);
-          $vat  = $dec($row['tax_rate'] ?? 19.0);
+          $desc   = trim($row['description'] ?? '');
+          $rate   = dec($row['hourly_rate'] ?? 0);
 
+          // Steuer: bevorzugt vat_rate, BC-Fallback tax_rate
+          $scheme = $row['tax_scheme'] ?? null;
+          $vatStr = $row['vat_rate']   ?? ($row['tax_rate'] ?? '');
+          $vat    = ($vatStr !== '' ? dec($vatStr) : 0.0);
+
+          // Scheme erzwingen: alles außer 'standard' => 0 %
+          if ($scheme && $scheme !== 'standard') {
+            $vat = 0.0;
+          }
+
+          // Ausgewählte Zeiten
           $newTimes = array_values(array_filter(array_map('intval', $row['time_ids'] ?? []), fn($v)=>$v>0));
 
           // Aktuell verlinkte Zeiten
@@ -285,19 +316,19 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
           $toAdd    = array_values(array_diff($newTimes, $currTimes));
           $toRemove = array_values(array_diff($currTimes, $newTimes));
 
-          // Minuten neu berechnen
+          // Minuten/Quantity + Summen neu berechnen
           $minutes = $sum_minutes($pdo, $account_id, $newTimes);
-          $qty     = round($minutes/60, 2);
+          $qty     = round($minutes / 60, 2);
           $net     = round($qty * $rate, 2);
-          $gross   = round($net * (1 + $vat/100), 2);
+          $gross   = round($net * (1 + $vat / 100), 2);
 
-          // Item aktualisieren
+          // Item updaten (unit_price = Stundensatz, vat_rate = MwSt %)
           $updItem->execute([
             $desc, $rate, $vat, $qty, $net, $gross,
             $account_id, (int)$invoice['id'], $item_id
           ]);
 
-          // Links + Status
+          // Links + Status aktualisieren
           if ($toAdd) {
             foreach ($toAdd as $tid) { $addLink->execute([$account_id, $item_id, $tid]); }
             $ph = implode(',', array_fill(0, count($toAdd), '?'));
@@ -307,7 +338,6 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
           if ($toRemove) {
             foreach ($toRemove as $tid) { $delLink->execute([$account_id, $item_id, $tid]); }
             $ph = implode(',', array_fill(0, count($toRemove), '?'));
-            // Nur verwaiste Zeiten zurück auf 'offen'
             $sqlOpen = "
               UPDATE times t
               LEFT JOIN invoice_item_times iit
@@ -393,9 +423,8 @@ foreach ($rawItems as $r) {
     'project_title' => (string)($r['project_title'] ?? ''),
     'description'   => (string)($r['description'] ?? ''),
     'hourly_rate'   => (float)($r['unit_price'] ?? 0),
-    'tax_rate'      => (float)($r['vat_rate'] ?? 19),
+    'vat_rate'      => (float)($r['vat_rate'] ?? 0),   // <-- statt 'tax_rate'
     'quantity'      => (float)($r['quantity'] ?? 0),
-    // EDIT-Part erwartet time_entries[] mit selected=true
     'time_entries'  => array_map(function($t){
         return [
             'id'         => (int)($t['id'] ?? $t['time_id'] ?? 0),
@@ -406,6 +435,7 @@ foreach ($rawItems as $r) {
         ];
     }, $timesByItem[$iid] ?? []),
   ];
+
 }
 // WICHTIG: $groups leer lassen, damit das Partial den EDIT-Zweig nimmt.
 $groups = [];

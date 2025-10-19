@@ -5,11 +5,22 @@
  * NEW expects: $groups  (siehe Build-Struktur: project_id, project_title, rows[] mit time-entries)
  * EDIT expects: $items  (inkl. time_entries[] und project_title)
  */
+[$eff_scheme, $eff_vat] = get_effective_tax_defaults($settings, $company ?? null);
+
+$eff_scheme   = $eff_scheme   ?? 'standard';
+$eff_vat_js = number_format((float)$eff_vat, 2, '.', '');
+$eff_vat_num  = (float)str_replace(',', '.', (string)$eff_vat_js);
+
 
 // --- Kompatibilitäts-Header: nur Namensvariablen, keine Optik-Änderung ---
 $mode      = $mode      ?? 'new';
 $rowName   = $rowName   ?? ($mode === 'edit' ? 'items' : 'tasks');
 $timesName = $timesName ?? ($mode === 'edit' ? 'times_selected' : 'time_ids');
+$scheme_default = $eff_scheme; // aus invoices/new via require
+$rate_default   = $eff_scheme==='standard' ? number_format((float)$eff_vat,2,'.','') : '0.00';
+
+
+
 
 // Für die bestehenden name="-Attribute" im Markup:
 $NAME_TASKS = $rowName;
@@ -45,7 +56,8 @@ function _fmt_hhmm($min){ $h=intdiv($min,60); $r=$min%60; return sprintf('%02d:%
         <th>Aufgabe</th>
         <th class="text-end w-110">Zeit</th>
         <th class="text-end w-90">Stundensatz</th>
-        <th class="text-end w-90">Steuer&nbsp;%</th>
+        <th class="text-end w-90">Steuerart</th>
+        <th class="text-end w-90">Steuersatz</th>
         <th class="text-end w-110">Netto</th>
         <th class="text-end w-110">Brutto</th>
         <th class="text-end" style="width:120px">Aktionen</th>
@@ -61,18 +73,20 @@ if (!empty($groups)) {
   foreach ($groups as $g) {
     $pid = (int)$g['project_id'];
     if ($showProjectHeads): ?>
-      <tr class="inv-group-head" data-project="<?=$pid?>"><td colspan="8"><?=h($g['project_title'])?></td></tr>
+      <tr class="inv-group-head" data-project="<?=$pid?>"><td colspan="9"><?=h($g['project_title'])?></td></tr>
     <?php endif;
 
     foreach ($g['rows'] as $row) {
       $idx++;
       $desc   = $row['task_desc'];
-      $rate   = number_format((float)$row['hourly_rate'], 2, ',', '');
-      $tax    = number_format((float)$row['tax_rate'], 2, ',', '');
+      $rateNum = (float)($row['hourly_rate'] ??  0.0); // <- Stundensatz
+      $rate   = number_format((float)$rateNum, 2, ',', '');
+      $taxNum  = (float)($row['tax_rate'] ?? 0.0); // <- Prozent
+      $tax     = number_format($taxNum, 2, ',', '');
       $sumMin = array_sum(array_map(fn($t)=> (int)$t['minutes'], $row['times']));
       $sumHHM = _fmt_hhmm($sumMin);
-      $net    = ($sumMin/60.0) * (float)$row['hourly_rate'];
-      $gross  = $net * (1 + ((float)$row['tax_rate']/100));
+      $net   = ($sumMin/60.0) * $rateNum;
+      $gross = $net * (1 + $taxNum/100);
       ?>
       <tr class="inv-item-row" data-row="<?=$idx?>" data-project="<?=$pid?>" aria-expanded="false">
         <td class="text-center">
@@ -94,8 +108,25 @@ if (!empty($groups)) {
         <td class="text-end">
           <input type="number" step="0.01" class="form-control text-end rate" name="items[<?=$idx?>][hourly_rate]" value="<?=$rate?>">
         </td>
+
+       <td class="text-end">
+          <select
+            name="items[<?=$idx?>][tax_scheme]"
+            class="form-select inv-tax-sel"
+            data-rate-standard="19.00"
+            data-rate-tax-exempt="0.00"
+            data-rate-reverse-charge="0.00">
+            <option value="standard"       <?= $scheme_default==='standard'?'selected':'' ?>>standard (mit MwSt)</option>
+            <option value="tax_exempt"     <?= $scheme_default==='tax_exempt'?'selected':'' ?>>steuerfrei</option>
+            <option value="reverse_charge" <?= $scheme_default==='reverse_charge'?'selected':'' ?>>Reverse-Charge</option>
+          </select>
+        </td>
         <td class="text-end">
-          <input type="number" step="0.01" class="form-control text-end tax" name="items[<?=$idx?>][tax_rate]" value="<?=$tax?>">
+          <input
+            type="number" step="0.01" min="0" max="100"
+            class="form-control text-end inv-vat-input"
+            name="items[<?=$idx?>][vat_rate]"
+            value="<?= h($rate_default) ?>">
         </td>
         <td class="text-end"><span class="net"><?=number_format($net,2,',','.')?></span></td>
         <td class="text-end"><span class="gross"><?=number_format($gross,2,',','.')?></span></td>
@@ -105,7 +136,7 @@ if (!empty($groups)) {
       </tr>
       <tr class="inv-details" data-row="<?=$idx?>" data-project="<?=$pid?>">
         <td></td>
-        <td colspan="7">
+        <td colspan="8">
           <div class="table-responsive">
             <table class="table table-sm mb-0">
               <thead>
@@ -141,6 +172,7 @@ if (!empty($groups)) {
   }
 }
 
+
 /* -------- EDIT mode: build from $items -------- */
 if (empty($groups) && !empty($items)) {
   $byP = [];
@@ -153,20 +185,22 @@ if (empty($groups) && !empty($items)) {
 
   foreach ($byP as $pid=>$bucket) {
     if ($showHeads): ?>
-      <tr class="inv-group-head" data-project="<?=$pid?>"><td colspan="8"><?=h($bucket['title'])?></td></tr>
+      <tr class="inv-group-head" data-project="<?=$pid?>"><td colspan="9"><?=h($bucket['title'])?></td></tr>
     <?php endif;
 
     foreach ($bucket['rows'] as $it) {
       $idx++;
       $desc   = $it['description'] ?? '';
-      $rate   = number_format((float)$it['hourly_rate'], 2, ',', '');
-      $tax    = number_format((float)$it['tax_rate'], 2, ',', '');
+      $rateNum = (float)($it['hourly_rate'] ?? 0.0);
+      $rate    = number_format($rateNum, 2, ',', '');
+      $taxNum  = (float)($it['vat_rate'] ?? $it['tax_rate'] ?? 0.0);
+      $tax    = number_format((float)$taxNum, 2, ',', '');
       $times  = $it['time_entries'] ?? [];
       $sumMin = 0;
       foreach ($times as $te) if (!empty($te['selected'])) $sumMin += (int)$te['minutes'];
       $sumHHM = _fmt_hhmm($sumMin);
-      $net    = ($sumMin/60.0) * (float)$it['hourly_rate'];
-      $gross  = $net * (1 + ((float)$it['tax_rate']/100));
+      $net   = ($sumMin/60.0) * $rateNum;
+      $gross = $net * (1 + $taxNum/100);
       ?>
       <tr class="inv-item-row" data-row="<?=$idx?>" data-project="<?=$pid?>" aria-expanded="false">
         <td class="text-center">
@@ -188,9 +222,29 @@ if (empty($groups) && !empty($items)) {
         <td class="text-end">
           <input type="number" step="0.01" class="form-control text-end rate" name="items[<?=$idx?>][hourly_rate]" value="<?=$rate?>">
         </td>
-        <td class="text-end">
-          <input type="number" step="0.01" class="form-control text-end tax" name="items[<?=$idx?>][tax_rate]" value="<?=$tax?>">
-        </td>
+        <?php
+          $it_scheme = $it['tax_scheme'] ?? (((float)($it['vat_rate'] ?? $it['tax_rate'] ?? 0)) > 0 ? 'standard' : 'tax_exempt');
+          $it_vat    = number_format((float)($it['vat_rate'] ?? $it['tax_rate'] ?? 0), 2, '.', '');
+        ?>
+          <td class="text-end">
+            <select
+              name="items[<?=$idx?>][tax_scheme]"
+              class="form-select inv-tax-sel"
+              data-rate-standard="19.00"
+              data-rate-tax-exempt="0.00"
+              data-rate-reverse-charge="0.00">
+              <option value="standard"       <?= $it_scheme==='standard'?'selected':'' ?>>standard (mit MwSt)</option>
+              <option value="tax_exempt"     <?= $it_scheme==='tax_exempt'?'selected':'' ?>>steuerfrei</option>
+              <option value="reverse_charge" <?= $it_scheme==='reverse_charge'?'selected':'' ?>>Reverse-Charge</option>
+            </select>
+          </td>
+          <td class="text-end">
+            <input
+              type="number" step="0.01" min="0" max="100"
+              class="form-control text-end inv-vat-input"
+              name="items[<?=$idx?>][vat_rate]"
+              value="<?= h($it_vat) ?>">
+          </td>
         <td class="text-end"><span class="net"><?=number_format($net,2,',','.')?></span></td>
         <td class="text-end"><span class="gross"><?=number_format($gross,2,',','.')?></span></td>
         <td class="text-end">
@@ -199,7 +253,7 @@ if (empty($groups) && !empty($items)) {
       </tr>
       <tr class="inv-details" data-row="<?=$idx?>" data-project="<?=$pid?>">
         <td></td>
-        <td colspan="7">
+        <td colspan="8">
           <div class="table-responsive">
             <table class="table table-sm mb-0">
               <thead>
@@ -237,16 +291,23 @@ if (empty($groups) && !empty($items)) {
     </tbody>
   </table>
 </div>
-
 <script>
 (function(){
-  function toNumber(x){ var n = typeof x==='string' ? x.replace(/\./g,'').replace(',', '.') : x; n = parseFloat(n); return isFinite(n)?n:0; }
+  function toNumber(x){
+    var n = (typeof x==='string') ? x.replace(/\./g,'').replace(',', '.') : x;
+    n = parseFloat(n);
+    return isFinite(n) ? n : 0;
+  }
   function fmt2(n){ return n.toFixed(2).replace('.',','); }
-  function hhmm(min){ min = Math.max(0,parseInt(min||0,10)); var h=Math.floor(min/60), m=min%60; return (h<10?'0':'')+h+':' + (m<10?'0':'')+m; }
+  function hhmm(min){
+    min = Math.max(0, parseInt(min||0,10));
+    var h = Math.floor(min/60), m = min%60;
+    return (h<10?'0':'')+h+':' + (m<10?'0':'')+m;
+  }
 
   function recalcRow(tr){
     var minutes = 0;
-    var rowId = tr.getAttribute('data-row');
+    var rowId   = tr.getAttribute('data-row');
     var details = document.querySelector('.inv-details[data-row="'+rowId+'"]');
     if (details) {
       details.querySelectorAll('.time-checkbox:checked').forEach(function(cb){
@@ -257,9 +318,10 @@ if (empty($groups) && !empty($items)) {
       minutes = sm ? parseInt(sm.value||'0',10) : 0;
     }
     var rate = toNumber(tr.querySelector('.rate')?.value||'0');
-    var tax  = toNumber(tr.querySelector('.tax')?.value||'0');
-    var net  = (minutes/60.0) * rate;
-    var gross= net * (1 + tax/100);
+    var vat  = toNumber(tr.querySelector('.inv-vat-input')?.value||'0');
+
+    var net   = (minutes/60.0) * rate;
+    var gross = net * (1 + vat/100);
 
     var hh = tr.querySelector('.sum-hhmm'); if (hh) hh.textContent = hhmm(minutes);
     var smi= tr.querySelector('.sum-minutes'); if (smi) smi.value = String(minutes);
@@ -267,148 +329,56 @@ if (empty($groups) && !empty($items)) {
     var gspan = tr.querySelector('.gross'); if (gspan) gspan.textContent = fmt2(gross);
   }
 
-  // Expand/Collapse
-  (function(){
-  function toNumber(x){ var n = typeof x==='string' ? x.replace(/\./g,'').replace(',', '.') : x; n = parseFloat(n); return isFinite(n)?n:0; }
-  function fmt2(n){ return n.toFixed(2).replace('.',','); }
-  function hhmm(min){ min = Math.max(0,parseInt(min||0,10)); var h=Math.floor(min/60), m=min%60; return (h<10?'0':'')+h+':' + (m<10?'0':'')+m; }
+  function updateVatFromScheme(sel){
+    var tr  = sel.closest('tr.inv-item-row');
+    if (!tr) return;
+    var vat = tr.querySelector('.inv-vat-input');
+    if (!vat) return;
+    var map = {
+      'standard':       sel.dataset.rateStandard || '19.00',
+      'tax_exempt':     sel.dataset.rateTaxExempt || '0.00',
+      'reverse_charge': sel.dataset.rateReverseCharge || '0.00'
+    };
+    vat.value = map[sel.value] || '0.00';
+    recalcRow(tr);
+  }
 
-  function recalcRow(tr){
-    var minutes = 0;
-    var rowId = tr.getAttribute('data-row');
-    var details = document.querySelector('.inv-details[data-row="'+rowId+'"]');
-    if (details) {
-      details.querySelectorAll('.time-checkbox:checked').forEach(function(cb){
-        minutes += parseInt(cb.getAttribute('data-min')||'0',10);
-      });
+  // 1) Robuste Delegation (nutzt .closest, nicht classList.contains)
+  var root = document.getElementById('invoice-items');
+  root.addEventListener('change', function(e){
+    var sel = e.target.closest && e.target.closest('.inv-tax-sel');
+    if (sel && root.contains(sel)) updateVatFromScheme(sel);
+
+    if (e.target.closest && e.target.closest('.time-checkbox')) {
+      var tr = e.target.closest('tr')
+                       .closest('tbody').closest('table')
+                       .closest('td').closest('tr').previousElementSibling;
+      if (tr && tr.classList.contains('inv-item-row')) recalcRow(tr);
+    }
+  });
+
+  // 2) Zusätzliche direkte Listener an allen Selects (falls jemand stopPropagation nutzt)
+  document.querySelectorAll('.inv-tax-sel').forEach(function(s){
+    s.addEventListener('change', function(){ updateVatFromScheme(s); });
+  });
+
+  // 3) Eingaben in Rate/Steuersatz -> neu berechnen
+  root.addEventListener('input', function(e){
+    if (e.target.closest && (e.target.closest('.rate') || e.target.closest('.inv-vat-input'))){
+      var tr = e.target.closest('tr.inv-item-row');
+      if (tr) recalcRow(tr);
+    }
+  });
+
+  // 4) Initial: falls VAT leer, per Scheme vorbesetzen, dann rechnen
+  document.querySelectorAll('tr.inv-item-row').forEach(function(tr){
+    var sel = tr.querySelector('.inv-tax-sel');
+    var vat = tr.querySelector('.inv-vat-input');
+    if (sel && vat && (vat.value === '' || vat.value === null)) {
+      updateVatFromScheme(sel);
     } else {
-      var sm = tr.querySelector('.sum-minutes');
-      minutes = sm ? parseInt(sm.value||'0',10) : 0;
-    }
-    var rate = toNumber(tr.querySelector('.rate')?.value||'0');
-    var tax  = toNumber(tr.querySelector('.tax')?.value||'0');
-    var net  = (minutes/60.0) * rate;
-    var gross= net * (1 + tax/100);
-
-    var hh = tr.querySelector('.sum-hhmm'); if (hh) hh.textContent = hhmm(minutes);
-    var smi= tr.querySelector('.sum-minutes'); if (smi) smi.value = String(minutes);
-    var nspan = tr.querySelector('.net'); if (nspan) nspan.textContent = fmt2(net);
-    var gspan = tr.querySelector('.gross'); if (gspan) gspan.textContent = fmt2(gross);
-  }
-
-  /* NEU: schöner Toggle */
-  document.querySelectorAll('.inv-toggle-btn').forEach(function(btn){
-    btn.addEventListener('click', function(){
-      var tr = btn.closest('tr.inv-item-row'); if (!tr) return;
-      var row = tr.getAttribute('data-row');
-      var det = document.querySelector('.inv-details[data-row="'+row+'"]'); if (!det) return;
-      var open = det.style.display === 'table-row';
-      det.style.display = open ? 'none' : 'table-row';
-      tr.setAttribute('aria-expanded', String(!open));
-    });
-  });
-
-  // (Rest wie gehabt)
-  document.querySelectorAll('.time-checkbox').forEach(function(cb){
-    cb.addEventListener('change', function(){
-      var tr = cb.closest('tr').closest('tbody').closest('table').closest('td').closest('tr').previousElementSibling;
-      if (tr && tr.classList.contains('inv-item-row')) recalcRow(tr);
-    });
-  });
-  document.querySelectorAll('.rate, .tax').forEach(function(inp){
-    inp.addEventListener('input', function(){
-      var tr = inp.closest('tr.inv-item-row');
-      if (tr) recalcRow(tr);
-    });
-  });
-
-  // Entfernen-Button + Projekt-Header bereinigen bleibt unverändert …
-  document.getElementById('invoice-items').addEventListener('click', function(e){
-    var btn = e.target.closest('.btn-remove-item');
-    if (!btn) return;
-    if (!confirm('Diese Position aus der Rechnung entfernen?')) return;
-
-    var tr = btn.closest('tr.inv-item-row'); if (!tr) return;
-    var rowId = tr.getAttribute('data-row');
-    var pid   = tr.getAttribute('data-project');
-
-    var idInput = tr.querySelector('input[name^="items["][name$="[id]"]');
-    if (idInput && idInput.value) {
-      var trash = document.getElementById('invoice-hidden-trash');
-      var hidden = document.createElement('input');
-      hidden.type = 'hidden'; hidden.name = 'items_deleted[]'; hidden.value = idInput.value;
-      trash.appendChild(hidden);
-    }
-
-    var det = document.querySelector('.inv-details[data-row="'+rowId+'"]');
-    if (det) det.remove();
-    tr.remove();
-
-    if (pid) {
-      var still = document.querySelectorAll('.inv-item-row[data-project="'+pid+'"]').length;
-      if (still === 0) {
-        var head = document.querySelector('.inv-group-head[data-project="'+pid+'"]');
-        if (head) head.remove();
-      }
+      recalcRow(tr);
     }
   });
-
-  document.querySelectorAll('tr.inv-item-row').forEach(recalcRow);
-})();
-
-  // Recalc bei Änderung Minuten-Auswahl / Rate / Steuer
-  document.querySelectorAll('.time-checkbox').forEach(function(cb){
-    cb.addEventListener('change', function(){
-      var tr = cb.closest('tr').closest('tbody').closest('table').closest('td').closest('tr').previousElementSibling;
-      if (tr && tr.classList.contains('inv-item-row')) recalcRow(tr);
-    });
-  });
-  document.querySelectorAll('.rate, .tax').forEach(function(inp){
-    inp.addEventListener('input', function(){
-      var tr = inp.closest('tr.inv-item-row');
-      if (tr) recalcRow(tr);
-    });
-  });
-
-  // Entfernen-Button (ganze Position) + leeren Projekt-Header beseitigen
-  document.getElementById('invoice-items').addEventListener('click', function(e){
-    var btn = e.target.closest('.btn-remove-item');
-    if (!btn) return;
-    if (!confirm('Diese Position aus der Rechnung entfernen?')) return;
-
-    var tr = btn.closest('tr.inv-item-row'); if (!tr) return;
-    var rowId = tr.getAttribute('data-row');
-    var pid   = tr.getAttribute('data-project');
-
-    // Falls EDIT: Item-ID merken
-    var idInput = tr.querySelector('input[name^="items["][name$="[id]"]');
-    if (idInput && idInput.value) {
-      var trash = document.getElementById('invoice-hidden-trash');
-      var hidden = document.createElement('input');
-      hidden.type = 'hidden';
-      hidden.name = 'items_deleted[]';
-      hidden.value = idInput.value;
-      trash.appendChild(hidden);
-    }
-
-    // Details-Zeile entfernen
-    var det = document.querySelector('.inv-details[data-row="'+rowId+'"]');
-    if (det) det.remove();
-
-    // Item-Zeile entfernen
-    tr.remove();
-
-    // Prüfen, ob für dieses Projekt noch Items existieren – wenn nein: Header löschen
-    if (pid) {
-      var still = document.querySelectorAll('.inv-item-row[data-project="'+pid+'"]').length;
-      if (still === 0) {
-        var head = document.querySelector('.inv-group-head[data-project="'+pid+'"]');
-        if (head) head.remove();
-      }
-    }
-  });
-
-  // Initiale Kalkulation
-  document.querySelectorAll('tr.inv-item-row').forEach(recalcRow);
 })();
 </script>

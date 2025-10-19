@@ -1,13 +1,13 @@
 <?php
  // public/invoices/new.php
  require __DIR__ . '/../../src/layout/header.php';
+ require_once __DIR__ . '/../../src/lib/settings.php';
  require_login();
  csrf_check();
 
  $user       = auth_user();
  $account_id = (int)$user['account_id'];
 
- require_once __DIR__ . '/../../src/lib/settings.php';
 $settings = get_account_settings($pdo, $account_id);
 
 // Defaults
@@ -193,6 +193,8 @@ function hurl($s)
   }
  }
 
+
+
  // -------- Zeiten / Aufgaben der Firma laden (nur Anzeige) ----------
  $taskRows = [];
  if ($company_id) {
@@ -305,8 +307,17 @@ $setTimeStatus = $pdo->prepare("
   UPDATE times SET status = 'in_abrechnung' WHERE account_id = ? AND id = ?
 ");
 
-// Formular-Felder einsammeln
-$itemsForm   = $_POST['items']    ?? []; // items[idx][task_id|description|hourly_rate|tax_rate|...]
+
+// ---------- Effektive Defaultwerte aus Firma/Account ----------
+$eff_vat_default = (isset($company['default_vat_rate']) && $company['default_vat_rate'] !== null)
+  ? (float)$company['default_vat_rate']
+  : (float)$settings['default_vat_rate'];
+
+$eff_scheme_default = $company['default_tax_scheme'] ?? ($settings['default_tax_scheme'] ?? 'standard');
+
+// ---------- Formular-Felder einsammeln ----------
+$itemsForm   = $_POST['items']    ?? []; // items[idx][task_id|description|hourly_rate|tax_scheme|vat_rate]
+$manual      = $_POST['manual']   ?? []; // manual[idx][description|quantity|unit_price|vat_rate]
 $timesRaw    = $_POST['time_ids'] ?? []; // time_ids[task_id][] = time_id
 $timesByTask = normalize_times_selection($timesRaw, $pdo, $account_id);
 
@@ -316,22 +327,41 @@ foreach ($itemsForm as $row) {
   $tid = isset($row['task_id']) ? (int)$row['task_id'] : 0;
   if (!$tid) continue;
 
-  // Komma-Dezimalzahlen erlauben
-  $rate = isset($row['hourly_rate']) ? (float)str_replace(',', '.', $row['hourly_rate']) : 0.0;
-  $vat  = isset($row['tax_rate'])    ? (float)str_replace(',', '.', $row['tax_rate'])    : 19.0;
+  $desc = trim((string)($row['description'] ?? ''));
+
+  // Stundensatz (Komma zulassen)
+  $rate = isset($row['hourly_rate']) && $row['hourly_rate'] !== ''
+    ? (float)str_replace(',', '.', (string)$row['hourly_rate'])
+    : 0.0;
+
+  // VAT: bevorzugt 'vat_rate', danach (BC) 'tax_rate'
+  $vat_input = null;
+  if (array_key_exists('vat_rate', $row) && $row['vat_rate'] !== '') {
+    $vat_input = (float)str_replace(',', '.', (string)$row['vat_rate']);
+  } elseif (array_key_exists('tax_rate', $row) && $row['tax_rate'] !== '') {
+    $vat_input = (float)str_replace(',', '.', (string)$row['tax_rate']);
+  }
+
+  $scheme = $row['tax_scheme'] ?? $eff_scheme_default;
+  $vat    = $vat_input;
+  if ($vat === null) {
+    // Wenn kein expliziter Satz eingegeben: aus Scheme ableiten
+    $vat = ($scheme === 'standard') ? $eff_vat_default : 0.0; // tax_exempt/reverse_charge => 0%
+  }
+  $vat = max(0.0, min(100.0, (float)$vat)); // Clamp
 
   $propsByTask[$tid] = [
-    'description' => trim($row['description'] ?? ''),
-    'rate'        => $rate,
-    'vat'         => $vat,
+    'description' => $desc,
+    'rate'        => (float)$rate,
+    'vat'         => (float)$vat,
   ];
 }
 
 $getTaskProject = $pdo->prepare("SELECT project_id FROM tasks WHERE account_id = ? AND id = ?");
 
-$pos      = 1;
-$sum_net  = 0.00;
-$sum_gross= 0.00;
+$pos       = 1;
+$sum_net   = 0.00;
+$sum_gross = 0.00;
 
 /** 2a) Normale Erstellung: pro Task die explizit ausgewählten Zeiten abrechnen */
 foreach ($timesByTask as $task_id => $picked) {
@@ -340,7 +370,7 @@ foreach ($timesByTask as $task_id => $picked) {
   if (!$picked) continue;
 
   // Eigenschaften aus items[...] (nicht aus tasks[...])
-  $p     = $propsByTask[$task_id] ?? ['description'=>'', 'rate'=>0.0, 'vat'=>19.0];
+  $p     = $propsByTask[$task_id] ?? ['description'=>'', 'rate'=>0.0, 'vat'=>$eff_vat_default];
   $desc  = $p['description'];
   $rate  = (float)$p['rate'];
   $vat   = (float)$p['vat'];
@@ -373,7 +403,7 @@ foreach ($timesByTask as $task_id => $picked) {
   $sum_gross += $gross;
 }
 
-/** 2b) Fallback: keine expliziten time_ids, aber Items vorhanden → alle offenen, billable Zeiten pro Task abrechnen */
+/** 2b) Fallback: keine expliziten time_ids, aber Items vorhanden → alle offenen billable Zeiten pro Task abrechnen */
 if ($sum_net == 0.0 && $sum_gross == 0.0 && !empty($propsByTask)) {
   $getOpenTimes = $pdo->prepare("
     SELECT id FROM times
@@ -407,6 +437,30 @@ if ($sum_net == 0.0 && $sum_gross == 0.0 && !empty($propsByTask)) {
       $insLink->execute([$account_id, $item_id, (int)$time_id]);
       $setTimeStatus->execute([$account_id, (int)$time_id]);
     }
+
+    $sum_net   += $net;
+    $sum_gross += $gross;
+  }
+}
+
+/** 2c) Manuelle Positionen (ohne Task/Projekt) */
+if (!empty($manual) && is_array($manual)) {
+  foreach ($manual as $m) {
+    $desc = trim($m['description'] ?? '');
+    if ($desc === '') continue;
+
+    $qty    = isset($m['quantity'])   ? (float)str_replace(',', '.', (string)$m['quantity'])    : 0.0;
+    $price  = isset($m['unit_price']) ? (float)str_replace(',', '.', (string)$m['unit_price'])  : 0.0;
+    $vat    = isset($m['vat_rate'])   ? (float)str_replace(',', '.', (string)$m['vat_rate'])    : $eff_vat_default;
+    $vat    = max(0.0, min(100.0, (float)$vat));
+
+    $net   = round($qty * $price, 2);
+    $gross = round($net * (1 + $vat/100), 2);
+
+    $insItem->execute([
+      $account_id, $invoice_id, null, null, $desc,
+      $qty, $price, $vat, $net, $gross, $pos++
+    ]);
 
     $sum_net   += $net;
     $sum_gross += $gross;

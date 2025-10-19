@@ -9,7 +9,7 @@ $return_to = pick_return_to('/companies/index.php');
 
 
 $err = null;
-if ($_SERVER['REQUEST_METHOD']==='POST') {
+if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST["action"]) && $_POST["action"] == "save") {
   $name = trim($_POST['name'] ?? '');
   $address = trim($_POST['address'] ?? '');
   $rate = $_POST['hourly_rate'] !== '' ? (float)$_POST['hourly_rate'] : null;
@@ -31,6 +31,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
   <form method="post">
     <?=csrf_field()?>
     <?= return_to_hidden($return_to) ?>
+    <input type="hidden" name="action" value="save" />
     <div class="mb-3"><label class="form-label">Name</label>
       <input type="text" name="name" class="form-control" required></div>
     <div class="mb-3"><label class="form-label">Adresse</label>
