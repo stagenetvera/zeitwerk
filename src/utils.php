@@ -22,3 +22,33 @@ function get_running_time(PDO $pdo, int $account_id, int $user_id): ?array {
     $stmt->execute([$account_id, $user_id]);
     return $stmt->fetch() ?: null;
 }
+
+// Komma-/Punkt-Dezimal robust in Float wandeln
+function dec($s) {
+  if ($s === null) return 0.0;
+  if (is_float($s) || is_int($s)) return (float)$s;
+  $s = trim((string)$s);
+
+  // NBSP/Spaces als Tausendertrenner entfernen
+  $s = str_replace(["\xC2\xA0", ' '], '', $s);
+
+  $posComma = strrpos($s, ',');
+  $posDot   = strrpos($s, '.');
+
+  if ($posComma !== false && $posDot !== false) {
+    // Das spätere Zeichen ist das Dezimaltrennzeichen
+    if ($posComma > $posDot) { // EU: 1.234,56
+      $s = str_replace('.', '', $s);
+      $s = str_replace(',', '.', $s);
+    } else {                   // US: 1,234.56
+      $s = str_replace(',', '', $s);
+      // Punkt bleibt Dezimalpunkt
+    }
+  } else {
+    // Nur eines vorhanden → Komma zu Punkt
+    $s = str_replace(',', '.', $s);
+  }
+
+  $n = (float)$s;
+  return is_finite($n) ? $n : 0.0;
+}

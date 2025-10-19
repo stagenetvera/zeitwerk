@@ -16,38 +16,7 @@ function hurl($s){ return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
 function fmt_money($v){ return number_format((float)$v, 2, ',', '.'); }
 function fmt_minutes_hhmm(int $m): string { $h=intdiv($m,60); $r=$m%60; return sprintf('%02d:%02d',$h,$r); }
 
-// Komma-Dezimal in Float
-// Komma-/Punkt-Dezimal robust in Float wandeln
-function dec($s) {
-  if ($s === null) return 0.0;
-  if (is_float($s) || is_int($s)) return (float)$s;
-  $s = trim((string)$s);
 
-  // NBSP/Spaces als Tausendertrenner entfernen
-  $s = str_replace(["\xC2\xA0", ' '], '', $s);
-
-  $posComma = strrpos($s, ',');
-  $posDot   = strrpos($s, '.');
-
-  if ($posComma !== false && $posDot !== false) {
-    // Das spätere Zeichen ist das Dezimaltrennzeichen
-    if ($posComma > $posDot) {
-      // EU: 1.234,56
-      $s = str_replace('.', '', $s);
-      $s = str_replace(',', '.', $s);
-    } else {
-      // US: 1,234.56
-      $s = str_replace(',', '', $s);
-      // Punkt bleibt Dezimalpunkt
-    }
-  } else {
-    // Nur eines vorhanden → Komma zu Punkt
-    $s = str_replace(',', '.', $s);
-  }
-
-  $n = (float)$s;
-  return is_finite($n) ? $n : 0.0;
-}
 
 // Minuten über eine Menge Time-IDs (Account-sicher) summieren
 function sum_minutes_for_times_edit(PDO $pdo, int $account_id, array $ids): int {
@@ -215,6 +184,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
   $deletedPosted = $_POST['items_deleted'] ?? [];  // array von invoice_item.id
 
   if (!$err) {
+
     $pdo->beginTransaction();
     try {
       $sum_net   = 0.0;
@@ -292,21 +262,38 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
           $item_id = isset($row['id']) ? (int)$row['id'] : 0;
           if ($item_id <= 0) continue;
 
-          $desc   = trim($row['description'] ?? '');
-          $rate   = dec($row['hourly_rate'] ?? 0);
+          $desc = trim($row['description'] ?? '');
+          $rate = dec($row['hourly_rate'] ?? 0);
 
           // Steuer: bevorzugt vat_rate, BC-Fallback tax_rate
           $scheme = $row['tax_scheme'] ?? null;
           $vatStr = $row['vat_rate']   ?? ($row['tax_rate'] ?? '');
-          $vat    = ($vatStr !== '' ? dec($vatStr) : 0.0);
+          $vat    = dec($vatStr);
 
           // Scheme erzwingen: alles außer 'standard' => 0 %
           if ($scheme && $scheme !== 'standard') {
             $vat = 0.0;
           }
 
-          // Ausgewählte Zeiten
+          // Sicherheitsbegrenzung für die DB-Spalte DECIMAL(5,2)
+          $vat = max(0.0, min(100.0, $vat));
+
+          // Zeiten aus dem Formular
           $newTimes = array_values(array_filter(array_map('intval', $row['time_ids'] ?? []), fn($v)=>$v>0));
+
+
+          // Minuten/Quantity + Summen neu berechnen
+          $minutes    = $sum_minutes($pdo, $account_id, $newTimes);
+          $qty_hours  = $minutes / 60;                 // volle Präzision für die Berechnung
+          $qty        = round($qty_hours, 3);          // invoice_items.quantity ist DECIMAL(10,3)
+          $net        = round($qty_hours * $rate, 2);  // NICHT aus dem gerundeten $qty berechnen
+          $gross      = round($net * (1 + $vat / 100), 2);
+
+          // Item updaten
+          $updItem->execute([
+            $desc, $rate, $vat, $qty, $net, $gross,
+            $account_id, (int)$invoice['id'], $item_id
+          ]);
 
           // Aktuell verlinkte Zeiten
           $getCurrTimes->execute([$account_id, $item_id]);
@@ -316,17 +303,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
           $toAdd    = array_values(array_diff($newTimes, $currTimes));
           $toRemove = array_values(array_diff($currTimes, $newTimes));
 
-          // Minuten/Quantity + Summen neu berechnen
-          $minutes = $sum_minutes($pdo, $account_id, $newTimes);
-          $qty     = round($minutes / 60, 2);
-          $net     = round($qty * $rate, 2);
-          $gross   = round($net * (1 + $vat / 100), 2);
 
-          // Item updaten (unit_price = Stundensatz, vat_rate = MwSt %)
-          $updItem->execute([
-            $desc, $rate, $vat, $qty, $net, $gross,
-            $account_id, (int)$invoice['id'], $item_id
-          ]);
 
           // Links + Status aktualisieren
           if ($toAdd) {
