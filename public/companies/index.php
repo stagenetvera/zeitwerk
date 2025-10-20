@@ -105,8 +105,7 @@ if ($rows) {
 
 $base    = url('/companies/index.php');
 // Für Pagination die Checkbox-Wahl mitnehmen:
-$persist = [];
-foreach ($statuses as $st) { $persist['status[]'][] = $st; }
+$persist = ['status' => $statuses]; // <<< FIX: persistiere als Array unter 'status'
 ?>
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h3>Firmen</h3>
@@ -139,7 +138,8 @@ foreach ($statuses as $st) { $persist['status[]'][] = $st; }
         <div class="form-text">Standard: „aktiv“.</div>
       </div>
       <div class="col-md-2">
-        <a class="btn btn-outline-secondary w-100" href="<?= hurl($base.'?'.http_build_query(['status[]'=>'aktiv'])) ?>">Reset</a>
+        <a class="btn btn-outline-secondary w-100" href="<?= hurl($base.'?'.http_build_query(['status'=>['aktiv']])) ?>">Reset</a>
+        <!-- ^ FIX: Reset baut Query mit status-Array -->
       </div>
     </form>
   </div>
