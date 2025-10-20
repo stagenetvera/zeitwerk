@@ -136,7 +136,13 @@ foreach ($statuses as $st) { $persist['status[]'][] = $st; }
         <tbody>
         <?php foreach ($rows as $r): ?>
           <tr>
-            <td><?= h($r['name']) ?></td>
+            <td>
+              <a class=""
+                 href="<?= url('/companies/edit.php') ?>?id=<?= (int)$r['id'] ?>&return_to=/companies/index.php"
+                 title="Bearbeiten" aria-label="Bearbeiten">
+                    <?= h($r['name']) ?>
+              </a>
+            </td>
             <td><?= h($r['status']) ?></td>
             <td>€ <?= $r['hourly_rate'] !== null ? h(number_format((float)$r['hourly_rate'], 2, ',', '.')) : '—' ?></td>
             <td class="text-end">
