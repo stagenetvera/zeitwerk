@@ -63,3 +63,8 @@ function parse_hours_to_decimal($val): float {
   }
   return max(0.0, dec($val));
 }
+function fmt_minutes($m){
+  if ($m === null) return '—';
+  $m = (int)$m; $h = intdiv($m,60); $r = $m%60;
+  return sprintf('%d:%02d',$h,$r);
+}

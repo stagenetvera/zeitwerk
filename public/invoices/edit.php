@@ -14,7 +14,7 @@ $settings = get_account_settings($pdo, $account_id);
 
 function hurl($s){ return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
 function fmt_money($v){ return number_format((float)$v, 2, ',', '.'); }
-function fmt_minutes_hhmm(int $m): string { $h=intdiv($m,60); $r=$m%60; return sprintf('%02d:%02d',$h,$r); }
+
 
 // Minuten über eine Menge Time-IDs (Account-sicher) summieren
 function sum_minutes_for_times_edit(PDO $pdo, int $account_id, array $ids): int {

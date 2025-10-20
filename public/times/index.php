@@ -12,11 +12,7 @@ $user_id = (int)$user['id'];
 
 function page_int($v, $d=1){ $n=(int)$v; return $n>0?$n:$d; }
 function hurl($s){ return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
-function fmt_minutes($m){
-  if ($m === null) return '—';
-  $m = (int)$m; $h = intdiv($m,60); $r = $m%60;
-  return $h>0 ? sprintf('%d:%02d h',$h,$r) : ($m.' min');
-}
+
 function render_pagination_keep($base, $params, $page, $pages){
   if ($pages<=1) return '';
   $qs = function($extra) use ($params){

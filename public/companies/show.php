@@ -201,12 +201,7 @@ if ($has_running) {
   $now           = new DateTimeImmutable('now');
   $running_extra = max(0, (int)floor(($now->getTimestamp() - $start->getTimestamp()) / 60));
 }
-function fmt_minutes($m)
-{
-  if ($m === null) { return '—'; }
-  $m = (int)$m; $h = intdiv($m, 60); $r = $m % 60;
-  return $h > 0 ? sprintf('%d:%02d h', $h, $r) : ($m . ' min');
-}
+
 
 // -------- view --------
 ?>

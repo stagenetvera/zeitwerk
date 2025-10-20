@@ -20,13 +20,7 @@ $taskless_running = !empty($has_running) && (empty($running_task_id) || (int)$ru
 $show_company = !empty($show_company);
 $is_sortable = $is_sortable ?? false;
 
-if (!function_exists('fmt_minutes')) {
-  function fmt_minutes($m){
-    if ($m === null) return '—';
-    $m = (int)$m; $h = intdiv($m, 60); $r = $m % 60;
-    return $h > 0 ? sprintf('%d:%02d h', $h, $r) : ($m.' min');
-  }
-}
+
 ?>
 <?php
     $table_body_id = $table_body_id ?? 'dashTaskBody';

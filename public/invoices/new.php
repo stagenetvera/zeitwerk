@@ -21,7 +21,7 @@ $due_default   = date('Y-m-d', strtotime('+' . max(0, $DEFAULT_DUE_DAYS) . ' day
 
 function hurl($s){ return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
 function fmt_money($v){ return number_format((float)$v, 2, ',', '.'); }
-function fmt_minutes_hhmm(int $m): string { $h=intdiv($m,60); $r=$m%60; return sprintf('%02d:%02d',$h,$r); }
+
 
 /** Summe Minuten über Time-IDs (Account-sicher) */
 function sum_minutes_for_times(PDO $pdo, int $account_id, array $ids): int {

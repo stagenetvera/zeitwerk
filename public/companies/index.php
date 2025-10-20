@@ -79,6 +79,30 @@ $st->bindValue(':off',$offset,PDO::PARAM_INT);
 $st->execute();
 $rows = $st->fetchAll();
 
+// Offene (noch nicht abgerechnete) billable Zeiten je Firma aufsummieren (nur für die aufgelisteten Firmen)
+$open_by_company = [];
+if ($rows) {
+  $ids = array_map(fn($r)=>(int)$r['id'], $rows);
+  $ph  = implode(',', array_fill(0, count($ids), '?'));
+  $sqlOpen = "
+    SELECT p.company_id AS cid, COALESCE(SUM(t.minutes),0) AS open_minutes
+    FROM projects p
+    JOIN tasks ta ON ta.project_id = p.id AND ta.account_id = p.account_id
+    JOIN times t  ON t.task_id     = ta.id AND t.account_id = ta.account_id
+    WHERE p.account_id = ?
+      AND p.company_id IN ($ph)
+      AND t.billable = 1
+      AND t.status IN ('offen','in_abrechnung')
+      AND t.minutes IS NOT NULL
+    GROUP BY p.company_id
+  ";
+  $os = $pdo->prepare($sqlOpen);
+  $os->execute(array_merge([$account_id], $ids));
+  foreach ($os->fetchAll() as $r) {
+    $open_by_company[(int)$r['cid']] = (int)$r['open_minutes'];
+  }
+}
+
 $base    = url('/companies/index.php');
 // Für Pagination die Checkbox-Wahl mitnehmen:
 $persist = [];
@@ -130,11 +154,13 @@ foreach ($statuses as $st) { $persist['status[]'][] = $st; }
             <th>Name</th>
             <th>Status</th>
             <th>Stundensatz</th>
+            <th class="text-end">Offene Zeiten</th>
             <th class="text-end">Aktionen</th>
           </tr>
         </thead>
         <tbody>
         <?php foreach ($rows as $r): ?>
+          <?php $open_min = $open_by_company[(int)$r['id']] ?? 0; ?>
           <tr>
             <td>
              <a class=""
@@ -145,6 +171,7 @@ foreach ($statuses as $st) { $persist['status[]'][] = $st; }
             </td>
             <td><?= h($r['status']) ?></td>
             <td>€ <?= $r['hourly_rate'] !== null ? h(number_format((float)$r['hourly_rate'], 2, ',', '.')) : '—' ?></td>
+            <td class="text-end"><?= fmt_minutes($open_min) ?></td>
             <td class="text-end">
               <!-- Ansehen -->
               <a class="btn btn-sm btn-outline-secondary btn-icon"
@@ -159,6 +186,13 @@ foreach ($statuses as $st) { $persist['status[]'][] = $st; }
                  title="Bearbeiten" aria-label="Bearbeiten">
                 <i class="bi bi-pencil"></i>
                 <span class="visually-hidden">Bearbeiten</span>
+              </a>
+              <!-- Rechnung erstellen -->
+              <a class="btn btn-sm btn-success btn-icon"
+                 href="<?= url('/invoices/new.php') ?>?company_id=<?= (int)$r['id'] ?>"
+                 title="Rechnung erstellen" aria-label="Rechnung erstellen">
+                <i class="bi bi-currency-euro"></i>
+                <span class="visually-hidden">Rechnung erstellen</span>
               </a>
               <!-- Löschen -->
               <form method="post" action="<?= url('/companies/delete.php') ?>" class="d-inline"
@@ -175,7 +209,7 @@ foreach ($statuses as $st) { $persist['status[]'][] = $st; }
           </tr>
         <?php endforeach; ?>
         <?php if (!$rows): ?>
-          <tr><td colspan="4" class="text-center text-muted">Keine Firmen für diesen Filter.</td></tr>
+          <tr><td colspan="5" class="text-center text-muted">Keine Firmen für diesen Filter.</td></tr>
         <?php endif; ?>
         </tbody>
       </table>
