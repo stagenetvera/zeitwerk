@@ -15,6 +15,7 @@
 // - Verwaiste Zeiten (ohne Task-FK) werden übersprungen und gezählt.
 // - Eindeutige Rechnungsnummern (Suffix falls nötig).
 // - NEU: Zeiten-Status nach Verlinkung per Rechnungsstatus gesetzt (gestellt/gemahnt/bezahlt -> abgerechnet, in_vorbereitung -> in_abrechnung).
+// - NEU: In ALT unfakturierbare Aufgaben ⇒ alle zugehörigen Zeiten beim Import als NICHT fakturierbar speichern.
 //
 
 //////////// CONFIG ////////////
@@ -304,7 +305,8 @@ try {
     $cntTimes = 0;
     $skipTimesMissingTask = 0;
 
-    $getAltTask = $alt->prepare("SELECT FID_Projekt FROM zf_aufgaben WHERE ID_Aufgabe=?");
+    // NEU: wir ziehen jetzt auch das Task-Flag 'fakturierbar' mit
+    $getAltTask = $alt->prepare("SELECT FID_Projekt, fakturierbar FROM zf_aufgaben WHERE ID_Aufgabe=?");
     $getAltProj = $alt->prepare("SELECT FID_Auftraggeber FROM zf_projekte WHERE ID_Projekt=?");
     $cache_task_to_company = [];
 
@@ -325,7 +327,19 @@ try {
             $diff = max(0, $bis - $von);
             $minutes = (int)round($diff / 60);
         }
-        $bill   = (int)($r['fakturierbar'] ?? 0) ? 1 : 0;
+
+        // ALT-Flags laden: Task-Fakturierbarkeit + Projekt für Company-Ermittlung
+        $getAltTask->execute([$altTask]);
+        $trow = $getAltTask->fetch() ?: [];
+        $altProjId       = (int)($trow['FID_Projekt']   ?? 0);
+        $taskBillableAlt = (int)($trow['fakturierbar']  ?? 1);
+
+        // Zeit-Flag aus ALT.Zeit, aber von ALT.Task übersteuern falls nicht fakturierbar
+        $bill = (int)($r['fakturierbar'] ?? 0) ? 1 : 0;
+        if ($taskBillableAlt === 0) {
+            $bill = 0; // ← Korrektur gemäß Wunsch
+        }
+
         $status = 'offen';
 
         if (!$DRY_RUN) {
@@ -352,13 +366,14 @@ try {
             if (isset($cache_task_to_company[$altTask])) {
                 $cidNew = $cache_task_to_company[$altTask];
             } else {
-                $getAltTask->execute([$altTask]);
-                $altProjId = (int)$getAltTask->fetchColumn();
-                $getAltProj->execute([$altProjId ?: 0]);
-                $altCompanyId = (int)$getAltProj->fetchColumn();
-                if ($altCompanyId && isset($mapCompany[$altCompanyId])) {
-                    $cidNew = (int)$mapCompany[$altCompanyId];
-                    $cache_task_to_company[$altTask] = $cidNew;
+                // wir haben $altProjId bereits aus $trow
+                if ($altProjId > 0) {
+                    $getAltProj->execute([$altProjId]);
+                    $altCompanyId = (int)$getAltProj->fetchColumn();
+                    if ($altCompanyId && isset($mapCompany[$altCompanyId])) {
+                        $cidNew = (int)$mapCompany[$altCompanyId];
+                        $cache_task_to_company[$altTask] = $cidNew;
+                    }
                 }
             }
             if ($cidNew && $von >= $lastYearCutoff) {
