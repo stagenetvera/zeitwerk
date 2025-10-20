@@ -46,6 +46,12 @@ $project_id = isset($_GET['project_id']) && $_GET['project_id'] !== '' ? (int)$_
 $task_id    = isset($_GET['task_id'])    && $_GET['task_id']    !== '' ? (int)$_GET['task_id']    : 0;
 $billable_filter = isset($_GET['billable']) && ($_GET['billable'] === '1' || $_GET['billable'] === '0') ? $_GET['billable'] : '';
 
+// Status-Filter (Checkboxen): wenn leer -> alle
+$STATUS_WHITELIST = ['offen','in_abrechnung','abgerechnet'];
+$statuses = $_GET['status'] ?? [];
+if (!is_array($statuses)) $statuses = [$statuses];
+$statuses = array_values(array_intersect($STATUS_WHITELIST, array_map('strval', $statuses)));
+
 $valid_date = function($d){
   if (!preg_match('~^\\d{4}-\\d{2}-\\d{2}$~', $d)) return false;
   $dt = DateTime::createFromFormat('Y-m-d', $d);
@@ -57,7 +63,6 @@ if ($end < $start) { $tmp=$start; $start=$end; $end=$tmp; }
 
 $start_dt = $start.' 00:00:00';
 $end_dt   = $end.' 23:59:59';
-
 
 $per_page = 20;
 $page = page_int($_GET['page'] ?? 1);
@@ -95,6 +100,18 @@ if ($project_id){ $where[]='p.id = :pid'; $params[':pid']=$project_id; }
 if ($task_id){ $where[]='t.task_id = :tid'; $params[':tid']=$task_id; }
 if ($billable_filter==='1'){ $where[]='t.billable = 1'; }
 elseif ($billable_filter==='0'){ $where[]='(t.billable = 0 OR t.billable IS NULL)'; }
+
+// Status-Checkboxen → IN(...) bauen (named placeholders :st0, :st1, …)
+if (!empty($statuses)) {
+  $ph = [];
+  foreach ($statuses as $i => $stval) {
+    $name = ":st{$i}";
+    $ph[] = $name;
+    $params[$name] = $stval;
+  }
+  $where[] = 't.status IN ('.implode(',', $ph).')';
+}
+
 $WHERE = implode(' AND ', $where);
 
 // count
@@ -104,7 +121,7 @@ $cnt = $pdo->prepare("SELECT COUNT(*)
   LEFT JOIN projects p ON p.id = ta.project_id AND p.account_id = t.account_id
   LEFT JOIN companies c ON c.id = p.company_id AND c.account_id = t.account_id
   WHERE $WHERE");
-forEach($params as $k=>$v){ $cnt->bindValue($k, $v, is_int($v)?PDO::PARAM_INT:PDO::PARAM_STR); }
+foreach($params as $k=>$v){ $cnt->bindValue($k, $v, is_int($v)?PDO::PARAM_INT:PDO::PARAM_STR); }
 $cnt->execute();
 $total=(int)$cnt->fetchColumn();
 $pages=max(1,(int)ceil($total/$per_page)); if($page>$pages){$page=$pages;$offset=($page-1)*$per_page;}
@@ -114,13 +131,13 @@ $sql = "SELECT t.id, t.task_id, t.started_at, t.ended_at, t.minutes, t.billable,
                ta.description AS task_desc, p.title AS project_title, c.name AS company_name
         FROM times t
         LEFT JOIN tasks ta ON ta.id = t.task_id AND ta.account_id = t.account_id
-        LEFT JOIN projects p ON p.id = ta.project_id AND p.account_id = ta.account_id
-        LEFT JOIN companies c ON c.id = p.company_id AND c.account_id = p.account_id
+        LEFT JOIN projects p ON p.id = ta.project_id AND p.account_id = t.account_id
+        LEFT JOIN companies c ON c.id = p.company_id AND c.account_id = t.account_id
         WHERE $WHERE
         ORDER BY t.started_at DESC, t.id DESC
         LIMIT :limit OFFSET :offset";
 $st = $pdo->prepare($sql);
-forEach($params as $k=>$v){ $st->bindValue($k, $v, is_int($v)?PDO::PARAM_INT:PDO::PARAM_STR); }
+foreach($params as $k=>$v){ $st->bindValue($k, $v, is_int($v)?PDO::PARAM_INT:PDO::PARAM_STR); }
 $st->bindValue(':limit',$per_page,PDO::PARAM_INT);
 $st->bindValue(':offset',$offset,PDO::PARAM_INT);
 $st->execute();
@@ -132,7 +149,7 @@ $sumStmt = $pdo->prepare("SELECT COALESCE(SUM(t.minutes),0)
   LEFT JOIN projects p ON p.id = ta.project_id AND p.account_id = t.account_id
   LEFT JOIN companies c ON c.id = p.company_id AND c.account_id = t.account_id
   WHERE $WHERE AND t.minutes IS NOT NULL");
-forEach($params as $k=>$v){ $sumStmt->bindValue($k, $v, is_int($v)?PDO::PARAM_INT:PDO::PARAM_STR); }
+foreach($params as $k=>$v){ $sumStmt->bindValue($k, $v, is_int($v)?PDO::PARAM_INT:PDO::PARAM_STR); }
 $sumStmt->execute();
 $sum_minutes=(int)$sumStmt->fetchColumn();
 
@@ -142,7 +159,9 @@ $persist = [
   'company_id'=>$company_id?:'',
   'project_id'=>$project_id?:'',
   'task_id'=>$task_id?:'',
-  'billable'=>$billable_filter
+  'billable'=>$billable_filter,
+  // Status-Checkboxen persistieren
+  'status'=>$statuses,
 ];
 function qs($base,$arr){return htmlspecialchars($base.'?'.http_build_query($arr),ENT_QUOTES,'UTF-8');}
 ?>
@@ -214,6 +233,28 @@ function qs($base,$arr){return htmlspecialchars($base.'?'.http_build_query($arr)
           <option value="1" <?= $billable_filter==='1'?'selected':'' ?>>fakturierbar</option>
           <option value="0" <?= $billable_filter==='0'?'selected':'' ?>>nicht fakturierbar</option>
         </select>
+      </div>
+
+      <!-- Status-Filter (Checkboxen) -->
+      <div class="col-auto">
+        <label class="form-label d-block">Status</label>
+        <div class="d-flex align-items-center gap-3 flex-wrap">
+          <?php
+            $labels = [
+              'offen'          => 'offen',
+              'in_abrechnung'  => 'in Abrechnung',
+              'abgerechnet'    => 'abgerechnet',
+            ];
+            foreach ($labels as $val => $label):
+              $checked = in_array($val, $statuses, true) ? 'checked' : '';
+          ?>
+            <div class="form-check form-check-inline">
+              <input class="form-check-input" type="checkbox" id="st-<?=$val?>" name="status[]" value="<?=$val?>" <?=$checked?> onchange="document.getElementById('filterForm').submit()">
+              <label class="form-check-label" for="st-<?=$val?>"><?=$label?></label>
+            </div>
+          <?php endforeach; ?>
+        </div>
+        <div class="form-text">Keine Auswahl = alle.</div>
       </div>
 
       <div class="col-auto align-self-end">
