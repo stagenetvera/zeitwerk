@@ -87,6 +87,7 @@ $q = $pdo->prepare("
   WHERE t.account_id = :acc
     AND c.id         = :cid
     AND t.billable   = 1
+    AND ta.billable  = 1
     AND t.status     = 'offen'
     AND t.minutes IS NOT NULL
   ORDER BY p.title, ta.id, t.started_at
@@ -313,8 +314,15 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
       // 2b) Fallback – keine expliziten time_ids, aber Items vorhanden -> alle offenen billable Zeiten je Task
       if ($sum_net == 0.0 && $sum_gross == 0.0 && !empty($propsByTask)) {
         $getOpenTimes = $pdo->prepare("
-          SELECT id FROM times
-          WHERE account_id=? AND task_id=? AND status='offen' AND billable=1 AND minutes IS NOT NULL
+          SELECT t.id
+            FROM times t
+            JOIN tasks ta
+            ON ta.id = t.task_id AND ta.account_id = t.account_id
+            WHERE t.account_id=? AND t.task_id=?
+            AND t.status='offen'
+            AND t.billable=1
+            AND ta.billable=1
+            AND t.minutes IS NOT NULL
         ");
         foreach ($propsByTask as $task_id => $p) {
           $getOpenTimes->execute([$account_id, (int)$task_id]);

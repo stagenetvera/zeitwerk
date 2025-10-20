@@ -1,5 +1,6 @@
 <?php
 require __DIR__ . '/../../src/bootstrap.php';
+require_once __DIR__ . '/../../src/lib/times_rules.php';
 
 require_login();
 csrf_check();
@@ -103,7 +104,9 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
   }
 
   $task_id = isset($_POST['task_id']) && $_POST['task_id'] !== '' ? (int)$_POST['task_id'] : null;
-  $billable = isset($_POST['billable']) ? 1 : 0;
+  $billable = isset($_POST['billable']) ? (int)($_POST['billable']) : 0;
+  $billable = enforce_task_billable_on_time($pdo, $account_id, $task_id, $billable);
+
   $started_at = trim($_POST['started_at'] ?? '');
   $ended_at = trim($_POST['ended_at'] ?? '');
 
@@ -191,7 +194,7 @@ function fmt_dt_local($s) {
       <?= $sel_project_id ? '– optional: vorhandene Aufgabe wählen –' : '– bitte zuerst Projekt wählen –' ?>
     </option>
   </select>
-  <div class="form-text">Optional. Wenn leer, bleibt der Eintrag ohne Aufgabe.</div>
+
 </div>
 
 <script>

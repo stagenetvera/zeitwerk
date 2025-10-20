@@ -2,6 +2,7 @@
 // public/times/new.php
 require __DIR__ . '/../../src/layout/header.php';
 require_once __DIR__ . '/../../src/lib/flash.php';
+require_once __DIR__ . '/../../src/lib/times_rules.php';
 require_login();
 
 $user = auth_user();
@@ -45,7 +46,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   $started_at = trim($_POST['started_at'] ?? '');
   $ended_at   = trim($_POST['ended_at'] ?? '');
   $minutes_in = trim($_POST['minutes'] ?? '');
-  $billable   = isset($_POST['billable']) ? (int)($_POST['billable'] === '1') : 0;
+
+  $billable = isset($_POST['billable']) ? (int)($_POST['billable']) : 0;
+  // Harter Server-Guard:
+  $billable = enforce_task_billable_on_time($pdo, $account_id, $task_id, $billable);
+
   $status     = $_POST['status'] ?? 'offen';
 
   if ($task_id <= 0) {
