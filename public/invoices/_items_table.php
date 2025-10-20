@@ -19,20 +19,25 @@ $timesName = $timesName ?? ($mode === 'edit' ? 'times_selected' : 'time_ids');
 $scheme_default = $eff_scheme; // aus invoices/new via require
 $rate_default   = $eff_scheme==='standard' ? number_format((float)$eff_vat,2,'.','') : '0.00';
 
-
-
-
 // Für die bestehenden name="-Attribute" im Markup:
 $NAME_TASKS = $rowName;
 $NAME_TIMES = $timesName;
 
 function _fmt_hhmm($min){ $h=intdiv($min,60); $r=$min%60; return sprintf('%02d:%02d',$h,$r); }
+function _as_num($v){ return (float)str_replace(',', '.', (string)$v); }
+
+// Vorab-Gesamtsummen sammeln (werden beim Rendern erhöht)
+$GRAND_NET = 0.0; $GRAND_GROSS = 0.0;
 ?>
 <style>
   .inv-group-head td{ background:#f7f7f9; font-weight:600; }
+  .inv-group-head .proj-net, .inv-group-head .proj-gross{ font-weight:700; }
   .inv-item-row td { vertical-align: middle; }
   .inv-details { display:none; background:#fcfcfd; }
   .inv-details td { border-top:0; }
+
+  .inv-grand-total td { background:#f7f7f9; font-weight:700; border-top:2px solid #dee2e6; }
+  .inv-grand-total .label { text-transform: none; }
 
   /* Neues, hübscheres Toggle */
   .inv-toggle-btn{
@@ -72,27 +77,48 @@ if (!empty($groups)) {
   $showProjectHeads = count($groups) > 1;
   foreach ($groups as $g) {
     $pid = (int)$g['project_id'];
+
+    // Projektsumme (serverseitig initial)
+    $projNet = 0.0; $projGross = 0.0;
+    foreach ($g['rows'] as $rowPre) {
+      $rateNum = (float)($rowPre['hourly_rate'] ?? 0.0);
+      $taxNum  = (float)($rowPre['tax_rate']    ?? 0.0);
+      $sumMin  = array_sum(array_map(fn($t)=> (int)$t['minutes'], $rowPre['times']));
+      $netPre  = ($sumMin/60.0) * $rateNum;
+      $grossPre= $netPre * (1 + $taxNum/100);
+      $projNet  += $netPre;
+      $projGross+= $grossPre;
+    }
+    $GRAND_NET   += $projNet;
+    $GRAND_GROSS += $projGross;
+
     if ($showProjectHeads): ?>
-      <tr class="inv-group-head" data-project="<?=$pid?>"><td colspan="9"><?=h($g['project_title'])?></td></tr>
+      <tr class="inv-group-head" data-project="<?=$pid?>">
+        <td colspan="6"><?=h($g['project_title'])?></td>
+        <td class="text-end proj-net"><?= number_format($projNet, 2, ',', '.') ?></td>
+        <td class="text-end proj-gross"><?= number_format($projGross, 2, ',', '.') ?></td>
+        <td></td>
+      </tr>
     <?php endif;
 
     foreach ($g['rows'] as $row) {
       $idx++;
-      $desc    = $row['task_desc'];
+      $desc   = $row['task_desc'];
       $rateNum = (float)($row['hourly_rate'] ??  0.0); // <- Stundensatz
-      $rate    = number_format((float)$rateNum, 2, ',', '');
-      $taxNum  = (float)($row['tax_rate'] ?? 0.0);     // <- Prozent
-      $sumMin  = array_sum(array_map(fn($t)=> (int)$t['minutes'], $row['times']));
-      $sumHHM  = _fmt_hhmm($sumMin);
-      $net     = ($sumMin/60.0) * $rateNum;
-      $gross   = $net * (1 + $taxNum/100);
+      $rate   = number_format((float)$rateNum, 2, ',', '');
+      $taxNum  = (float)($row['tax_rate'] ?? 0.0); // <- Prozent
+      $tax     = number_format($taxNum, 2, ',', '');
+      $sumMin = array_sum(array_map(fn($t)=> (int)$t['minutes'], $row['times']));
+      $sumHHM = _fmt_hhmm($sumMin);
+      $net   = ($sumMin/60.0) * $rateNum;
+      $gross = $net * (1 + $taxNum/100);
       ?>
       <tr class="inv-item-row" data-row="<?=$idx?>" data-project="<?=$pid?>" aria-expanded="false">
         <td class="text-center">
             <button type="button" class="inv-toggle-btn" aria-label="Details ein-/ausklappen">
-              <svg class="chev" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <svg class="chev" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <path d="M6 12l4-4-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
+            </svg>
             </button>
         </td>
         <td>
@@ -108,7 +134,7 @@ if (!empty($groups)) {
           <input type="number" step="0.01" class="form-control text-end rate" name="items[<?=$idx?>][hourly_rate]" value="<?=$rate?>">
         </td>
 
-        <td class="text-end">
+       <td class="text-end">
           <select
             name="items[<?=$idx?>][tax_scheme]"
             class="form-select inv-tax-sel"
@@ -170,6 +196,7 @@ if (!empty($groups)) {
   }
 }
 
+
 /* -------- EDIT mode: build from $items -------- */
 if (empty($groups) && !empty($items)) {
   $byP = [];
@@ -181,8 +208,33 @@ if (empty($groups) && !empty($items)) {
   $showHeads = count($byP) > 1;
 
   foreach ($byP as $pid=>$bucket) {
+    // Projektsumme (serverseitig initial aus DB-Totals, fallback minutenbasiert)
+    $projNet = 0.0; $projGross = 0.0;
+    foreach ($bucket['rows'] as $rit) {
+      $taxNum  = (float)($rit['vat_rate'] ?? $rit['tax_rate'] ?? 0.0);
+      if (array_key_exists('total_net', $rit) && array_key_exists('total_gross', $rit)) {
+        $n = (float)$rit['total_net'];
+        $g = (float)$rit['total_gross'];
+      } else {
+        $rateNum = (float)($rit['hourly_rate'] ?? 0.0);
+        $sumMin  = 0;
+        foreach (($rit['time_entries'] ?? []) as $te) if (!empty($te['selected'])) $sumMin += (int)$te['minutes'];
+        $n = ($sumMin/60.0) * $rateNum;
+        $g = $n * (1 + $taxNum/100);
+      }
+      $projNet  += $n;
+      $projGross+= $g;
+    }
+    $GRAND_NET   += $projNet;
+    $GRAND_GROSS += $projGross;
+
     if ($showHeads): ?>
-      <tr class="inv-group-head" data-project="<?=$pid?>"><td colspan="9"><?=h($bucket['title'])?></td></tr>
+      <tr class="inv-group-head" data-project="<?=$pid?>">
+        <td colspan="6"><?=h($bucket['title'])?></td>
+        <td class="text-end proj-net"><?= number_format($projNet, 2, ',', '.') ?></td>
+        <td class="text-end proj-gross"><?= number_format($projGross, 2, ',', '.') ?></td>
+        <td></td>
+      </tr>
     <?php endif;
 
     foreach ($bucket['rows'] as $it) {
@@ -305,6 +357,14 @@ if (empty($groups) && !empty($items)) {
   }
 }
 ?>
+      <!-- Gesamtsummen-Zeile -->
+      <tr class="inv-grand-total">
+        <td></td>
+        <td colspan="5" class="text-end label">Gesamtsumme</td>
+        <td class="text-end"><span id="grand-net"><?= number_format($GRAND_NET, 2, ',', '.') ?></span></td>
+        <td class="text-end"><span id="grand-gross"><?= number_format($GRAND_GROSS, 2, ',', '.') ?></span></td>
+        <td></td>
+      </tr>
     </tbody>
   </table>
 </div>
@@ -331,6 +391,40 @@ if (empty($groups) && !empty($items)) {
     return (h<10?'0':'')+h+':' + (m<10?'0':'')+m;
   }
 
+  function recalcTotals(){
+    var root = document.getElementById('invoice-items');
+    if (!root) return;
+
+    // Summen je Projekt sammeln
+    var sumsByProject = {};
+    root.querySelectorAll('tr.inv-item-row').forEach(function(tr){
+      var pid = tr.getAttribute('data-project') || '';
+      var n = toNumber(tr.querySelector('.net')?.textContent || '0');
+      var g = toNumber(tr.querySelector('.gross')?.textContent || '0');
+      if (!sumsByProject[pid]) sumsByProject[pid] = {net:0,gross:0};
+      sumsByProject[pid].net  += n;
+      sumsByProject[pid].gross+= g;
+    });
+
+    // In Projektheads schreiben
+    Object.keys(sumsByProject).forEach(function(pid){
+      var head = root.querySelector('.inv-group-head[data-project="'+pid+'"]');
+      if (!head) return;
+      var ncell = head.querySelector('.proj-net');
+      var gcell = head.querySelector('.proj-gross');
+      if (ncell) ncell.textContent = fmt2(sumsByProject[pid].net);
+      if (gcell) gcell.textContent = fmt2(sumsByProject[pid].gross);
+    });
+
+    // Gesamtsummen
+    var gnet = 0, ggross = 0;
+    Object.values(sumsByProject).forEach(function(s){ gnet += s.net; ggross += s.gross; });
+    var gN = document.getElementById('grand-net');
+    var gG = document.getElementById('grand-gross');
+    if (gN) gN.textContent = fmt2(gnet);
+    if (gG) gG.textContent = fmt2(ggross);
+  }
+
   function recalcRow(tr){
     // Fixe Totals aus dem Server verwenden, wenn die Zeile KEINE Times besitzt
     if (tr.dataset.fixedTotal === '1') {
@@ -340,6 +434,7 @@ if (empty($groups) && !empty($items)) {
       var g = parseFloat(tr.dataset.totalGross || '0');
       if (nspan) nspan.textContent = fmt2(isFinite(n) ? n : 0);
       if (gspan) gspan.textContent = fmt2(isFinite(g) ? g : 0);
+      recalcTotals();
       return; // NICHT minutenbasiert überschreiben
     }
 
@@ -366,6 +461,8 @@ if (empty($groups) && !empty($items)) {
     var smi= tr.querySelector('.sum-minutes'); if (smi) smi.value = String(minutes);
     var nspan = tr.querySelector('.net'); if (nspan) nspan.textContent = fmt2(net);
     var gspan = tr.querySelector('.gross'); if (gspan) gspan.textContent = fmt2(gross);
+
+    recalcTotals();
   }
 
   function updateVatFromScheme(sel){
@@ -450,6 +547,9 @@ if (empty($groups) && !empty($items)) {
 
       // Feld „Begründung“ evtl. ausblenden
       toggleTaxReason();
+
+      // Summen neu
+      recalcTotals();
       return;
     }
   });
@@ -489,5 +589,6 @@ if (empty($groups) && !empty($items)) {
     }
   });
   toggleTaxReason();
+  recalcTotals(); // initiale Summenanzeige
 })();
 </script>
