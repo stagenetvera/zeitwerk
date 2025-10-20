@@ -92,6 +92,10 @@
   .flash-stack .alert.flash-enter{ opacity: 0; transform: translateY(-6px); }
   .flash-stack .alert.flash-leave{ opacity: 0; transform: translateY(-6px); }
 
+  .extra-row .form-label { margin-bottom: .25rem; }
+  @media (min-width: 768px) {
+    .extra-row .col-md-2 .form-label { white-space: nowrap; }
+  }
   </style>
 </head>
 <body class="bg-light">

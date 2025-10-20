@@ -78,22 +78,21 @@ if (!empty($groups)) {
 
     foreach ($g['rows'] as $row) {
       $idx++;
-      $desc   = $row['task_desc'];
+      $desc    = $row['task_desc'];
       $rateNum = (float)($row['hourly_rate'] ??  0.0); // <- Stundensatz
-      $rate   = number_format((float)$rateNum, 2, ',', '');
-      $taxNum  = (float)($row['tax_rate'] ?? 0.0); // <- Prozent
-      $tax     = number_format($taxNum, 2, ',', '');
-      $sumMin = array_sum(array_map(fn($t)=> (int)$t['minutes'], $row['times']));
-      $sumHHM = _fmt_hhmm($sumMin);
-      $net   = ($sumMin/60.0) * $rateNum;
-      $gross = $net * (1 + $taxNum/100);
+      $rate    = number_format((float)$rateNum, 2, ',', '');
+      $taxNum  = (float)($row['tax_rate'] ?? 0.0);     // <- Prozent
+      $sumMin  = array_sum(array_map(fn($t)=> (int)$t['minutes'], $row['times']));
+      $sumHHM  = _fmt_hhmm($sumMin);
+      $net     = ($sumMin/60.0) * $rateNum;
+      $gross   = $net * (1 + $taxNum/100);
       ?>
       <tr class="inv-item-row" data-row="<?=$idx?>" data-project="<?=$pid?>" aria-expanded="false">
         <td class="text-center">
             <button type="button" class="inv-toggle-btn" aria-label="Details ein-/ausklappen">
-            <svg class="chev" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <svg class="chev" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <path d="M6 12l4-4-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
+              </svg>
             </button>
         </td>
         <td>
@@ -109,7 +108,7 @@ if (!empty($groups)) {
           <input type="number" step="0.01" class="form-control text-end rate" name="items[<?=$idx?>][hourly_rate]" value="<?=$rate?>">
         </td>
 
-       <td class="text-end">
+        <td class="text-end">
           <select
             name="items[<?=$idx?>][tax_scheme]"
             class="form-select inv-tax-sel"
@@ -150,13 +149,12 @@ if (!empty($groups)) {
                 <?php foreach ($row['times'] as $t): $tid=(int)$t['id']; $m=(int)$t['minutes']; ?>
                   <tr>
                     <td>
-
-                        <input type="checkbox"
-                            class="form-check-input time-checkbox"
-                            name="<?=$NAME_TIMES?>[<?= (int)$row['task_id'] ?>][]"
-                            value="<?= (int)$t['id'] ?>"
-                            data-min="<?= (int)$t['minutes'] ?>"
-                            checked>
+                      <input type="checkbox"
+                             class="form-check-input time-checkbox"
+                             name="<?=$NAME_TIMES?>[<?= (int)$row['task_id'] ?>][]"
+                             value="<?= (int)$t['id'] ?>"
+                             data-min="<?= (int)$t['minutes'] ?>"
+                             checked>
                     </td>
                     <td><?=h($t['started_at'])?> – <?=h($t['ended_at'])?></td>
                     <td class="text-end"><?=_fmt_hhmm($m)?></td>
@@ -171,7 +169,6 @@ if (!empty($groups)) {
     }
   }
 }
-
 
 /* -------- EDIT mode: build from $items -------- */
 if (empty($groups) && !empty($items)) {
@@ -190,42 +187,59 @@ if (empty($groups) && !empty($items)) {
 
     foreach ($bucket['rows'] as $it) {
       $idx++;
-      $desc   = $it['description'] ?? '';
+      $desc    = $it['description'] ?? '';
       $rateNum = (float)($it['hourly_rate'] ?? 0.0);
       $rate    = number_format($rateNum, 2, ',', '');
       $taxNum  = (float)($it['vat_rate'] ?? $it['tax_rate'] ?? 0.0);
-      $tax    = number_format((float)$taxNum, 2, ',', '');
-      $times  = $it['time_entries'] ?? [];
-      $sumMin = 0;
+      $tax     = number_format($taxNum, 2, ',', '');
+
+      $times   = $it['time_entries'] ?? [];
+      $sumMin  = 0;
       foreach ($times as $te) if (!empty($te['selected'])) $sumMin += (int)$te['minutes'];
-      $sumHHM = _fmt_hhmm($sumMin);
-      $net   = ($sumMin/60.0) * $rateNum;
-      $gross = $net * (1 + $taxNum/100);
+      $sumHHM  = _fmt_hhmm($sumMin);
+
+      // ❗ Preferiere DB-Summen, fallback auf Minuten-basierte Rechnung
+      $netVal   = array_key_exists('total_net',   $it) ? (float)$it['total_net']   : (($sumMin/60.0) * $rateNum);
+      $grossVal = array_key_exists('total_gross', $it) ? (float)$it['total_gross'] : ($netVal * (1 + $taxNum/100));
+
+      // Flag: hat diese Zeile überhaupt Times?
+      $hasTimes = !empty($times);
+
+      // Für JS: fixe Totals (ohne Times) als data-Attribute bereitstellen
+      $dataAttrs = '';
+      if (!$hasTimes) {
+        $dataAttrs =
+          ' data-fixed-total="1"'.
+          ' data-total-net="'.htmlspecialchars(number_format($netVal,   2, '.', ''), ENT_QUOTES).'"'.
+          ' data-total-gross="'.htmlspecialchars(number_format($grossVal, 2, '.', ''), ENT_QUOTES).'"';
+      }
+
+      $it_scheme = $it['tax_scheme']
+        ?? (((float)($it['vat_rate'] ?? $it['tax_rate'] ?? 0)) > 0 ? 'standard' : 'tax_exempt');
+      $it_vat    = number_format((float)($it['vat_rate'] ?? $it['tax_rate'] ?? 0), 2, '.', '');
+
       ?>
-      <tr class="inv-item-row" data-row="<?=$idx?>" data-project="<?=$pid?>" aria-expanded="false">
-        <td class="text-center">
+      <tr class="inv-item-row" data-row="<?=$idx?>" data-project="<?=$pid?>" aria-expanded="false"<?=$dataAttrs?>>
+          <td class="text-center">
             <button type="button" class="inv-toggle-btn" aria-label="Details ein-/ausklappen">
-            <svg class="chev" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <svg class="chev" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <path d="M6 12l4-4-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
+              </svg>
             </button>
-        </td>
-        <td>
-          <input type="hidden" name="items[<?=$idx?>][id]" value="<?= (int)$it['id'] ?>">
-          <input type="hidden" name="items[<?=$idx?>][project_id]" value="<?=$pid?>">
-          <input type="text" class="form-control" name="items[<?=$idx?>][description]" value="<?=h($desc)?>">
-        </td>
-        <td class="text-end">
-          <span class="sum-hhmm"><?=$sumHHM?></span>
-          <input type="hidden" name="items[<?=$idx?>][sum_minutes]" value="<?=$sumMin?>" class="sum-minutes">
-        </td>
-        <td class="text-end">
-          <input type="number" step="0.01" class="form-control text-end rate" name="items[<?=$idx?>][hourly_rate]" value="<?=$rate?>">
-        </td>
-        <?php
-          $it_scheme = $it['tax_scheme'] ?? (((float)($it['vat_rate'] ?? $it['tax_rate'] ?? 0)) > 0 ? 'standard' : 'tax_exempt');
-          $it_vat    = number_format((float)($it['vat_rate'] ?? $it['tax_rate'] ?? 0), 2, '.', '');
-        ?>
+          </td>
+          <td>
+            <input type="hidden" name="items[<?=$idx?>][id]" value="<?= (int)$it['id'] ?>">
+            <input type="hidden" name="items[<?=$idx?>][project_id]" value="<?=$pid?>">
+            <input type="text" class="form-control" name="items[<?=$idx?>][description]" value="<?=h($desc)?>">
+          </td>
+          <td class="text-end">
+            <span class="sum-hhmm"><?=$sumHHM?></span>
+            <input type="hidden" name="items[<?=$idx?>][sum_minutes]" value="<?=$sumMin?>" class="sum-minutes">
+          </td>
+          <td class="text-end">
+            <input type="number" step="0.01" class="form-control text-end rate" name="items[<?=$idx?>][hourly_rate]" value="<?=$rate?>">
+          </td>
+
           <td class="text-end">
             <select
               name="items[<?=$idx?>][tax_scheme]"
@@ -245,12 +259,15 @@ if (empty($groups) && !empty($items)) {
               name="items[<?=$idx?>][vat_rate]"
               value="<?= h($it_vat) ?>">
           </td>
-        <td class="text-end"><span class="net"><?=number_format($net,2,',','.')?></span></td>
-        <td class="text-end"><span class="gross"><?=number_format($gross,2,',','.')?></span></td>
-        <td class="text-end">
-          <button type="button" class="btn btn-sm btn-outline-danger btn-remove-item">Entfernen</button>
-        </td>
-      </tr>
+
+          <!-- Anzeige mit DB-Summen -->
+          <td class="text-end"><span class="net"><?= number_format($netVal,   2, ',', '.') ?></span></td>
+          <td class="text-end"><span class="gross"><?= number_format($grossVal, 2, ',', '.') ?></span></td>
+
+          <td class="text-end">
+            <button type="button" class="btn btn-sm btn-outline-danger btn-remove-item">Entfernen</button>
+          </td>
+        </tr>
       <tr class="inv-details" data-row="<?=$idx?>" data-project="<?=$pid?>">
         <td></td>
         <td colspan="8">
@@ -306,6 +323,18 @@ if (empty($groups) && !empty($items)) {
   }
 
   function recalcRow(tr){
+    // Fixe Totals aus dem Server verwenden, wenn die Zeile KEINE Times besitzt
+    if (tr.dataset.fixedTotal === '1') {
+      var nspan = tr.querySelector('.net');
+      var gspan = tr.querySelector('.gross');
+      var n = parseFloat(tr.dataset.totalNet   || '0');
+      var g = parseFloat(tr.dataset.totalGross || '0');
+      if (nspan) nspan.textContent = fmt2(isFinite(n) ? n : 0);
+      if (gspan) gspan.textContent = fmt2(isFinite(g) ? g : 0);
+      return; // NICHT minutenbasiert überschreiben
+    }
+
+    // Ansonsten: minutenbasiert wie gehabt
     var minutes = 0;
     var rowId   = tr.getAttribute('data-row');
     var details = document.querySelector('.inv-details[data-row="'+rowId+'"]');
@@ -317,6 +346,7 @@ if (empty($groups) && !empty($items)) {
       var sm = tr.querySelector('.sum-minutes');
       minutes = sm ? parseInt(sm.value||'0',10) : 0;
     }
+
     var rate = toNumber(tr.querySelector('.rate')?.value||'0');
     var vat  = toNumber(tr.querySelector('.inv-vat-input')?.value||'0');
 

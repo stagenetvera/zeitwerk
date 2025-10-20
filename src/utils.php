@@ -52,3 +52,14 @@ function dec($s) {
   $n = (float)$s;
   return is_finite($n) ? $n : 0.0;
 }
+
+// "1.5" oder "01:30" -> Stunden als Dezimalzahl
+function parse_hours_to_decimal($val): float {
+  $val = trim((string)($val ?? ''));
+  if ($val === '') return 0.0;
+  if (strpos($val, ':') !== false) {
+    [$h,$m] = array_pad(explode(':',$val,2), 2, '0');
+    return max(0.0, (int)$h + ((int)$m)/60.0);
+  }
+  return max(0.0, dec($val));
+}

@@ -1,7 +1,8 @@
 <?php
 // public/invoices/new.php
-require __DIR__ . '/../../src/layout/header.php';
+require __DIR__ . '/../../src/bootstrap.php';
 require_once __DIR__ . '/../../src/lib/settings.php';
+require_once __DIR__ . '/../../src/utils.php'; // dec(), parse_hours_to_decimal()
 require_login();
 csrf_check();
 
@@ -20,7 +21,6 @@ $due_default   = date('Y-m-d', strtotime('+' . max(0, $DEFAULT_DUE_DAYS) . ' day
 
 function hurl($s){ return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
 function fmt_money($v){ return number_format((float)$v, 2, ',', '.'); }
-function fmt_minutes_to_hours($m){ return round(((int)$m)/60, 2); }
 function fmt_minutes_hhmm(int $m): string { $h=intdiv($m,60); $r=$m%60; return sprintf('%02d:%02d',$h,$r); }
 
 /** Summe Minuten über Time-IDs (Account-sicher) */
@@ -128,6 +128,8 @@ $companies = $cs->fetchAll();
 
 // geprüfte Firma laden
 $company = null;
+$err = null; $ok = null;
+
 if ($company_id) {
   $cchk = $pdo->prepare('SELECT * FROM companies WHERE id = ? AND account_id = ?');
   $cchk->execute([$company_id, $account_id]);
@@ -137,14 +139,12 @@ if ($company_id) {
   }
 }
 
-$err = $err ?? null;
-$ok  = null;
-
 // ---------- Speichern ----------
 if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['action']==='save') {
   $company_id = (int)($_POST['company_id'] ?? 0);
   $issue_date = $_POST['issue_date'] ?? date('Y-m-d');
   $due_date   = $_POST['due_date']   ?? date('Y-m-d', strtotime('+14 days'));
+  $tax_reason = trim($_POST['tax_exemption_reason'] ?? '');
 
   // Firma validieren
   if (!$company_id) {
@@ -155,11 +155,10 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
     if (!$cchk->fetchColumn()) $err = 'Ungültige Firma.';
   }
 
-  // Eingaben einsammeln
+  // Eingaben
   $itemsForm = $_POST['items']   ?? []; // items[idx][task_id|description|hourly_rate|tax_scheme|vat_rate]
   $timesRaw  = $_POST['time_ids']?? []; // time_ids[task_id][] = time_id (oder flach)
-  $manual    = $_POST['manual']  ?? []; // manuelle Positionen
-  $tax_reason= trim($_POST['tax_exemption_reason'] ?? '');
+  $extras    = $_POST['extras']  ?? ($_POST['extra'] ?? []); // Zusatzpositionen mit Toggle
 
   // Times normalisieren
   $timesByTask = normalize_times_selection($timesRaw, $pdo, $account_id);
@@ -167,8 +166,13 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
   // Mindestens irgendetwas?
   $hasAnyItem = false;
   if (!empty($timesByTask)) $hasAnyItem = true;
-  if (!$hasAnyItem && is_array($manual)) {
-    foreach ($manual as $m) { if (trim($m['description'] ?? '') !== '') { $hasAnyItem = true; break; } }
+  if (!$hasAnyItem && is_array($extras)) {
+    foreach ($extras as $e) {
+      $d = trim($e['description'] ?? '');
+      $q = dec($e['quantity'] ?? $e['hours'] ?? '0');
+      $p = dec($e['unit_price'] ?? $e['hourly_rate'] ?? '0');
+      if ($d !== '' && ($q > 0 || $p > 0)) { $hasAnyItem = true; break; }
+    }
   }
   if (!$hasAnyItem && is_array($itemsForm)) {
     foreach ($itemsForm as $row) {
@@ -177,65 +181,72 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
   }
   if (!$hasAnyItem && !$err) $err = 'Keine Position ausgewählt.';
 
+  // Effektive Defaults aus Firma/Account
   if (!$err) {
+    $coStmt = $pdo->prepare('SELECT * FROM companies WHERE id = ? AND account_id = ?');
+    $coStmt->execute([$company_id, $account_id]);
+    $company = $coStmt->fetch();
+
+    $eff_vat_default    = (isset($company['default_vat_rate']) && $company['default_vat_rate'] !== null)
+      ? (float)$company['default_vat_rate'] : (float)$settings['default_vat_rate'];
+    $eff_scheme_default = $company['default_tax_scheme'] ?? ($settings['default_tax_scheme'] ?? 'standard');
+
+    // --- PROPERTIES VORAB SAMMELN (damit wir hasNonStandard vor dem Rechnung-Insert kennen) ---
+    $propsByTask    = []; // task_id => [description, rate, vat, scheme]
+    $hasNonStandard = false;
+
+    foreach ($itemsForm as $row) {
+      $tid = (int)($row['task_id'] ?? 0);
+      if (!$tid) continue;
+
+      $desc = trim((string)($row['description'] ?? ''));
+      $rate = ($row['hourly_rate'] !== '' && $row['hourly_rate'] !== null)
+                ? (float)str_replace(',', '.', (string)$row['hourly_rate']) : 0.0;
+
+      $scheme = $row['tax_scheme'] ?? $eff_scheme_default;
+
+      $vat_input = $row['vat_rate'] ?? ($row['tax_rate'] ?? '');
+      if ($vat_input !== '' && $vat_input !== null) {
+        $vat = (float)str_replace(',', '.', (string)$vat_input);
+      } else {
+        $vat = ($scheme === 'standard') ? $eff_vat_default : 0.0;
+      }
+      $vat = max(0.0, min(100.0, (float)$vat));
+      if ($scheme !== 'standard') $hasNonStandard = true;
+
+      $propsByTask[$tid] = [
+        'description' => $desc,
+        'rate'        => (float)$rate,
+        'vat'         => (float)$vat,
+        'scheme'      => $scheme,
+      ];
+    }
+
+    // Zusatzpositionen bzgl. Steuer prüfen
+    if (is_array($extras)) {
+      foreach ($extras as $e) {
+        $descEx = trim($e['description'] ?? '');
+        if ($descEx === '') continue;
+        $schemeEx = $e['tax_scheme'] ?? $eff_scheme_default;
+        $vatEx    = ($schemeEx === 'standard')
+          ? (float)dec($e['vat_rate'] ?? $eff_vat_default)
+          : 0.0;
+        if ($schemeEx !== 'standard' || $vatEx <= 0.0) {
+          $hasNonStandard = true;
+          break;
+        }
+      }
+    }
+
+    // Pflichtprüfung: Begründung erforderlich
+    if ($hasNonStandard && $tax_reason === '') {
+      $err = 'Bitte Begründung für die Steuerbefreiung angeben.';
+    }
+  }
+
+  if (!$err) {
+    $pdo->beginTransaction();
     try {
-      // Eff. Defaults aus Firma/Account
-      $coStmt = $pdo->prepare('SELECT * FROM companies WHERE id = ? AND account_id = ?');
-      $coStmt->execute([$company_id, $account_id]);
-      $company = $coStmt->fetch();
-
-      $eff_vat_default    = (isset($company['default_vat_rate']) && $company['default_vat_rate'] !== null)
-        ? (float)$company['default_vat_rate'] : (float)$settings['default_vat_rate'];
-      $eff_scheme_default = $company['default_tax_scheme'] ?? ($settings['default_tax_scheme'] ?? 'standard');
-
-      // --- PROPERTIES VORAB SAMMELN (damit wir hasNonStandard vor dem Rechnung-Insert kennen) ---
-      $propsByTask    = []; // task_id => [description, rate, vat, scheme]
-      $hasNonStandard = false;
-
-      foreach ($itemsForm as $row) {
-        $tid = (int)($row['task_id'] ?? 0);
-        if (!$tid) continue;
-
-        $desc = trim((string)($row['description'] ?? ''));
-        $rate = ($row['hourly_rate'] !== '' && $row['hourly_rate'] !== null)
-                  ? (float)str_replace(',', '.', (string)$row['hourly_rate']) : 0.0;
-
-        $scheme = $row['tax_scheme'] ?? $eff_scheme_default;
-
-        $vat_input = $row['vat_rate'] ?? ($row['tax_rate'] ?? '');
-        if ($vat_input !== '' && $vat_input !== null) {
-          $vat = (float)str_replace(',', '.', (string)$vat_input);
-        } else {
-          $vat = ($scheme === 'standard') ? $eff_vat_default : 0.0;
-        }
-        $vat = max(0.0, min(100.0, (float)$vat));
-        if ($scheme !== 'standard') $hasNonStandard = true;
-
-        $propsByTask[$tid] = [
-          'description' => $desc,
-          'rate'        => (float)$rate,
-          'vat'         => (float)$vat,
-          'scheme'      => $scheme,
-        ];
-      }
-
-      // Manuelle Positionen in hasNonStandard berücksichtigen (0% => nicht standard)
-      if (is_array($manual)) {
-        foreach ($manual as $m) {
-          if (trim($m['description'] ?? '') === '') continue;
-          $vatm = isset($m['vat_rate']) ? (float)str_replace(',', '.', (string)$m['vat_rate']) : $eff_vat_default;
-          if ($vatm <= 0.0) { $hasNonStandard = true; break; }
-        }
-      }
-
-      // Pflichtprüfung: Begründung erforderlich, sobald mind. eine Position nicht 'standard' ist
-      if ($hasNonStandard && $tax_reason === '') {
-        throw new RuntimeException('Bitte Begründung für die Steuerbefreiung angeben.');
-      }
-
-      // ---------------- TRANSAKTION ----------------
-      $pdo->beginTransaction();
-
       // 1) Rechnung anlegen (tax_exemption_reason jetzt korrekt bekannt)
       $insInv = $pdo->prepare("
         INSERT INTO invoices (
@@ -267,7 +278,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
         $picked  = array_values(array_filter(array_map('intval', (array)$picked), fn($v)=>$v>0));
         if (!$picked) continue;
 
-        $p      = $propsByTask[$task_id] ?? ['description'=>'','rate'=>0.0,'vat'=>$eff_vat_default,'scheme'=>$eff_scheme_default];
+        $p      = $propsByTask[$task_id] ?? ['description'=>'','rate'=>0.0,'vat'=>$DEFAULT_TAX,'scheme'=>$DEFAULT_SCHEME];
         $desc   = $p['description'];
         $rate   = (float)$p['rate'];
         $vat    = (float)$p['vat'];
@@ -277,12 +288,11 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
         $getTaskProject->execute([$account_id, $task_id]);
         $project_id = ($pid = $getTaskProject->fetchColumn()) ? (int)$pid : null;
 
-        // Mengen & Summen (Netto aus ungerundetem Stundenwert!)
-        $minutes   = sum_minutes_for_times($pdo, $account_id, $picked);
-        $qty_hours = $minutes / 60;
-        $qty       = round($qty_hours, 3);           // DECIMAL(10,3)
-        $net       = round($qty_hours * $rate, 2);   // NICHT aus $qty
-        $gross     = round($net * (1 + $vat/100), 2);
+        // Mengen & Summen
+        $minutes = sum_minutes_for_times($pdo, $account_id, $picked);
+        $qty     = round($minutes / 60, 3);             // DECIMAL(10,3)
+        $net     = round(($minutes / 60) * $rate, 2);   // nicht aus gerundetem qty
+        $gross   = round($net * (1 + $vat/100), 2);
 
         // Position
         $insItem->execute([
@@ -314,16 +324,15 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
           $desc   = $p['description'];
           $rate   = (float)$p['rate'];
           $vat    = (float)$p['vat'];
-          $scheme = $p['scheme'] ?? $eff_scheme_default;
+          $scheme = $p['scheme'] ?? $DEFAULT_SCHEME;
 
           $getTaskProject->execute([$account_id, (int)$task_id]);
           $project_id = ($pid = $getTaskProject->fetchColumn()) ? (int)$pid : null;
 
-          $minutes   = sum_minutes_for_times($pdo, $account_id, $picked);
-          $qty_hours = $minutes / 60;
-          $qty       = round($qty_hours, 3);
-          $net       = round($qty_hours * $rate, 2);
-          $gross     = round($net * (1 + $vat/100), 2);
+          $minutes = sum_minutes_for_times($pdo, $account_id, $picked);
+          $qty     = round($minutes / 60, 3);
+          $net     = round(($minutes / 60) * $rate, 2);
+          $gross   = round($net * (1 + $vat/100), 2);
 
           $insItem->execute([
             $account_id, $invoice_id, $project_id, (int)$task_id, $desc,
@@ -340,29 +349,39 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
         }
       }
 
-      // 2c) Manuelle Positionen (ohne Task/Projekt)
-      if (!empty($manual) && is_array($manual)) {
-        foreach ($manual as $m) {
-          $desc = trim($m['description'] ?? '');
+      // 2c) Zusatzpositionen (wie in edit.php)
+      if (!empty($extras) && is_array($extras)) {
+        foreach ($extras as $e) {
+          $desc = trim($e['description'] ?? '');
           if ($desc === '') continue;
 
-          $qty   = isset($m['quantity'])   ? (float)str_replace(',', '.', (string)$m['quantity'])   : 0.0;
-          $price = isset($m['unit_price']) ? (float)str_replace(',', '.', (string)$m['unit_price']) : 0.0;
-          $vat   = isset($m['vat_rate'])   ? (float)str_replace(',', '.', (string)$m['vat_rate'])   : $eff_vat_default;
-          $vat   = max(0.0, min(100.0, (float)$vat));
+          $mode = ($e['mode'] ?? 'qty') === 'time' ? 'time' : 'qty';
+          if ($mode === 'time') {
+            $qty_hours = parse_hours_to_decimal($e['hours'] ?? '0'); // "1.5" oder "01:30"
+            $price     = dec($e['hourly_rate'] ?? 0);
+          } else {
+            $qty_hours = dec($e['quantity'] ?? 0);
+            $price     = dec($e['unit_price'] ?? 0);
+          }
 
-          // Schema aus MwSt ableiten: >0 => standard, sonst steuerfrei
-          $scheme = ($vat > 0.0) ? 'standard' : 'tax_exempt';
+          $scheme = $e['tax_scheme'] ?? $DEFAULT_SCHEME;
+          $vat    = ($scheme === 'standard') ? dec($e['vat_rate'] ?? $DEFAULT_TAX) : 0.0;
+          $vat    = max(0.0, min(100.0, (float)$vat));
 
-          $net   = round($qty * $price, 2);
+          $qty   = round($qty_hours, 3);
+          $net   = round($qty_hours * $price, 2);
           $gross = round($net * (1 + $vat/100), 2);
+
+          // komplett leere Zeile ignorieren
+          if ($desc === '' && $qty <= 0 && $price <= 0) continue;
 
           $insItem->execute([
             $account_id, $invoice_id, null, null, $desc,
-            $qty, $price, $vat, $net, $gross, $pos++, $scheme,
+            $qty, $price, $vat, $net, $gross, $pos++, $scheme
           ]);
 
-          $sum_net += $net; $sum_gross += $gross;
+          $sum_net  += $net;
+          $sum_gross+= $gross;
         }
       }
 
@@ -372,16 +391,17 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
 
       $pdo->commit();
 
-      // zurück zur Firma (dort wird vermutlich eine Flash-Meldung angezeigt)
+      // zurück zur Firma
       redirect(url('/companies/show.php').'?id='.$company_id);
     } catch (Throwable $e) {
-      if ($pdo->inTransaction()) { $pdo->rollBack(); }
+      $pdo->rollBack();
       $err = 'Rechnung konnte nicht angelegt werden. ('.$e->getMessage().')';
     }
   }
 }
 
-// -------- View ----------
+// ---------- View ----------
+require __DIR__ . '/../../src/layout/header.php';
 ?>
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h3>Neue Rechnung</h3>
@@ -447,33 +467,93 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
     </div>
   </div>
 
+  <!-- Zusätzliche Positionen (ohne Times) -->
   <div class="card mb-4">
     <div class="card-body">
       <h5 class="card-title d-flex justify-content-between align-items-center">
-        <span>Manuelle Positionen</span>
-        <button class="btn btn-sm btn-outline-primary" type="button" id="addManual">+ Position</button>
+        <span>Zusätzliche Positionen hinzufügen</span>
+        <button class="btn btn-sm btn-outline-primary" type="button" id="addExtra">+ Position</button>
       </h5>
-      <div id="manualBox"></div>
-      <template id="manualTpl">
-        <div class="row g-2 align-items-end mb-2 manual-row">
-          <div class="col-md-6">
+
+      <div id="extraBox"></div>
+
+      <template id="extraTpl">
+        <div class="row g-2 align-items-start mb-2 extra-row">
+          <!-- 1) Beschreibung -->
+          <div class="col-12 col-md-4">
             <label class="form-label">Beschreibung</label>
             <input type="text" class="form-control" name="__NAME__[description]" placeholder="z. B. Lizenzkosten">
+            <input type="hidden" name="__NAME__[mode]" value="qty" class="extra-mode">
           </div>
-          <div class="col-md-2">
-            <label class="form-label">Menge</label>
-            <input type="number" step="0.01" class="form-control" name="__NAME__[quantity]" value="1">
+
+          <!-- 2) Art + Eingaben (Zeit/Stundensatz ODER Menge/Einzelpreis) -->
+          <div class="col-12 col-md-4">
+            <label class="form-label d-block">Art</label>
+            <div class="btn-group w-100" role="group" aria-label="Modus">
+              <button type="button" class="btn btn-outline-secondary btn-sm extra-switch" data-mode="time">Zeit</button>
+              <button type="button" class="btn btn-outline-secondary btn-sm extra-switch active" data-mode="qty">Menge</button>
+            </div>
+
+            <!-- Zeit/Stundensatz -->
+            <div class="row g-2 mt-1 extra-time d-none">
+              <div class="col-6">
+                <label class="form-label">Zeit (Std. oder hh:mm)</label>
+                <input type="text" class="form-control extra-hours" name="__NAME__[hours]" placeholder="z. B. 1.5 oder 01:30">
+              </div>
+              <div class="col-6">
+                <label class="form-label">Stundensatz (€)</label>
+                <input type="number" step="0.01" class="form-control extra-rate" name="__NAME__[hourly_rate]" value="0.00">
+              </div>
+            </div>
+
+            <!-- Menge/Einzelpreis -->
+            <div class="row g-2 mt-1 extra-qty">
+              <div class="col-6">
+                <label class="form-label">Menge</label>
+                <input type="number" step="0.001" class="form-control extra-quantity" name="__NAME__[quantity]" value="1.000">
+              </div>
+              <div class="col-6">
+                <label class="form-label">Einzelpreis (€)</label>
+                <input type="number" step="0.01" class="form-control extra-unit" name="__NAME__[unit_price]" value="0.00">
+              </div>
+            </div>
           </div>
-          <div class="col-md-2">
-            <label class="form-label">Einzelpreis (€)</label>
-            <input type="number" step="0.01" class="form-control" name="__NAME__[unit_price]" value="0.00">
+
+          <!-- 3) Steuerart + MwSt -->
+          <div class="col-12 col-md-2">
+            <div class="mb-2">
+              <label class="form-label">Steuerart</label>
+              <select class="form-select inv-tax-sel extra-scheme"
+                      name="__NAME__[tax_scheme]"
+                      data-rate-standard="<?= h(number_format((float)$settings['default_vat_rate'], 2, '.', '')) ?>">
+                <option value="standard" selected>standard (mit MwSt)</option>
+                <option value="tax_exempt">steuerfrei</option>
+                <option value="reverse_charge">Reverse-Charge</option>
+              </select>
+            </div>
+            <div>
+              <label class="form-label">MwSt %</label>
+              <input type="number" step="0.01" class="form-control extra-vat" name="__NAME__[vat_rate]"
+                    value="<?= h(number_format((float)$settings['default_vat_rate'], 2, '.', '')) ?>">
+            </div>
           </div>
-          <div class="col-md-1">
-            <label class="form-label">MwSt %</label>
-            <input type="number" step="0.01" class="form-control" name="__NAME__[vat_rate]" value="19.00">
-          </div>
-          <div class="col-md-1">
-            <button type="button" class="btn btn-outline-danger w-100 removeManual">–</button>
+
+          <!-- 4) Aside: Netto / Brutto / Aktion (rechts untereinander) -->
+          <div class="col-12 col-md-2">
+            <div class="d-grid gap-2">
+              <div>
+                <label class="form-label">Netto (€)</label>
+                <input type="text" class="form-control extra-net" value="0,00" readonly>
+              </div>
+              <div>
+                <label class="form-label">Brutto (€)</label>
+                <input type="text" class="form-control extra-gross" value="0,00" readonly>
+              </div>
+              <button type="button" class="btn btn-outline-danger removeExtra">
+                <i class="bi bi-trash"></i>
+                <span class="visually-hidden">Löschen</span>
+              </button>
+            </div>
           </div>
         </div>
       </template>
@@ -487,24 +567,113 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
 </form>
 
 <script>
-// Manuelle Positionen
+// Zusatzpositionen (Toggle + Live-Berechnung)
 (function(){
-  const box = document.getElementById('manualBox');
-  const tpl = document.getElementById('manualTpl');
-  const add = document.getElementById('addManual');
+  const box = document.getElementById('extraBox');
+  const tpl = document.getElementById('extraTpl');
+  const add = document.getElementById('addExtra');
   if (!box || !tpl || !add) return;
+
   let idx = 0;
-  function addRow(){
-    const html = tpl.innerHTML.replaceAll('__NAME__', 'manual['+(idx++)+']');
-    const frag = document.createElement('div'); frag.innerHTML = html;
-    const row = frag.firstElementChild; box.appendChild(row);
-    row.querySelector('.removeManual').addEventListener('click', ()=>row.remove());
+
+  function toFloat(x){
+    if (typeof x !== 'string') x = String(x ?? '');
+    x = x.replace(/\u00A0/g, '').replace(/\s+/g, '').replace(',', '.');
+    const n = parseFloat(x);
+    return isFinite(n) ? n : 0;
   }
+  function fmtMoney(n){ return (n||0).toFixed(2).replace('.', ','); }
+  function parseHours(v){
+    v = String(v||'').trim();
+    if (v.includes(':')) {
+      const [h, m='0'] = v.split(':', 2);
+      return (parseInt(h||'0',10)||0) + (parseInt(m||'0',10)||0)/60;
+    }
+    return toFloat(v);
+  }
+
+  function recalc(row){
+    const mode = row.querySelector('.extra-mode')?.value || 'qty';
+    const vat  = Math.max(0, Math.min(100, toFloat(row.querySelector('.extra-vat')?.value || '0')));
+    let net = 0;
+
+    if (mode === 'time') {
+      const hrs  = Math.max(0, parseHours(row.querySelector('.extra-hours')?.value || '0'));
+      const rate = Math.max(0, toFloat(row.querySelector('.extra-rate')?.value || '0'));
+      net = hrs * rate; // ungerundet
+    } else {
+      const qty = Math.max(0, toFloat(row.querySelector('.extra-quantity')?.value || '0'));
+      const up  = Math.max(0, toFloat(row.querySelector('.extra-unit')?.value || '0'));
+      net = qty * up;
+    }
+    net = Math.round(net * 100) / 100;
+    const gross = Math.round(net * (1 + vat/100) * 100) / 100;
+
+    row.querySelector('.extra-net').value   = fmtMoney(net);
+    row.querySelector('.extra-gross').value = fmtMoney(gross);
+  }
+
+  function setMode(row, mode){
+    row.querySelector('.extra-mode').value = mode;
+    row.querySelectorAll('.extra-switch').forEach(b=> b.classList.toggle('active', b.dataset.mode===mode));
+    row.querySelectorAll('.extra-time').forEach(el => el.classList.toggle('d-none', mode!=='time'));
+    row.querySelectorAll('.extra-qty') .forEach(el => el.classList.toggle('d-none', mode!=='qty'));
+    recalc(row);
+  }
+
+  function attach(row){
+    // Toggle
+    row.querySelectorAll('.extra-switch').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        setMode(row, btn.dataset.mode);
+        updateTaxReasonVisibility?.();
+      });
+    });
+
+    // Steuer-Select
+    const schemeSel = row.querySelector('.extra-scheme');
+    const vatInput  = row.querySelector('.extra-vat');
+    if (schemeSel && vatInput) {
+      schemeSel.addEventListener('change', ()=>{
+        if (schemeSel.value && schemeSel.value !== 'standard') {
+          vatInput.value = '0.00';
+        } else {
+          const def = schemeSel.dataset.rateStandard || '19.00';
+          if (!vatInput.value || toFloat(vatInput.value) === 0) vatInput.value = def;
+        }
+        recalc(row);
+        updateTaxReasonVisibility?.();
+      });
+    }
+
+    // Eingaben
+    row.querySelectorAll('input').forEach(inp=>{
+      inp.addEventListener('input', ()=> recalc(row));
+    });
+
+    // Entfernen
+    row.querySelector('.removeExtra')?.addEventListener('click', ()=>{
+      row.remove();
+      updateTaxReasonVisibility?.();
+    });
+
+    // Default: Menge/Einzelpreis
+    setMode(row, 'qty');
+  }
+
+  function addRow(){
+    const html = tpl.innerHTML.replaceAll('__NAME__', 'extras[' + (idx++) + ']')
+    const frag = document.createElement('div');
+    frag.innerHTML = html;
+    const row = frag.firstElementChild;
+    box.appendChild(row);
+    attach(row);
+  }
+
   add.addEventListener('click', addRow);
 })();
 
-// Begründungsfeld ein-/ausblenden & required togglen,
-// sobald irgendeine Position nicht "standard" ist.
+// Begründungsfeld dynamisch ein-/ausblenden + required setzen
 (function(){
   const wrap = document.getElementById('tax-exemption-reason-wrap');
   const area = document.getElementById('tax-exemption-reason');
@@ -520,42 +689,20 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
   function update(){
     const show = hasNonStandard();
     wrap.style.display = show ? '' : 'none';
-    if (area) {
-      area.required = show;
-      if (!show) area.value = '';
-    }
+    if (area) area.required = !!show;
+    if (!show && area) area.value = '';
   }
+
   document.addEventListener('change', (e)=>{
     const t = e.target;
     if (t && t.classList && t.classList.contains('inv-tax-sel')) update();
   });
-  // Initial
-  update();
-})();
 
-// Flash-Meldungen nach 5s automatisch ausblenden.
-// Greift auf .alert.alert-flash oder [data-flash] (empfohlen im Flash-Partial).
-(function(){
-  const AUTO_MS = 5000;
-  const candidates = document.querySelectorAll('.alert.alert-flash, .alert[data-flash]');
-  candidates.forEach(el=>{
-    setTimeout(()=>{
-      try {
-        if (window.bootstrap && window.bootstrap.Alert) {
-          const inst = bootstrap.Alert.getOrCreateInstance(el);
-          // Wenn fade/show-Klassen vorhanden sind, nutze Bootstrap-Close
-          inst.close();
-        } else {
-          // Fallback: sanft ausblenden
-          el.style.transition = 'opacity 300ms ease';
-          el.style.opacity = '0';
-          setTimeout(()=>{ el.remove(); }, 320);
-        }
-      } catch(e) {
-        el.remove();
-      }
-    }, AUTO_MS);
-  });
+  // auch beim Laden prüfen
+  update();
+
+  // Globale Helfer-Funktion, damit andere Blöcke aufrufen können
+  window.updateTaxReasonVisibility = update;
 })();
 </script>
 <?php endif; ?>
