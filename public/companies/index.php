@@ -137,9 +137,9 @@ foreach ($statuses as $st) { $persist['status[]'][] = $st; }
         <?php foreach ($rows as $r): ?>
           <tr>
             <td>
-              <a class=""
-                 href="<?= url('/companies/edit.php') ?>?id=<?= (int)$r['id'] ?>&return_to=/companies/index.php"
-                 title="Bearbeiten" aria-label="Bearbeiten">
+             <a class=""
+                 href="<?= url('/companies/show.php') ?>?id=<?= (int)$r['id'] ?>"
+                 title="Ansehen" aria-label="Ansehen">
                     <?= h($r['name']) ?>
               </a>
             </td>

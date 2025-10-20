@@ -5,25 +5,26 @@
  $user = auth_user();
 
  $return_to = $_SERVER['REQUEST_URI'] ?? url('/dashboard/index.php');
-
- $__rt_running = null;
- try {
-  $rt = $pdo->prepare("
-    SELECT t.id, t.task_id, t.started_at,
-           ta.description AS task_desc,
-           p.title        AS project_title
-    FROM times t
-    LEFT JOIN tasks ta ON ta.id = t.task_id AND ta.account_id = t.account_id
-    LEFT JOIN projects p ON p.id = ta.project_id AND p.account_id = ta.account_id
-    WHERE t.account_id = ? AND t.user_id = ? AND t.ended_at IS NULL
-    ORDER BY t.id DESC
-    LIMIT 1
-  ");
-  $rt->execute([(int)$user['account_id'], (int)$user['id']]);
-  $__rt_running = $rt->fetch();
- } catch (Throwable $e) {
-  // optional: still bleiben; Anzeige einfach weglassen
- }
+ if ($user) {
+  $__rt_running = null;
+  try {
+    $rt = $pdo->prepare("
+      SELECT t.id, t.task_id, t.started_at,
+            ta.description AS task_desc,
+            p.title        AS project_title
+      FROM times t
+      LEFT JOIN tasks ta ON ta.id = t.task_id AND ta.account_id = t.account_id
+      LEFT JOIN projects p ON p.id = ta.project_id AND p.account_id = ta.account_id
+      WHERE t.account_id = ? AND t.user_id = ? AND t.ended_at IS NULL
+      ORDER BY t.id DESC
+      LIMIT 1
+    ");
+    $rt->execute([(int)$user['account_id'], (int)$user['id']]);
+    $__rt_running = $rt->fetch();
+  } catch (Throwable $e) {
+    // optional: still bleiben; Anzeige einfach weglassen
+  }
+}
 ?>
 <!doctype html>
 <html lang="de">
