@@ -310,9 +310,18 @@ if (empty($groups) && !empty($items)) {
 </div>
 <script>
 (function(){
-  function toNumber(x){
-    var n = (typeof x==='string') ? x.replace(/\./g,'').replace(',', '.') : x;
-    n = parseFloat(n);
+  function toNumber(str){
+    if (typeof str !== 'string') str = String(str ?? '');
+    str = str.trim();
+    if (!str) return 0;
+    // Wenn sowohl , und . vorkommen: europäisch ('.' = Tausender, ',' = Dezimal)
+    if (str.indexOf(',') !== -1 && str.indexOf('.') !== -1) {
+      str = str.replace(/\./g, '').replace(',', '.');
+    } else if (str.indexOf(',') !== -1) {
+      // nur Komma -> als Dezimalpunkt interpretieren
+      str = str.replace(',', '.');
+    }
+    const n = parseFloat(str);
     return isFinite(n) ? n : 0;
   }
   function fmt2(n){ return n.toFixed(2).replace('.',','); }
