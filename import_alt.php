@@ -16,8 +16,8 @@
 // - Eindeutige Rechnungsnummern (Suffix falls nötig).
 // - NEU: Zeiten-Status nach Verlinkung per Rechnungsstatus gesetzt (gestellt/gemahnt/bezahlt -> abgerechnet, in_vorbereitung -> in_abrechnung).
 // - NEU: In ALT unfakturierbare Aufgaben ⇒ alle zugehörigen Zeiten beim Import als NICHT fakturierbar speichern.
+// - NEU: Tasks von abgeschlossenen Projekten werden auf 'abgeschlossen' gesetzt.
 //
-
 //////////// CONFIG ////////////
 $ALT_DSN  = 'mysql:host=127.0.0.1;dbname=zeiterfassung;charset=utf8mb4';
 $ALT_USER = 'vera';
@@ -29,7 +29,7 @@ $NEW_PASS = 'secret';
 
 $TARGET_ACCOUNT_ID       = 4;          // <- Ziel-Account
 $DEFAULT_USER_ID         = null;       // <- optional fest vorgeben; null = automatisch (erster User des Accounts)
-$DRY_RUN                 = false;       // true = nur zählen/prüfen, nichts schreiben
+$DRY_RUN                 = false;      // true = nur zählen/prüfen, nichts schreiben
 $IMPORT_DEFAULT_DUE_DAYS = 14;         // Fallback für due_date, wenn ALT.Zahlungsziel fehlt
 ////////////////////////////////
 
@@ -173,6 +173,9 @@ try {
     $recentActiveCompanies = []; // new company_id => true
     $lastYearCutoff = time() - 365*24*3600;
 
+    // Merkliste: welche NEUEN Projekte sind abgeschlossen?
+    $closedProjectsNew = []; // [new_project_id] => true
+
     // =================================================
     // COMPANIES
     // =================================================
@@ -231,6 +234,8 @@ try {
         if ($title === '') $title = 'Projekt '.$altId;
         $desc      = trim((string)($r['Beschreibung'] ?? ''));
         $rate      = (float)($r['Stundensatz'] ?? 0);
+
+        // ALT: 1 -> offen, 2 -> abgeschlossen
         $status = ($r["Status"] == 1 ? "offen" : ($r["Status"] == 2 ? "abgeschlossen" : ""));
 
         $row = [
@@ -248,6 +253,9 @@ try {
             $newId = $altId;
         }
         $mapProject[$altId] = $newId;
+        if ($status === 'abgeschlossen') {
+            $closedProjectsNew[$newId] = true; // für Task-Override
+        }
         $cntProjects++;
     }
     echo "Imported projects: {$cntProjects}".($skipProjectsMissingCompany ? " (skipped missing company FK: {$skipProjectsMissingCompany})" : "").PHP_EOL;
@@ -273,7 +281,13 @@ try {
         $prio    = map_priority($r['Priorität'] ?? null);
         $pos     = (int)($r['Reihenfolge'] ?? 0);
         $due     = ymd_from_unix($r['Deadline'] ?? null);
+
+        // Grundstatus laut ALT
         $status  = map_task_status($r['Status'] ?? null);
+        // NEU: Wenn das zugehörige Projekt abgeschlossen ist, Task-Status hart auf 'abgeschlossen' setzen
+        if (isset($closedProjectsNew[$projectId])) {
+            $status = 'abgeschlossen';
+        }
 
         $row = [
             'account_id'      => $TARGET_ACCOUNT_ID,
@@ -337,7 +351,7 @@ try {
         // Zeit-Flag aus ALT.Zeit, aber von ALT.Task übersteuern falls nicht fakturierbar
         $bill = (int)($r['fakturierbar'] ?? 0) ? 1 : 0;
         if ($taskBillableAlt === 0) {
-            $bill = 0; // ← Korrektur gemäß Wunsch
+            $bill = 0; // ← Korrektur
         }
 
         $status = 'offen';
@@ -366,7 +380,6 @@ try {
             if (isset($cache_task_to_company[$altTask])) {
                 $cidNew = $cache_task_to_company[$altTask];
             } else {
-                // wir haben $altProjId bereits aus $trow
                 if ($altProjId > 0) {
                     $getAltProj->execute([$altProjId]);
                     $altCompanyId = (int)$getAltProj->fetchColumn();
