@@ -83,3 +83,18 @@ function _fmt_qty($q){
   if (fmod($q, 1.0) == 0.0) return number_format($q, 0, '.', '');
   return rtrim(rtrim(number_format($q, 3, '.', ''), '0'), '.');
 }
+
+// Robuste Parser (fallen auf deine utils-Funktionen zurück)
+$NUM = function($v): float {
+  if ($v === null || $v === '') return 0.0;
+  if (is_numeric($v)) return (float)$v;     // "1.5" oder "2" etc.
+  return (float)dec($v);                    // z. B. "1,5"
+};
+$HOURS = function($v) use ($NUM): float {
+  $s = (string)($v ?? '');
+  if (strpos($s, ':') !== false) {
+    // "hh:mm" → utils
+    return (float)parse_hours_to_decimal($s);
+  }
+  return $NUM($s); // "1.5" oder "1,5"
+};
