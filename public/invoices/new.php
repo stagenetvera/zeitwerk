@@ -519,7 +519,7 @@ require __DIR__ . '/../../src/layout/header.php';
             <div class="row g-2 mt-1 extra-qty">
               <div class="col-6">
                 <label class="form-label">Menge</label>
-                <input type="number" step="0.001" class="form-control extra-quantity" name="__NAME__[quantity]" value="1.000">
+                <input type="number" step="0.25" class="form-control extra-quantity" name="__NAME__[quantity]" value="1.000">
               </div>
               <div class="col-6">
                 <label class="form-label">Einzelpreis (€)</label>

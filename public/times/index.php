@@ -286,8 +286,8 @@ function qs($base,$arr){return htmlspecialchars($base.'?'.http_build_query($arr)
         <tbody>
           <?php foreach ($rows as $r): ?>
             <tr>
-              <td class="text-nowrap"><?=h($r['started_at'])?></td>
-              <td class="text-nowrap"><?= $r['ended_at'] ? h($r['ended_at']) : '—' ?></td>
+              <td class="text-nowrap"><?=h(_fmt_dmy($r['started_at']))?></td>
+              <td class="text-nowrap"><?= $r['ended_at'] ? h(_fmt_dmy($r['ended_at'])) : '—' ?></td>
               <td><?= $r['minutes'] !== null ? fmt_minutes((int)$r['minutes']) : '—' ?></td>
               <td><?= h($r['company_name'] ?: '—') ?><?= $r['project_title'] ? ' / '.h($r['project_title']) : '' ?></td>
               <td><?= h($r['task_desc'] ?: '—') ?></td>

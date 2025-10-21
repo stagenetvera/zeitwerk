@@ -52,8 +52,8 @@ if (!isset($invoices) && isset($rows) && is_array($rows)) {
               </td>
             <?php endif; ?>
 
-            <td><?= h($inv['issue_date'] ?: '—') ?></td>
-            <td><?= h($inv['due_date'] ?: '—') ?></td>
+            <td><?= h(_fmt_dmy($inv['issue_date'] ?: '—')) ?></td>
+            <td><?= h(_fmt_dmy($inv['due_date'] ?: '—')) ?></td>
             <td><?= h($inv['status'] ?? '—') ?></td>
             <td class="text-end"><?= number_format((float)($inv['total_net'] ?? 0), 2, ',', '.') ?></td>
             <td class="text-end"><?= number_format((float)($inv['total_gross'] ?? 0), 2, ',', '.') ?></td>

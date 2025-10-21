@@ -68,3 +68,18 @@ function fmt_minutes($m){
   $m = (int)$m; $h = intdiv($m,60); $r = $m%60;
   return sprintf('%d:%02d',$h,$r);
 }
+// NEU: Datum in TT-MM-YYYY (Zeit behalten, Sekunden kappen)
+function _fmt_dmy($s){
+  if (!$s) return '';
+  $ts = strtotime((string)$s);
+  if (!$ts) return (string)$s;
+  $hasTime = preg_match('/\d{2}:\d{2}/', (string)$s);
+  return $hasTime ? date('d.m.Y H:i', $ts) : date('d.m.Y', $ts);
+}
+
+// NEU: Quantity ohne Nachkommastellen, wenn ganzzahlig; sonst bis 3, ohne trailing zeros
+function _fmt_qty($q){
+  $q = (float)$q;
+  if (fmod($q, 1.0) == 0.0) return number_format($q, 0, '.', '');
+  return rtrim(rtrim(number_format($q, 3, '.', ''), '0'), '.');
+}

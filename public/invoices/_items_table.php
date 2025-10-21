@@ -24,6 +24,8 @@ $NAME_TIMES = $timesName;
 function _fmt_hhmm($min){ $h=intdiv($min,60); $r=$min%60; return sprintf('%02d:%02d',$h,$r); }
 function _fmt_hours_from_dec($d){ $d=(float)$d; $h=(int)floor($d); $m=(int)round(($d-$h)*60); return sprintf('%02d:%02d',$h,$m); }
 
+
+
 $GRAND_NET = 0.0; $GRAND_GROSS = 0.0;
 ?>
 <style>
@@ -151,7 +153,7 @@ if (!empty($groups)) {
                     <td><input type="checkbox" class="form-check-input time-checkbox"
                                name="<?=$NAME_TIMES?>[<?= (int)$row['task_id'] ?>][]" value="<?=$tid?>"
                                data-min="<?=$m?>" checked></td>
-                    <td><?=h($t['started_at'])?> – <?=h($t['ended_at'])?></td>
+                    <td><?=h(_fmt_dmy($t['started_at']))?> – <?=h(_fmt_dmy($t['ended_at']))?></td>
                     <td class="text-end"><?=_fmt_hhmm($m)?></td>
                   </tr>
                 <?php endforeach; ?>
@@ -270,8 +272,8 @@ if (empty($groups) && !empty($items)) {
             </div>
             <input type="hidden" class="quantity-dec" name="items[<?=$idx?>][quantity]" value="<?= number_format($quantity,3,'.','') ?>">
           <?php else: /* qty */ ?>
-            <input type="number" step="0.001" class="form-control text-end quantity"
-                   name="items[<?=$idx?>][quantity]" value="<?= number_format($quantity,3,'.','') ?>" <?=$dis?>>
+            <input type="number" step="0.25" class="form-control text-end quantity"
+                   name="items[<?=$idx?>][quantity]" value="<?= _fmt_qty($quantity) ?>" <?=$dis?>>
           <?php endif; ?>
         </td>
 
@@ -317,7 +319,7 @@ if (empty($groups) && !empty($items)) {
                     <td><input class="form-check-input time-checkbox" type="checkbox"
                                name="items[<?=$idx?>][time_ids][]"
                                value="<?=$tid?>" <?=!empty($te['selected'])?'checked':''?> data-min="<?=$m?>" <?=$selDis?>></td>
-                    <td><?=h($te['started_at'] ?? '')?> <?= isset($te['ended_at']) ? '– '.h($te['ended_at']) : '' ?></td>
+                    <td><?=h(_fmt_dmy($te['started_at'] ?? ''))?> <?= isset($te['ended_at']) ? '– '.h(_fmt_dmy($te['ended_at'])) : '' ?></td>
                     <td class="text-end"><?=_fmt_hhmm($m)?></td>
                   </tr>
                 <?php endforeach; ?>
@@ -475,7 +477,7 @@ if (empty($groups) && !empty($items)) {
         var td = hrs.closest('td');
         hrs.closest('div').remove();
         if (qhid) qhid.remove();
-        var html = '<input type="number" step="0.001" class="form-control text-end quantity" value="1.000">';
+        var html = '<input type="number" step="0.25" class="form-control text-end quantity" value="1">';
         td.insertAdjacentHTML('afterbegin', html);
       }
     }
