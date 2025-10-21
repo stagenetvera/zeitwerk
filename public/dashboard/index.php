@@ -10,28 +10,62 @@ $user_id = (int)$user['id'];
 // ---------- helpers ----------
 function hurl($s){ return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
 
-
-
 // ---------- input ----------
 $company_id = isset($_GET['company_id']) && $_GET['company_id'] !== '' ? (int)$_GET['company_id'] : 0;
 $project_id = isset($_GET['project_id']) && $_GET['project_id'] !== '' ? (int)$_GET['project_id'] : 0;
 $prio       = isset($_GET['priority']) ? trim($_GET['priority']) : '';
 
-// ---------- filter options ----------
-// companies
-$cstmt = $pdo->prepare('SELECT id, name FROM companies WHERE account_id = ? ORDER BY name');
-$cstmt->execute([$account_id]);
+// ---------- filter options (nur mit tatsächlich vorhandenen Aufgaben) ----------
+
+// Firmen: aus Aufgaben ableiten (Status-/Priority-Filter wie unten), aber OHNE company-Filter.
+// Wenn ein Projekt gewählt ist, wird automatisch auf dessen Firma eingeschränkt.
+$c_where = [
+  'ta.account_id = :acc',
+  "(ta.status IS NULL OR ta.status NOT IN ('abgeschlossen','angeboten','in_abrechnung'))",
+];
+$c_params = [':acc' => $account_id];
+if ($prio !== '') { $c_where[] = 'ta.priority = :prio'; $c_params[':prio'] = $prio; }
+if ($project_id)  { $c_where[] = 'p.id = :pid';        $c_params[':pid']  = $project_id; }
+
+$c_sql = "
+  SELECT DISTINCT c.id, c.name
+  FROM tasks ta
+  JOIN projects p ON p.id = ta.project_id AND p.account_id = ta.account_id
+  JOIN companies c ON c.id = p.company_id AND c.account_id = p.account_id
+  WHERE " . implode(' AND ', $c_where) . "
+  ORDER BY c.name
+";
+$cstmt = $pdo->prepare($c_sql);
+foreach ($c_params as $k=>$v){ $cstmt->bindValue($k, $v, is_int($v)?PDO::PARAM_INT:PDO::PARAM_STR); }
+$cstmt->execute();
 $companies = $cstmt->fetchAll();
 
-// projects depend on company
+// Projekte: nur laden, wenn Firma gewählt – dann aber ebenfalls nur Projekte mit mindestens einer passenden Aufgabe.
 $projects = [];
 if ($company_id) {
-  $pstmt = $pdo->prepare('SELECT id, title FROM projects WHERE account_id = ? AND company_id = ? ORDER BY title');
-  $pstmt->execute([$account_id, $company_id]);
+  $p_where = [
+    'ta.account_id = :acc',
+    'c.id = :cid',
+    "(ta.status IS NULL OR ta.status NOT IN ('abgeschlossen','angeboten','in_abrechnung'))",
+  ];
+  $p_params = [':acc'=>$account_id, ':cid'=>$company_id];
+  if ($prio !== '') { $p_where[] = 'ta.priority = :prio'; $p_params[':prio'] = $prio; }
+
+  $p_sql = "
+    SELECT DISTINCT p.id, p.title
+    FROM tasks ta
+    JOIN projects p ON p.id = ta.project_id AND p.account_id = ta.account_id
+    JOIN companies c ON c.id = p.company_id AND c.account_id = p.account_id
+    WHERE " . implode(' AND ', $p_where) . "
+    ORDER BY p.title
+  ";
+  $pstmt = $pdo->prepare($p_sql);
+  foreach ($p_params as $k=>$v){ $pstmt->bindValue($k, $v, is_int($v)?PDO::PARAM_INT:PDO::PARAM_STR); }
+  $pstmt->execute();
   $projects = $pstmt->fetchAll();
 }
 
-// distinct priorities (we don't assume fixed set; read what's there)
+// Prioritäten: unverändert (falls gewünscht, kann man analog auch nach aktuellem Filter schneiden)
 $prstmt = $pdo->prepare('SELECT DISTINCT priority FROM tasks WHERE account_id = ? ORDER BY priority');
 $prstmt->execute([$account_id]);
 $priorities = array_values(array_filter(array_map(function($r){ return $r['priority']; }, $prstmt->fetchAll())));
@@ -39,17 +73,16 @@ $priorities = array_values(array_filter(array_map(function($r){ return $r['prior
 // ---------- query tasks ----------
 $where = ['ta.account_id = :acc'];
 $params = [':acc'=>$account_id];
-
 $where[] = "(ta.status IS NULL OR ta.status NOT IN ('abgeschlossen','angeboten','in_abrechnung'))";
 
-if ($company_id) { $where[] = 'c.id = :cid'; $params[':cid'] = $company_id; }
-if ($project_id) { $where[] = 'p.id = :pid'; $params[':pid'] = $project_id; }
-if ($prio !== '') { $where[] = 'ta.priority = :prio'; $params[':prio'] = $prio; }
+if ($company_id) { $where[] = 'c.id = :cid';  $params[':cid']  = $company_id; }
+if ($project_id) { $where[] = 'p.id = :pid';  $params[':pid']  = $project_id; }
+if ($prio !== ''){ $where[] = 'ta.priority = :prio'; $params[':prio'] = $prio; }
 
 $WHERE = implode(' AND ', $where);
 
 $sql = "SELECT
-    ta.id AS task_id,                            -- <— wichtig
+    ta.id AS task_id,
     ta.description,
     ta.priority,
     ta.deadline,
@@ -59,7 +92,7 @@ $sql = "SELECT
     p.title AS project_title,
     c.id    AS company_id,
     c.name  AS company_name,
-    COALESCE(tsum.sum_minutes, 0) AS spent_minutes  -- <— wichtig
+    COALESCE(tsum.sum_minutes, 0) AS spent_minutes
   FROM tasks ta
   JOIN projects p ON p.id = ta.project_id AND p.account_id = ta.account_id
   JOIN companies c ON c.id = p.company_id AND c.account_id = p.account_id
@@ -142,10 +175,9 @@ $keep = [
 <div class="card">
   <div class="card-body p-0">
     <?php
-      // Im Dashboard: mit Firmen-Spalte
       $show_company = true;
       $tasks = $rows;
-      // Laufenden Timer ermitteln (für Start/Stop-Icon im Partial)
+
       $runStmt = $pdo->prepare('
         SELECT id, task_id
         FROM times
@@ -162,83 +194,79 @@ $keep = [
       $table_body_id = 'dashTaskBody';
       $is_sortable = true;
       require __DIR__ . '/../tasks/_tasks_table.php';
-
     ?>
 
-      <script>
-        (function(){
-          var tbody = document.getElementById('dashTaskBody');
-          if (!tbody) return;
+    <script>
+      (function(){
+        var tbody = document.getElementById('dashTaskBody');
+        if (!tbody) return;
 
-          // Fallback: sicherstellen, dass alle Handles draggable sind
-          tbody.querySelectorAll('.drag-handle').forEach(function(h){
-            if (!h.hasAttribute('draggable')) h.setAttribute('draggable','true');
-          });
+        tbody.querySelectorAll('.drag-handle').forEach(function(h){
+          if (!h.hasAttribute('draggable')) h.setAttribute('draggable','true');
+        });
 
-          function getCsrf() {
-            var m = document.querySelector('meta[name="csrf-token"]');
-            if (m && m.content) return m.content;
-            var i = document.querySelector('input[name="csrf_token"]');
-            return i ? i.value : '';
+        function getCsrf() {
+          var m = document.querySelector('meta[name="csrf-token"]');
+          if (m && m.content) return m.content;
+          var i = document.querySelector('input[name="csrf_token"]');
+          return i ? i.value : '';
+        }
+
+        var dragEl = null;
+
+        tbody.addEventListener('dragstart', function(e){
+          var tr = e.target.closest('tr[data-task-id]');
+          if (!tr) return;
+          dragEl = tr;
+          tr.classList.add('dragging');
+          if (e.dataTransfer) {
+            e.dataTransfer.effectAllowed = 'move';
+            try { e.dataTransfer.setData('text/plain', tr.dataset.taskId); } catch(_) {}
           }
+        }, true);
 
-          var dragEl = null;
+        tbody.addEventListener('dragend', function(){
+          if (dragEl) dragEl.classList.remove('dragging');
+          dragEl = null;
+        });
 
-          // WICHTIG: Capture-Modus (3. Argument = true)
-          tbody.addEventListener('dragstart', function(e){
-            var tr = e.target.closest('tr[data-task-id]');
-            if (!tr) return;
-            dragEl = tr;
-            tr.classList.add('dragging');
-            if (e.dataTransfer) {
-              e.dataTransfer.effectAllowed = 'move';
-              try { e.dataTransfer.setData('text/plain', tr.dataset.taskId); } catch(_) {}
-            }
-          }, true);
+        tbody.addEventListener('dragover', function(e){
+          e.preventDefault();
+          if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+          var tr = e.target.closest('tr[data-task-id]');
+          if (!tr || tr === dragEl) return;
+          var rect = tr.getBoundingClientRect();
+          var after = (e.clientY - rect.top) > (rect.height / 2);
+          tbody.insertBefore(dragEl, after ? tr.nextSibling : tr);
+        });
 
-          tbody.addEventListener('dragend', function(){
-            if (dragEl) dragEl.classList.remove('dragging');
-            dragEl = null;
+        tbody.addEventListener('drop', function(e){
+          e.preventDefault();
+          saveOrder();
+        });
+
+        function saveOrder(){
+          var order = Array.from(tbody.querySelectorAll('tr[data-task-id]'))
+            .map(function(tr){ return tr.dataset.taskId; });
+
+          var fd = new FormData(document.getElementById('dndCsrf'));
+          order.forEach(function(id){ fd.append('order[]', id); });
+
+          fetch('<?=url('/tasks/order_save_global.php')?>', {
+            method: 'POST',
+            credentials: 'same-origin',
+            body: fd
+          })
+          .then(function(r){ return r.json(); })
+          .then(function(j){
+            if (!j || !j.ok) console.error('Order-Save fehlgeschlagen', j);
+          })
+          .catch(function(err){
+            console.error('Order-Save Fehler', err);
           });
-
-          tbody.addEventListener('dragover', function(e){
-            e.preventDefault();
-            if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-            var tr = e.target.closest('tr[data-task-id]');
-            if (!tr || tr === dragEl) return;
-            var rect = tr.getBoundingClientRect();
-            var after = (e.clientY - rect.top) > (rect.height / 2);
-            tbody.insertBefore(dragEl, after ? tr.nextSibling : tr);
-          });
-
-          tbody.addEventListener('drop', function(e){
-            e.preventDefault();
-            saveOrder();
-          });
-
-          function saveOrder(){
-            var order = Array.from(tbody.querySelectorAll('tr[data-task-id]'))
-              .map(function(tr){ return tr.dataset.taskId; });
-
-            var fd = new FormData(document.getElementById('dndCsrf'));
-            order.forEach(function(id){ fd.append('order[]', id); });
-
-            fetch('<?=url('/tasks/order_save_global.php')?>', {
-              method: 'POST',
-              credentials: 'same-origin',
-              body: fd
-            })
-            .then(function(r){ return r.json(); })
-            .then(function(j){
-              if (!j || !j.ok) console.error('Order-Save fehlgeschlagen', j);
-            })
-            .catch(function(err){
-              console.error('Order-Save Fehler', err);
-            });
-          }
-        })();
-        </script>
-    </div>
+        }
+      })();
+    </script>
   </div>
 </div>
 
