@@ -24,8 +24,6 @@ $NAME_TIMES = $timesName;
 function _fmt_hhmm($min){ $h=intdiv($min,60); $r=$min%60; return sprintf('%02d:%02d',$h,$r); }
 function _fmt_hours_from_dec($d){ $d=(float)$d; $h=(int)floor($d); $m=(int)round(($d-$h)*60); return sprintf('%02d:%02d',$h,$m); }
 
-
-
 $GRAND_NET = 0.0; $GRAND_GROSS = 0.0;
 ?>
 <style>
@@ -41,6 +39,10 @@ $GRAND_NET = 0.0; $GRAND_GROSS = 0.0;
   .chev{ width:16px; height:16px; transition:transform .2s ease; }
   .inv-item-row[aria-expanded="true"] .chev{ transform: rotate(90deg); }
   .mode-switch .btn { padding: .1rem .4rem; }
+
+  /* DnD highlight */
+  .dnd-drop-target { outline:2px dashed #6c757d; outline-offset:-2px; }
+  .dnd-dragging    { opacity:.6; }
 </style>
 
 <div id="invoice-hidden-trash"></div>
@@ -102,7 +104,12 @@ if (!empty($groups)) {
       $net     = ($sumMin/60.0) * $rateNum;
       $gross   = $net * (1 + $taxNum/100);
       ?>
-      <tr class="inv-item-row" data-row="<?=$idx?>" data-project="<?=$pid?>" data-mode="auto" aria-expanded="false">
+      <tr class="inv-item-row"
+          data-row="<?=$idx?>"
+          data-project="<?=$pid?>"
+          data-mode="auto"
+          data-task-id="<?= (int)$row['task_id'] ?>"
+          aria-expanded="false">
         <td class="text-center">
           <button type="button" class="inv-toggle-btn" aria-label="Details ein-/ausklappen">
             <svg class="chev" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -141,7 +148,7 @@ if (!empty($groups)) {
           <button type="button" class="btn btn-sm btn-outline-danger btn-remove-item">Entfernen</button>
         </td>
       </tr>
-      <tr class="inv-details" data-row="<?=$idx?>" data-project="<?=$pid?>">
+      <tr class="inv-details" data-row="<?=$idx?>" data-project="<?=$pid?>" data-task-id="<?= (int)$row['task_id'] ?>">
         <td></td>
         <td colspan="8">
           <div class="table-responsive">
@@ -149,11 +156,11 @@ if (!empty($groups)) {
               <thead><tr><th style="width:42px"></th><th>Zeitraum</th><th class="text-end">HH:MM</th></tr></thead>
               <tbody>
                 <?php foreach ($row['times'] as $t): $tid=(int)$t['id']; $m=(int)$t['minutes']; ?>
-                  <tr>
+                  <tr class="time-row" draggable="true" data-time-id="<?=$tid?>">
                     <td><input type="checkbox" class="form-check-input time-checkbox"
                                name="<?=$NAME_TIMES?>[<?= (int)$row['task_id'] ?>][]" value="<?=$tid?>"
                                data-min="<?=$m?>" checked></td>
-                    <td><?=h(_fmt_dmy($t['started_at']))?> – <?=h(_fmt_dmy($t['ended_at']))?></td>
+                    <td><?=h($t['started_at'])?> – <?=h($t['ended_at'])?></td>
                     <td class="text-end"><?=_fmt_hhmm($m)?></td>
                   </tr>
                 <?php endforeach; ?>
@@ -272,8 +279,8 @@ if (empty($groups) && !empty($items)) {
             </div>
             <input type="hidden" class="quantity-dec" name="items[<?=$idx?>][quantity]" value="<?= number_format($quantity,3,'.','') ?>">
           <?php else: /* qty */ ?>
-            <input type="number" step="0.25" class="form-control text-end quantity"
-                   name="items[<?=$idx?>][quantity]" value="<?= _fmt_qty($quantity) ?>" <?=$dis?>>
+            <input type="number" step="0.001" class="form-control text-end quantity"
+                   name="items[<?=$idx?>][quantity]" value="<?= number_format($quantity,3,'.','') ?>" <?=$dis?>>
           <?php endif; ?>
         </td>
 
@@ -315,11 +322,11 @@ if (empty($groups) && !empty($items)) {
               <thead><tr><th style="width:42px"></th><th>Zeitraum</th><th class="text-end">HH:MM</th></tr></thead>
               <tbody>
                 <?php foreach ($times as $te): $tid=(int)$te['id']; $m=(int)$te['minutes']; ?>
-                  <tr>
+                  <tr class="time-row" draggable="true" data-time-id="<?=$tid?>">
                     <td><input class="form-check-input time-checkbox" type="checkbox"
                                name="items[<?=$idx?>][time_ids][]"
                                value="<?=$tid?>" <?=!empty($te['selected'])?'checked':''?> data-min="<?=$m?>" <?=$selDis?>></td>
-                    <td><?=h(_fmt_dmy($te['started_at'] ?? ''))?> <?= isset($te['ended_at']) ? '– '.h(_fmt_dmy($te['ended_at'])) : '' ?></td>
+                    <td><?=h($te['started_at'] ?? '')?> <?= isset($te['ended_at']) ? '– '.h($te['ended_at']) : '' ?></td>
                     <td class="text-end"><?=_fmt_hhmm($m)?></td>
                   </tr>
                 <?php endforeach; ?>
@@ -477,7 +484,7 @@ if (empty($groups) && !empty($items)) {
         var td = hrs.closest('td');
         hrs.closest('div').remove();
         if (qhid) qhid.remove();
-        var html = '<input type="number" step="0.25" class="form-control text-end quantity" value="1">';
+        var html = '<input type="number" step="0.001" class="form-control text-end quantity" value="1.000">';
         td.insertAdjacentHTML('afterbegin', html);
       }
     }
@@ -491,6 +498,233 @@ if (empty($groups) && !empty($items)) {
   }
 
   var root = document.getElementById('invoice-items'); if (!root) return;
+
+  // --- Drag & Drop von Zeiten / Task-Positionen ---
+  (function initDnD(){
+    // DnD nur erlauben, wenn die Zeiten-Checkboxen nicht disabled sind (Rechnung „in_vorbereitung“ bzw. NEW)
+    var hasDisabled = root.querySelector('.time-checkbox[disabled]');
+    var canDnD = !hasDisabled;
+
+    if (!canDnD) return;
+
+    var dragData = null; // {kind:'time'|'task', fromRowId, timeId?}
+
+    function isEditMode(){
+      return !!root.querySelector('input[name^="items["][name$="[time_ids][]"]');
+    }
+    function findDetailsTbodyByRowId(rowId){
+      var det = root.querySelector('.inv-details[data-row="'+rowId+'"]');
+      return det ? det.querySelector('tbody') : null;
+    }
+    function renameTimeCheckboxForTarget(cb, targetRow){
+      var targetRowId = targetRow.getAttribute('data-row') || '';
+      if (isEditMode()) {
+        cb.name = 'items[' + targetRowId + '][time_ids][]';
+      } else {
+        var taskId = targetRow.getAttribute('data-task-id') || '';
+        if (!taskId) {
+          var hid = targetRow.querySelector('input[name^="items["][name$="[task_id]"]');
+          taskId = hid ? hid.value : '';
+        }
+        cb.name = 'time_ids[' + String(taskId||'') + '][]';
+      }
+      cb.checked = true;
+    }
+    function removeSourceItemIfEmpty(sourceRow){
+      if (!sourceRow || (sourceRow.getAttribute('data-mode') !== 'auto')) return;
+      var rowId = sourceRow.getAttribute('data-row');
+      var srcTbody = findDetailsTbodyByRowId(rowId);
+      if (!srcTbody) return;
+      var anyLeft = srcTbody.querySelector('.time-checkbox:checked');
+      if (anyLeft) return;
+
+      var srcItemIdInput = sourceRow.querySelector('input[name^="items["][name$="[id]"]');
+      var isEdit = isEditMode();
+
+      var det = root.querySelector('.inv-details[data-row="'+rowId+'"]');
+      if (det) det.remove();
+
+      if (isEdit && srcItemIdInput && srcItemIdInput.value) {
+        var trash = document.getElementById('invoice-hidden-trash');
+        if (trash) {
+          var hidden = document.createElement('input');
+          hidden.type='hidden';
+          hidden.name='items_deleted[]';
+          hidden.value=srcItemIdInput.value;
+          trash.appendChild(hidden);
+        }
+      }
+      var pid = sourceRow.getAttribute('data-project');
+      sourceRow.remove();
+      if (pid) {
+        var still = document.querySelectorAll('.inv-item-row[data-project="'+pid+'"]').length;
+        if (still === 0) {
+          var head = document.querySelector('.inv-group-head[data-project="'+pid+'"]');
+          if (head) head.remove();
+        }
+      }
+    }
+    function markDropTargets(on){
+      root.querySelectorAll('.inv-details tbody').forEach(function(tb){
+        tb.classList.toggle('dnd-drop-target', !!on);
+      });
+      root.querySelectorAll('tr.inv-item-row[data-mode="auto"]').forEach(function(r){
+        r.classList.toggle('dnd-drop-target', !!on);
+      });
+    }
+
+    // Zeit-Zeilen: dragstart/dragend
+    root.querySelectorAll('.inv-details tbody tr.time-row[draggable="true"]').forEach(function(tr){
+      tr.addEventListener('dragstart', function(e){
+        var detailsTr = tr.closest('tr.inv-details');
+        var fromRowId = detailsTr ? detailsTr.getAttribute('data-row') : (tr.closest('tr.inv-item-row')?.getAttribute('data-row') || '');
+        var timeId = tr.getAttribute('data-time-id') || '';
+        dragData = { kind:'time', timeId:String(timeId), fromRowId:String(fromRowId) };
+        tr.classList.add('dnd-dragging');
+        markDropTargets(true);
+        try { e.dataTransfer.setData('text/plain','time:'+timeId); } catch(_) {}
+        if (e.dataTransfer) e.dataTransfer.effectAllowed='move';
+      });
+      tr.addEventListener('dragend', function(){
+        tr.classList.remove('dnd-dragging');
+        dragData = null; markDropTargets(false);
+      });
+    });
+
+    // Task-Positionen (nur auto): als Ganzes ziehen
+    root.querySelectorAll('tr.inv-item-row[data-mode="auto"]').forEach(function(row){
+      row.setAttribute('draggable','true');
+      row.addEventListener('dragstart', function(e){
+        var fromRowId = row.getAttribute('data-row') || '';
+        dragData = { kind:'task', fromRowId:String(fromRowId) };
+        row.classList.add('dnd-dragging');
+        markDropTargets(true);
+        try { e.dataTransfer.setData('text/plain','task:'+fromRowId); } catch(_) {}
+        if (e.dataTransfer) e.dataTransfer.effectAllowed='move';
+      });
+      row.addEventListener('dragend', function(){
+        row.classList.remove('dnd-dragging');
+        dragData = null; markDropTargets(false);
+      });
+    });
+
+    // Drop-Ziel 1: Detail-Tabellen (Zeiten & Tasks droppen)
+    root.querySelectorAll('.inv-details tbody').forEach(function(tb){
+      tb.addEventListener('dragover', function(e){
+        if (!dragData) return;
+        e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect='move';
+      });
+      tb.addEventListener('drop', function(e){
+        e.preventDefault();
+        if (!dragData) return;
+
+        var targetDetails = tb.closest('tr.inv-details');
+        if (!targetDetails) return;
+        var targetRow = root.querySelector('tr.inv-item-row[data-row="'+targetDetails.getAttribute('data-row')+'"]');
+        if (!targetRow) return;
+
+        // Ziel öffnen
+        targetRow.setAttribute('aria-expanded','true');
+        targetDetails.style.display='table-row';
+
+        if (dragData.kind === 'time') {
+          var fromRow = root.querySelector('tr.inv-item-row[data-row="'+dragData.fromRowId+'"]');
+          var timeTr = root.querySelector('.inv-details[data-row="'+dragData.fromRowId+'"] tbody tr.time-row[data-time-id="'+dragData.timeId+'"]');
+          if (!timeTr) return;
+
+          tb.appendChild(timeTr);
+          var cb = timeTr.querySelector('.time-checkbox');
+          if (cb) renameTimeCheckboxForTarget(cb, targetRow);
+
+          if (fromRow) recalcRow(fromRow);
+          recalcRow(targetRow);
+          removeSourceItemIfEmpty(fromRow);
+          recalcTotals(); toggleTaxReason();
+        } else {
+          var fromRow = root.querySelector('tr.inv-item-row[data-row="'+dragData.fromRowId+'"]');
+          var fromTbody = findDetailsTbodyByRowId(dragData.fromRowId);
+          if (!fromRow || !fromTbody) return;
+
+          Array.from(fromTbody.querySelectorAll('tr.time-row')).forEach(function(timeTr){
+            tb.appendChild(timeTr);
+            var cb = timeTr.querySelector('.time-checkbox');
+            if (cb) renameTimeCheckboxForTarget(cb, targetRow);
+          });
+
+          recalcRow(targetRow);
+          recalcRow(fromRow);
+          removeSourceItemIfEmpty(fromRow);
+          recalcTotals(); toggleTaxReason();
+        }
+      });
+    });
+
+    // Drop-Ziel 2: Direkt auf Kopfzeile (Time->Task **und** Task->Task)
+    root.querySelectorAll('tr.inv-item-row[data-mode="auto"]').forEach(function(row){
+      row.addEventListener('dragover', function(e){
+        if (!dragData) return;
+        // Erlaube Drop für beide Arten
+        if (dragData.kind === 'task' || dragData.kind === 'time') {
+          e.preventDefault();
+          if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+        }
+      });
+
+      row.addEventListener('drop', function(e){
+        e.preventDefault();
+        if (!dragData) return;
+
+        var targetRow   = row;
+        var targetRowId = targetRow.getAttribute('data-row') || '';
+        var targetTbody = findDetailsTbodyByRowId(targetRowId);
+        if (!targetTbody) return;
+
+        // Ziel-Klappe öffnen
+        var targetDetails = root.querySelector('.inv-details[data-row="'+targetRowId+'"]');
+        if (targetDetails) {
+          targetRow.setAttribute('aria-expanded','true');
+          targetDetails.style.display = 'table-row';
+        }
+
+        if (dragData.kind === 'time') {
+          // Einzelne Zeit direkt auf Aufgabenzeile gedroppt
+          var fromRow  = root.querySelector('tr.inv-item-row[data-row="'+dragData.fromRowId+'"]');
+          var timeTr   = root.querySelector('.inv-details[data-row="'+dragData.fromRowId+'"] tbody tr.time-row[data-time-id="'+dragData.timeId+'"]');
+          if (!timeTr) return;
+
+          targetTbody.appendChild(timeTr);
+
+          var cb = timeTr.querySelector('.time-checkbox');
+          if (cb) renameTimeCheckboxForTarget(cb, targetRow);
+
+          if (fromRow) recalcRow(fromRow);
+          recalcRow(targetRow);
+          removeSourceItemIfEmpty(fromRow);
+          recalcTotals(); toggleTaxReason();
+          return;
+        }
+
+        if (dragData.kind === 'task') {
+          // Ganze Task-Position auf andere Aufgabenzeile droppen
+          var fromRow   = root.querySelector('tr.inv-item-row[data-row="'+dragData.fromRowId+'"]');
+          var fromTbody = findDetailsTbodyByRowId(dragData.fromRowId);
+          if (!fromRow || !fromTbody || fromRow === targetRow) return;
+
+          Array.from(fromTbody.querySelectorAll('tr.time-row')).forEach(function(timeTr){
+            targetTbody.appendChild(timeTr);
+            var cb = timeTr.querySelector('.time-checkbox');
+            if (cb) renameTimeCheckboxForTarget(cb, targetRow);
+          });
+
+          recalcRow(targetRow);
+          recalcRow(fromRow);
+          removeSourceItemIfEmpty(fromRow);
+          recalcTotals(); toggleTaxReason();
+        }
+      });
+    });
+  })();
+  // --- Ende DnD ---
 
   root.addEventListener('click', function(e){
     var btn = e.target.closest && e.target.closest('.inv-toggle-btn');
