@@ -15,6 +15,7 @@ $company_id = isset($_GET['company_id']) && $_GET['company_id'] !== '' ? (int)$_
 $project_id = isset($_GET['project_id']) && $_GET['project_id'] !== '' ? (int)$_GET['project_id'] : 0;
 $prio       = isset($_GET['priority']) ? trim($_GET['priority']) : '';
 
+$has_filters = ($company_id !== 0) || ($project_id !== 0) || ($prio !== '');
 // ---------- filter options (nur mit tatsächlich vorhandenen Aufgaben) ----------
 
 // Firmen: aus Aufgaben ableiten (Status-/Priority-Filter wie unten), aber OHNE company-Filter.
@@ -192,12 +193,23 @@ $keep = [
       $running_task_id  = $running && $running['task_id'] ? (int)$running['task_id'] : 0;
       $running_time_id  = $running ? (int)$running['id'] : 0;
       $table_body_id = 'dashTaskBody';
-      $is_sortable = true;
+      $is_sortable = !$has_filters;
       require __DIR__ . '/../tasks/_tasks_table.php';
     ?>
 
     <script>
       (function(){
+        var sortable = <?= $is_sortable ? 'true' : 'false' ?>;
+        if (!sortable) {
+          // Handles explizit entschärfen (falls das Partial sie trotzdem zeigt)
+          var tb = document.getElementById('dashTaskBody');
+          if (tb) {
+            tb.querySelectorAll('.drag-handle').forEach(function(h){
+              h.removeAttribute('draggable');
+            });
+          }
+          return; // keine DnD-Events registrieren
+        }
         var tbody = document.getElementById('dashTaskBody');
         if (!tbody) return;
 

@@ -97,7 +97,7 @@ $is_sortable = $is_sortable ?? false;
         <tr data-task-id="<?= (int)$r['task_id'] ?>"
             <?= $is_sortable ? 'draggable="true" class="can-drag"' : '' ?>
             >
-          <?php if ($show_company): ?>
+          <?php if ($is_sortable): ?>
             <td title="Ziehen, um zu sortieren">↕</td>
 
           <?php endif; ?>
