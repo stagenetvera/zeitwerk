@@ -80,6 +80,19 @@ $is_sortable = $is_sortable ?? false;
 
           $tid = (int)$r['task_id'];
           $rt  = $return_to ?? ($_SERVER['REQUEST_URI'] ?? '');
+
+          $priority_class = '';
+          switch ($r['priority']) {
+            case "high" :
+              $priority_class="badge bg-danger";
+              break;
+            case "medium" :
+              $priority_class="badge bg-warning";
+              break;
+            case "low" :
+              $priority_class="badge bg-secondary";
+              break;
+          }
         ?>
         <tr data-task-id="<?= (int)$r['task_id'] ?>"
             <?= $is_sortable ? 'draggable="true" class="can-drag"' : '' ?>
@@ -93,7 +106,9 @@ $is_sortable = $is_sortable ?? false;
           <?php endif; ?>
           <td><?= h($r['project_title'] ?? '—') ?></td>
           <td><?= h($r['description'] ?? '') ?></td>
-          <td><?= h($r['priority'] ?? '—') ?></td>
+          <td><span class="<?=$priority_class?>">
+              <?= h($r['priority'] ?? '—') ?>
+          </span></td>
           <td><?= h($r['status'] ?? '—') ?></td>
           <td><?php if ($badge_deadline): ?>
             <span class="<?= $badge_deadline ?>"><?= !empty($r['deadline']) ? h($r['deadline']) : '—' ?></span>
