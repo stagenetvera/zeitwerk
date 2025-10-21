@@ -264,8 +264,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
       // 2) Statements für Positionen/Links/Times
       $insItem = $pdo->prepare("
         INSERT INTO invoice_items
-          (account_id, invoice_id, project_id, task_id, description, quantity, unit_price, vat_rate, total_net, total_gross, position, tax_scheme)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+          (account_id, invoice_id, project_id, task_id, description, quantity, unit_price, vat_rate, total_net, total_gross, position, tax_scheme, entry_mode)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
       ");
       $insLink = $pdo->prepare("INSERT INTO invoice_item_times (account_id, invoice_item_id, time_id) VALUES (?,?,?)");
       $setTimeStatus = $pdo->prepare("UPDATE times SET status='in_abrechnung' WHERE account_id=? AND id=?");
@@ -298,7 +298,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
         // Position
         $insItem->execute([
           $account_id, $invoice_id, $project_id, $task_id, $desc,
-          $qty, $rate, $vat, $net, $gross, $pos++, $scheme,
+          $qty, $rate, $vat, $net, $gross, $pos++, $scheme, "auto"
         ]);
         $item_id = (int)$pdo->lastInsertId();
 
@@ -344,7 +344,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
 
           $insItem->execute([
             $account_id, $invoice_id, $project_id, (int)$task_id, $desc,
-            $qty, $rate, $vat, $net, $gross, $pos++, $scheme,
+            $qty, $rate, $vat, $net, $gross, $pos++, $scheme,"auto"
           ]);
           $item_id = (int)$pdo->lastInsertId();
 
@@ -363,14 +363,15 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
           $desc = trim($e['description'] ?? '');
           if ($desc === '') continue;
 
-          $mode = ($e['mode'] ?? 'qty') === 'time' ? 'time' : 'qty';
-          if ($mode === 'time') {
+          $entry_mode = ($e['mode'] ?? 'qty') === 'time' ? 'time' : 'qty';
+          if ($entry_mode === 'time') {
             $qty_hours = parse_hours_to_decimal($e['hours'] ?? '0'); // "1.5" oder "01:30"
             $price     = dec($e['hourly_rate'] ?? 0);
           } else {
             $qty_hours = dec($e['quantity'] ?? 0);
             $price     = dec($e['unit_price'] ?? 0);
           }
+
 
           $scheme = $e['tax_scheme'] ?? $DEFAULT_SCHEME;
           $vat    = ($scheme === 'standard') ? dec($e['vat_rate'] ?? $DEFAULT_TAX) : 0.0;
@@ -385,7 +386,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
 
           $insItem->execute([
             $account_id, $invoice_id, null, null, $desc,
-            $qty, $price, $vat, $net, $gross, $pos++, $scheme
+            $qty, $price, $vat, $net, $gross, $pos++, $scheme, $entry_mode
           ]);
 
           $sum_net  += $net;

@@ -68,6 +68,7 @@ function load_invoice_items(PDO $pdo, int $account_id, int $invoice_id): array {
       ii.position,
       ii.total_net,
       ii.total_gross,
+      ii.entry_mode,
       p.title AS project_title
     FROM invoice_items ii
     LEFT JOIN projects p
@@ -251,7 +252,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
         // -------------------------------------------
         $updItem = $pdo->prepare("
           UPDATE invoice_items
-            SET description=?, unit_price=?, vat_rate=?, quantity=?, total_net=?, total_gross=?, tax_scheme=?
+            SET description=?, unit_price=?, vat_rate=?, quantity=?, total_net=?, total_gross=?, tax_scheme=?,entry_mode=?
           WHERE account_id=? AND invoice_id=? AND id=?
         ");
 
@@ -337,30 +338,57 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
           }
 
           // --- Kern: Berechnung unterscheiden ---
-          $minutes   = $sum_minutes($pdo, $account_id, $newTimes);
-          $hadTimes  = !empty($currTimes);     // hatte vorher Times?
-          $hasTimes  = !empty($newTimes);      // hat jetzt Times?
-          $isFixed   = (!$hadTimes && !$hasTimes); // Fixed-Item (nie Times)
+          // --- Kern: Modus & Berechnung ---
+          // Gewählte Times aus dem Formular
+          $newTimes = array_values(array_filter(array_map('intval', $row['time_ids'] ?? []), fn($v)=>$v>0));
 
-          if ($isFixed) {
-            // Menge aus DB beibehalten, Einheitspreis und VAT ggf. aktualisieren
-            $oldQty   = (float)($existingMap[$item_id]['quantity']   ?? 0.0);
-            $qty      = round($oldQty, 3);              // DECIMAL(10,3)
-            $unit     = (float)$rate;                   // Feld 'hourly_rate' ist hier der unit_price
-            $net      = round($qty * $unit, 2);
-            $gross    = round($net * (1 + $vat/100), 2);
-          } else {
-            // Time-Item: wie bisher minutenbasiert
-            $qty_hours = $minutes / 60.0;
-            $qty       = round($qty_hours, 3);         // DECIMAL(10,3)
-            $unit      = (float)$rate;                 // unit_price = Stundensatz
-            $net       = round($qty_hours * $unit, 2); // NICHT aus gerundetem qty!
-            $gross     = round($net * (1 + $vat / 100), 2);
+          // Aktuell verlinkte Times aus der DB (bleibt wie gehabt)
+          $getCurrTimes->execute([$account_id, $item_id]);
+          $currTimes = array_map(fn($r)=>(int)$r['time_id'], $getCurrTimes->fetchAll());
+
+          // Links add/remove & Status (dein bestehender Code bleibt)
+
+          // Modus: mit Times immer 'auto', sonst das, was das Formular schickt (qty|time)
+          $postedMode = strtolower(trim($row['entry_mode'] ?? 'qty'));
+          $entry_mode = !empty($newTimes) ? 'auto' : (in_array($postedMode, ['time','qty'], true) ? $postedMode : 'qty');
+
+          // Preise/Steuern
+          $unit = (float)dec($row['hourly_rate'] ?? 0); // unit_price
+          $vat  = (float)dec($row['vat_rate']     ?? ($row['tax_rate'] ?? 0));
+          if ($scheme && $scheme !== 'standard') { $vat = 0.0; }
+          $vat = max(0.0, min(100.0, $vat));
+
+          // Menge & Summen je nach Modus
+          if ($entry_mode === 'auto') {
+            // minutenbasiert
+            $minutes = 0;
+            if (!empty($newTimes)) {
+              $in = implode(',', array_fill(0, count($newTimes), '?'));
+              $st = $pdo->prepare("SELECT COALESCE(SUM(minutes),0) FROM times WHERE account_id=? AND id IN ($in)");
+              $st->execute(array_merge([$account_id], $newTimes));
+              $minutes = (int)$st->fetchColumn();
+            }
+            $qty   = round($minutes / 60.0, 3);                    // DEC(10,3)
+            $net   = round(($minutes / 60.0) * $unit, 2);          // aus Rohstunden
+            $gross = round($net * (1 + $vat/100), 2);
+          } elseif ($entry_mode === 'time') {
+            // Stundenmodus (Form liefert hidden quantity = Dezimalstunden; Fallback: "hh:mm")
+            $qty_hours = ($row['quantity'] ?? '') !== ''
+              ? (float)dec($row['quantity'])
+              : (float)parse_hours_to_decimal($row['hours'] ?? '0');
+            $qty   = round($qty_hours, 3);
+            $net   = round($qty_hours * $unit, 2);
+            $gross = round($net * (1 + $vat/100), 2);
+          } else { // qty
+            $qty_dec = (float)dec($row['quantity'] ?? 0);
+            $qty   = round($qty_dec, 3);
+            $net   = round($qty_dec * $unit, 2);
+            $gross = round($net * (1 + $vat/100), 2);
           }
 
-          // Update
+          // Update inkl. entry_mode
           $updItem->execute([
-            $desc, $unit, $vat, $qty, $net, $gross, ($scheme ?? 'standard'),
+            $desc, $unit, $vat, $qty, $net, $gross, ($scheme ?? 'standard'), $entry_mode,
             $account_id, (int)$invoice['id'], $item_id
           ]);
         }
@@ -378,16 +406,16 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
           $insExtra = $pdo->prepare("
             INSERT INTO invoice_items
               (account_id, invoice_id, project_id, task_id, description,
-               quantity, unit_price, vat_rate, total_net, total_gross, position, tax_scheme)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+               quantity, unit_price, vat_rate, total_net, total_gross, position, tax_scheme, entry_mode)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
           ");
 
           foreach ($extrasPosted as $row) {
             $desc = trim($row['description'] ?? '');
-            $mode = ($row['mode'] ?? 'qty');
+            $entry_mode = ($row['mode'] ?? 'qty');
 
             // Mengen/Preise robust parsen
-            if ($mode === 'time') {
+            if ($entry_mode === 'time') {
               $qty_hours = $HOURS($row['hours'] ?? '0');       // "1.5" oder "01:30"
               $price     = $NUM($row['hourly_rate'] ?? 0);
             } else {
@@ -416,7 +444,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
 
             $insExtra->execute([
               $account_id, (int)$invoice['id'], null, null, $desc,
-              (float)$qty, (float)$price, (float)$vat, (float)$net, (float)$gross, (int)$pos++, $scheme
+              (float)$qty, (float)$price, (float)$vat, (float)$net, (float)$gross, (int)$pos++, $scheme, $entry_mode
             ]);
           }
         }
@@ -507,7 +535,7 @@ foreach ($rawItems as $r) {
     'vat_rate'      => (float)($r['vat_rate'] ?? 0),
     'tax_scheme'    => $r['tax_scheme'] ?? null,
     'quantity'      => (float)($r['quantity'] ?? 0),
-
+    'entry_mode'    => $r['entry_mode'] ?? null,
     // ⬇️ NEU: die gespeicherten Summen wirklich an das Partial übergeben
     'total_net'     => isset($r['total_net'])   ? (float)$r['total_net']   : null,
     'total_gross'   => isset($r['total_gross']) ? (float)$r['total_gross'] : null,
