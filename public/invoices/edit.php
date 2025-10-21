@@ -555,6 +555,9 @@ $groups = []; // EDIT-Modus
 
 // ---------- View ----------
 require __DIR__ . '/../../src/layout/header.php';
+// return_to
+$return_to = pick_return_to('/companies/show.php?id='.$company_id);
+
 ?>
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h3>Rechnung bearbeiten</h3>
