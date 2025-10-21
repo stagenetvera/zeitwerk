@@ -317,7 +317,7 @@ if (empty($groups) && !empty($items)) {
           <td class="text-end"><span class="gross"><?= number_format($grossVal, 2, ',', '.') ?></span></td>
 
           <td class="text-end">
-            <button type="button" class="btn btn-sm btn-outline-danger btn-remove-item">Entfernen</button>
+            <button <?php if (!$canEditItems) echo " disabled ";?> type="button" class="btn btn-sm btn-outline-danger btn-remove-item">Entfernen</button>
           </td>
         </tr>
       <tr class="inv-details" data-row="<?=$idx?>" data-project="<?=$pid?>">

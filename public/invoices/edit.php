@@ -4,6 +4,8 @@ require __DIR__ . '/../../src/bootstrap.php';
 require_once __DIR__ . '/../../src/lib/invoice_number.php';
 require_once __DIR__ . '/../../src/lib/settings.php';
 require_once __DIR__ . '/../../src/utils.php';
+require_once __DIR__ . '/../../src/lib/flash.php';
+
 require_login();
 csrf_check();
 
@@ -166,6 +168,9 @@ $HOURS = function($v) use ($NUM): float {
 // ---------- POST: Speichern / Löschen ----------
 $err = null; $ok = null;
 
+// Items dürfen nur verändert werden, solange die Rechnung in Vorbereitung ist
+$canEditItems = (($invoice['status'] ?? '') === 'in_vorbereitung');
+
 if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['action']==='save') {
 
   // Status aus Formular (whitelist)
@@ -190,8 +195,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
       $number = assign_invoice_number_if_needed($pdo, $account_id, (int)$invoice['id'], $issue_date);
   }
 
-  // Items dürfen nur verändert werden, solange die Rechnung in Vorbereitung ist
-  $canEditItems = (($invoice['status'] ?? '') === 'in_vorbereitung');
+  // // Items dürfen nur verändert werden, solange die Rechnung in Vorbereitung ist
+  // $canEditItems = (($invoice['status'] ?? '') === 'in_vorbereitung');
 
   $itemsPosted   = $_POST['items'] ?? [];          // existierende Items (Partial)
   $deletedPosted = $_POST['items_deleted'] ?? [];  // array von invoice_item.id
@@ -417,6 +422,9 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
         }
       }
       else {
+        if (!empty($extrasPosted) && is_array($extrasPosted)) {
+            flash("Die Rechnung hat bereits den Status \"gestellt\". Es kann daher keine Position hinzugefügt werden.", "danger");
+        }
         // Wenn Positionen nicht editierbar sind, aus der DB prüfen
         $cnt = $pdo->prepare("SELECT COUNT(*) FROM invoice_items WHERE account_id=? AND invoice_id=? AND (tax_scheme IS NOT NULL AND tax_scheme <> 'standard')");
         $cnt->execute([$account_id, (int)$invoice['id']]);
@@ -602,7 +610,7 @@ require __DIR__ . '/../../src/layout/header.php';
           <div class="card-body">
             <h5 class="card-title d-flex justify-content-between align-items-center">
               <span>Zusätzliche Positionen hinzufügen</span>
-              <button class="btn btn-sm btn-outline-primary" type="button" id="addExtra">+ Position</button>
+              <button <?php if (!$canEditItems) echo " disabled ";?> class="btn btn-sm btn-outline-primary" type="button" id="addExtra">+ Position</button>
             </h5>
 
             <div id="extraBox"></div>
