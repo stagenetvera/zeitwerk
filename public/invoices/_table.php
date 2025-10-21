@@ -53,7 +53,38 @@ if (!isset($invoices) && isset($rows) && is_array($rows)) {
             <?php endif; ?>
 
             <td><?= h(_fmt_dmy($inv['issue_date'] ?: '—')) ?></td>
-            <td><?= h(_fmt_dmy($inv['due_date'] ?: '—')) ?></td>
+            <?php
+            $badge_due_date = '';
+            if ($inv["status"] != "bezahlt") {
+              $dueDateStr = $inv['due_date'] ?? null;
+              if (!empty($dueDateStr)) {
+                  $dlTs = strtotime($dueDateStr);
+                  if ($dlTs !== false) {
+                      $today = strtotime('today');
+                      if ($dlTs < $today) {
+                          // Deadline bereits vorbei
+                          $badge_due_date = 'badge bg-warning text-dark';
+                          $diffDays = (int) floor(($today - $dlTs) / 86400);
+                          // wenn schon 5 Tage überfällig
+                          if ($diffDays > 5) {
+                            $badge_due_date = 'badge bg-danger';
+                          }
+
+
+                      }
+                  }
+                }
+              }
+            ?>
+            <td><?php if ($badge_due_date): ?>
+              <span class="<?= $badge_due_date ?>">
+                <?= h(_fmt_dmy($inv['due_date'] ?: '—')) ?>
+              </span>
+              <?php else : ?>
+                <?= h(_fmt_dmy($inv['due_date'] ?: '—')) ?>
+              <?php endif ?>
+
+            </td>
             <td><?= h($inv['status'] ?? '—') ?></td>
             <td class="text-end"><?= number_format((float)($inv['total_net'] ?? 0), 2, ',', '.') ?></td>
             <td class="text-end"><?= number_format((float)($inv['total_gross'] ?? 0), 2, ',', '.') ?></td>
