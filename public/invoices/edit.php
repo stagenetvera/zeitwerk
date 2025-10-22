@@ -450,9 +450,8 @@ $return_to = pick_return_to('/companies/show.php?id='.$company_id);
       <div class="card mb-3" id="tax-exemption-reason-wrap" style="<?= !empty($invoice['tax_exemption_reason']) ? '' : 'display:none' ?>">
         <div class="card-body">
           <div class="d-flex justify-content-between align-items-center mb-2">
-            <label class="form-label mb-0">Positionen / Zeiten</label>
             <?php $defVat = number_format((float)$settings['default_vat_rate'],2,'.',''); ?>
-            <button type="button" id="addManualItem" class="btn btn-sm btn-outline-primary" data-default-vat="<?= h($defVat) ?>">+ Position</button>
+
           </div>
           <label class="form-label">Begründung für die Steuerbefreiung</label>
           <textarea
@@ -477,6 +476,7 @@ $return_to = pick_return_to('/companies/show.php?id='.$company_id);
               $timesName = 'time_ids';
               require __DIR__ . '/_items_table.php';
             ?>
+            <button type="button" id="addManualItem" class="btn btn-sm btn-outline-primary" data-default-vat="<?= h($defVat) ?>">+ Position</button>
           </div>
         </div>
       </div>
