@@ -1,11 +1,21 @@
 <?php
 // public/companies/show.php
-require __DIR__ . '/../../src/layout/header.php';
+require __DIR__ . '/../../src/bootstrap.php';
+require_once __DIR__ . '/../../src/lib/flash.php';
+
+require_once __DIR__ . '/../../src/utils.php'; // dec(), parse_hours_to_decimal()
+require_once __DIR__ . '/../../src/lib/settings.php';
+
+require_once __DIR__ . '/../../src/lib/recurring.php'; // falls du die Helper brauchst
+
 require_login();
 
 $user       = auth_user();
 $account_id = (int)$user['account_id'];
 $user_id    = (int)$user['id'];
+
+$settings  = get_account_settings($pdo, $account_id);
+
 
 // -------- helpers --------
 function page_int($v, $d = 1) { $n = (int)$v; return $n > 0 ? $n : $d; }
@@ -37,6 +47,7 @@ function render_pagination_named_keep($baseUrl, $param, $current, $total, $keepP
   </ul></nav>
   <?php return ob_get_clean();
 }
+
 
 // -------- input --------
 $id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
@@ -203,7 +214,12 @@ if ($has_running) {
 }
 
 
+$company_id = $id;
+
+
 // -------- view --------
+require __DIR__ . '/../../src/layout/header.php';
+
 ?>
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h3>Firma: <?= h($company['name']) ?></h3>
@@ -609,6 +625,93 @@ foreach ($proj_status as $st)      { $inv_keep['proj_status[]'][] = $st; }
 foreach ($task_status ?? [] as $st){ $inv_keep['task_status[]'][] = $st; }
 foreach ($inv_status as $st)       { $inv_keep['inv_status[]'][] = $st; }
 ?>
+
+<?php
+// --- Übersicht: Wiederkehrende Positionen (nur Anzeige + Links "Neu"/"Bearbeiten") ---
+$riStmt = $pdo->prepare("
+  SELECT id, description_tpl, quantity, unit_price, tax_scheme, vat_rate,
+         interval_unit, interval_count, start_date, end_date, active
+  FROM recurring_items
+  WHERE account_id=? AND company_id=?
+  ORDER BY start_date, id
+");
+$riStmt->execute([$account_id, (int)$company['id']]);
+$recurrings = $riStmt->fetchAll();
+?>
+
+<div class="card mb-4">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center mb-2">
+      <h5 class="card-title mb-0">Wiederkehrende Positionen</h5>
+      <a class="btn btn-sm btn-primary" href="<?= url('/recurring/new.php') ?>?company_id=<?= (int)$company['id'] ?>">Neu</a>
+    </div>
+
+    <?php if (!$recurrings): ?>
+      <div class="text-muted">Noch keine wiederkehrenden Positionen.</div>
+    <?php else: ?>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead>
+            <tr>
+              <th>Bezeichnung (Template)</th>
+              <th class="text-end">Menge</th>
+              <th class="text-end">Einzelpreis</th>
+              <th class="text-end">Steuerart</th>
+              <th class="text-end">MwSt %</th>
+              <th class="text-end">Netto</th>
+              <th class="text-end">Brutto</th>
+              <th>Intervall</th>
+              <th>Laufzeit</th>
+              <th class="text-end">Aktionen</th>
+            </tr>
+          </thead>
+          <tbody>
+          <?php foreach ($recurrings as $ri):
+            $qty  = (float)$ri['quantity'];
+            $unit = (float)$ri['unit_price'];
+            $sch  = (string)$ri['tax_scheme'];
+            $vat  = ($sch==='standard') ? (float)$ri['vat_rate'] : 0.0;
+            $net  = round($qty*$unit, 2);
+            $gross= round($net*(1+$vat/100), 2);
+
+            $ic = (int)$ri['interval_count'];
+            $intLabel = match($ri['interval_unit']) {
+              'quarter' => 'alle '.$ic.' Quartale',
+              'week'    => 'alle '.$ic.' Wochen',
+              'day'     => 'alle '.$ic.' Tage',
+              'year'    => 'alle '.$ic.' Jahre',
+              default   => 'alle '.$ic.' Monate',
+            };
+          ?>
+            <tr>
+              <td>
+                <div class="fw-semibold"><?= h($ri['description_tpl']) ?></div>
+              </td>
+              <td class="text-end"><?= number_format($qty,3,',','.') ?></td>
+              <td class="text-end"><?= number_format($unit,2,',','.') ?></td>
+              <td class="text-end"><?= h($sch) ?></td>
+              <td class="text-end"><?= number_format($vat,2,',','.') ?></td>
+              <td class="text-end"><?= number_format($net,2,',','.') ?></td>
+              <td class="text-end"><?= number_format($gross,2,',','.') ?></td>
+              <td><?= h($intLabel) ?></td>
+              <td>
+                <?= h($ri['start_date']) ?>
+                <?php if (!empty($ri['end_date'])): ?> – <?= h($ri['end_date']) ?><?php else: ?> (unbegrenzt)<?php endif; ?>
+                <?php if (empty($ri['active'])): ?><div class="small text-muted">inaktiv</div><?php endif; ?>
+              </td>
+              <td class="text-end">
+                <a class="btn btn-sm btn-outline-secondary" href="<?= url('/recurring/edit.php') ?>?id=<?= (int)$ri['id'] ?>">
+                  Bearbeiten
+                </a>
+              </td>
+            </tr>
+          <?php endforeach; ?>
+          </tbody>
+        </table>
+      </div>
+    <?php endif; ?>
+  </div>
+</div>
 
 <div class="card mb-4">
   <div class="card-body">
