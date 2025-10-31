@@ -1,4 +1,6 @@
 <?php
+require_once __DIR__ . '/../../src/lib/recurring.php';
+
 /**
  * Flache Items-Tabelle (NEW & EDIT)
  * - NEW erwartet:  $groups   (tasks + times)  -> baut auto-Zeilen
@@ -68,6 +70,7 @@ $GRAND_NET = 0.0; $GRAND_GROSS = 0.0;
   }
 </style>
 
+
 <div id="invoice-hidden-trash"></div>
 <div id="invoice-order-tracker"></div>
 
@@ -105,6 +108,8 @@ if (!empty($groups)) {
       $net     = ($sumMin/60.0) * $rateNum;
       $gross   = $net * (1 + $taxNum/100);
       $GRAND_NET += $net; $GRAND_GROSS += $gross;
+
+
       ?>
       <tr class="inv-item-row"
           data-row="<?=$idx?>"
@@ -230,6 +235,9 @@ if (empty($groups) && !empty($items)) {
         </div>
       </td>
       <td>
+        <?php if (!empty($ri_key_by_desc[$it['description']])): ?>
+          <input type="hidden" name="items[<?= (int)$idx ?>][ri_key]" value="<?= h($ri_key_by_desc[$it['description']]) ?>">
+        <?php endif; ?>
         <input type="hidden" name="items[<?=$idx?>][id]" value="<?= (int)($it['id'] ?? 0) ?>">
         <input type="hidden" class="entry-mode" name="items[<?=$idx?>][entry_mode]" value="<?=$entryMode?>">
         <?php if (!empty($it['task_id'])): ?>

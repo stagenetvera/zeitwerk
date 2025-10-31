@@ -1,237 +1,324 @@
 <?php
-// src/lib/recurring.php
-
 /**
- * Platzhalter im Template ersetzen.
- * {from},{to} -> YYYY-MM-DD
- * {period}    -> DD.MM.YYYY–DD.MM.YYYY
- * {month}     -> zweistellige Monatszahl der Startgrenze
- * {year}      -> Jahr der Startgrenze
+ * src/lib/recurring.php
+ *
+ * Wiederkehrende Positionen auf Basis der Tabelle `recurring_items`.
+ * Verhindert Doppel-Abrechnungen ausschließlich über `recurring_item_ledger`.
+ * Storno-Unterstützung: Beim Storno werden Ledger-Links gelöst, so dass
+ * die Perioden wieder fällig werden.
+ *
+ * Öffentliche Helfer:
+ *  - ri_compute_due_runs(PDO $pdo, int $account_id, int $company_id, string $issue_date): array
+ *  - ri_preview_due_flags(PDO $pdo, int $account_id, int $company_id, string $issue_date): array{bool,bool}
+ *  - ri_attach_due_items(PDO $pdo, int $account_id, int $company_id, int $invoice_id, string $issue_date, int $start_pos, ?array $selected_keys = null): array{float,float,int}
+ *  - ri_unlink_runs_for_invoice(PDO $pdo, int $account_id, int $invoice_id): void
+ *  - ri_selected_has_nonstandard(...): bool   // NEU (siehe unten, 2 Varianten)
+ *
+ * Erwartetes Schema:
+ *  - recurring_items(...)
+ *  - recurring_item_ledger(id AI, account_id, company_id, recurring_item_id,
+ *      period_from, period_to, run_key, invoice_id, created_at,
+ *      UNIQUE (account_id, recurring_item_id, period_from, period_to))
  */
-function ri_render_description(string $tpl, string $from, string $to): string {
-  $dtFrom = DateTimeImmutable::createFromFormat('Y-m-d', $from) ?: new DateTimeImmutable($from);
-  $dtTo   = DateTimeImmutable::createFromFormat('Y-m-d', $to)   ?: new DateTimeImmutable($to);
 
-  $repl = [
-    '{from}'   => $dtFrom->format('Y-m-d'),
-    '{to}'     => $dtTo->format('Y-m-d'),
-    '{period}' => $dtFrom->format('d.m.Y') . '–' . $dtTo->format('d.m.Y'),
-    '{month}'  => $dtFrom->format('m'),
-    '{year}'   => $dtFrom->format('Y'),
-  ];
-  return strtr($tpl, $repl);
-}
+if (!function_exists('ri_compute_due_runs')) {
 
-/** Date helper: add interval (day/week/month/quarter/year) * count to a date */
-function ri_add_interval(DateTimeImmutable $start, string $unit, int $count): DateTimeImmutable {
-  $count = max(1, (int)$count);
-  switch ($unit) {
-    case 'day':     return $start->modify("+{$count} day");
-    case 'week':    return $start->modify("+{$count} week");
-    case 'quarter': return $start->modify('+' . (3*$count) . ' month');
-    case 'year':    return $start->modify("+{$count} year");
-    default:        return $start->modify("+{$count} month"); // month
+  // --- intern: Datums-Helfer ---
+  function _ri_dt(string $ymd): DateTimeImmutable { return new DateTimeImmutable($ymd ?: '1970-01-01'); }
+  function _ri_end_inclusive(DateTimeImmutable $nextStart): DateTimeImmutable { return $nextStart->modify('-1 day'); }
+  function _ri_add_interval(DateTimeImmutable $start, string $unit, int $count): DateTimeImmutable {
+    $count = max(1, (int)$count);
+    switch (strtolower($unit)) {
+      case 'day': return $start->modify("+{$count} day");
+      case 'week': return $start->modify("+{$count} week");
+      case 'quarter': return $start->modify('+' . (3*$count) . ' month');
+      case 'year': return $start->modify("+{$count} year");
+      case 'month': default: return $start->modify("+{$count} month");
+    }
   }
-}
+  function _ri_month_name_de(int $m): string {
+    static $n=[1=>'Januar','Februar','März','April','Mai','Juni','Juli','August','September','Oktober','November','Dezember'];
+    return $n[$m] ?? '';
+  }
 
-/**
- * Ermittle fällige Perioden für alle aktiven recurring_items einer Firma bis inkl. $asOf (issue_date).
- * Gibt eine Liste von „Runs“ (noch NICHT in recurring_item_runs gespeichert) zurück.
- *
- * Jedes Element:
- *  [
- *    'key' => "{$ri_id}|{$from}|{$to}",
- *    'ri_id','from','to','description','quantity','unit_price','tax_scheme','vat_rate',
- *    'total_net','total_gross'
- *  ]
- *
- * „Schon abgerechnete“ Perioden werden ausgeschlossen, indem die letzte (NICHT stornierte)
- * period_end aus recurring_item_runs bestimmt wird.
- */
-function ri_compute_due_runs(PDO $pdo, int $account_id, int $company_id, string $asOf): array {
-  $asOf = (new DateTimeImmutable($asOf))->format('Y-m-d');
+  // --- Beschreibung rendern ---
+  function ri_render_description(string $tpl, DateTimeImmutable $from, DateTimeImmutable $to): string {
+    $repl = [
+      '{from}'    => $from->format('d.m.Y'),
+      '{to}'      => $to->format('d.m.Y'),
+      '{period}'  => $from->format('d.m.Y').' – '.$to->format('d.m.Y'),
+      '{month}'   => _ri_month_name_de((int)$from->format('n')),
+      '{year}'    => $from->format('Y'),
+      '{YYYY-MM}' => $from->format('Y-m'),
+    ];
+    return strtr($tpl, $repl);
+  }
 
-  $stmt = $pdo->prepare("
-    SELECT *
-    FROM recurring_items
-    WHERE account_id = ? AND company_id = ? AND active = 1
-    ORDER BY start_date, id
-  ");
-  $stmt->execute([$account_id, $company_id]);
-  $items = $stmt->fetchAll();
-  if (!$items) return [];
+  // --- Perioden je Item bis issue_date ---
 
-  $getLastBilledEnd = $pdo->prepare("
-    SELECT MAX(r.period_end)
-    FROM recurring_item_runs r
-    LEFT JOIN invoices i
-      ON i.id = r.invoice_id AND i.account_id = r.account_id
-    WHERE r.account_id = ? AND r.recurring_item_id = ?
-      AND (r.invoice_id IS NULL OR i.status <> 'storniert')
-  ");
+  function _ri_periods_for_item(array $it, DateTimeImmutable $issue): array {
+    $unit  = strtolower((string)($it['interval_unit'] ?? 'month'));
+    $cnt   = max(1, (int)($it['interval_count'] ?? 1));
+    $start = _ri_dt((string)$it['start_date']);
+    $endLimit = !empty($it['end_date']) ? _ri_dt((string)$it['end_date']) : null;
 
-  $runs = [];
-
-  foreach ($items as $ri) {
-    $ri_id = (int)$ri['id'];
-    $unit  = $ri['interval_unit'];            // day|week|month|quarter|year
-    $cnt   = max(1, (int)$ri['interval_count']);
-    $start = new DateTimeImmutable($ri['start_date']);
-    $endLim= !empty($ri['end_date']) ? new DateTimeImmutable($ri['end_date']) : null;
-
-    // Ab wo geht's weiter? -> Tag nach der letzten nicht-stornierten Periode
-    $getLastBilledEnd->execute([$account_id, $ri_id]);
-    $last = $getLastBilledEnd->fetchColumn();
-    $cursor = $last ? (new DateTimeImmutable($last))->modify('+1 day') : $start;
-
-    // Wenn Start > asOf -> noch nichts fällig
-    $asOfDt = new DateTimeImmutable($asOf);
-    if ($cursor > $asOfDt) continue;
-
-    // Perioden erzeugen, bis period_end <= asOf
-    $qty  = (float)$ri['quantity'];
-    $unitPrice = (float)$ri['unit_price'];
-    $scheme  = $ri['tax_scheme'] ?? 'standard';
-    $vatRate = ($scheme === 'standard') ? (float)$ri['vat_rate'] : 0.0;
-
+    $periods = [];
+    $cur = $start->setTime(0,0,0);
     while (true) {
-      // Endgrenze = cursor + interval - 1 Tag
-      $nextStart = ri_add_interval($cursor, $unit, $cnt);
-      $periodEnd = $nextStart->modify('-1 day');
+      $next = _ri_add_interval($cur, $unit, $cnt)->setTime(0,0,0);
+      $to   = _ri_end_inclusive($next);
 
-      // End-of-life beachten
-      if ($endLim && $cursor > $endLim) break;
+      // Laufzeitlimit: wenn Start nach Endedatum liegt -> Schluss
+      if ($endLimit && $cur > $endLimit) break;
 
-      // Nur aufnehmen, wenn Enddatum <= asOf
-      if ($periodEnd > $asOfDt) break;
+      // VORTRÄGLICH: fällig, sobald der Periodenstart erreicht oder unterschritten ist
+      if ($cur <= $issue) {
+        $periods[] = [$cur, $to];
+        $cur = $next;
+        continue;
+      }
+      // Nächster Start liegt in der Zukunft -> abbrechen
+      break;
+    }
+    return $periods;
+  }
 
-      // Perioden-Key bauen
-      $fromStr = $cursor->format('Y-m-d');
-      $toStr   = $periodEnd->format('Y-m-d');
+  // --- Items laden ---
+  function _ri_load_items(PDO $pdo, int $account_id, int $company_id): array {
+    $st = $pdo->prepare("
+      SELECT id, account_id, company_id, description_tpl, quantity, unit_price,
+             tax_scheme, vat_rate, interval_unit, interval_count, start_date, end_date, active
+      FROM recurring_items
+      WHERE account_id=? AND company_id=? AND COALESCE(active,1)=1
+      ORDER BY start_date, id
+    ");
+    $st->execute([$account_id,$company_id]);
+    return $st->fetchAll() ?: [];
+  }
 
-      $desc = ri_render_description((string)$ri['description_tpl'], $fromStr, $toStr);
-      $net  = round($qty * $unitPrice, 2);
-      $gross= round($net * (1 + $vatRate/100), 2);
+  // --- Run-Key ---
+  function _ri_run_key(int $ri_id, DateTimeImmutable $from, DateTimeImmutable $to): string {
+    return 'ri:'.$ri_id.':'.$from->format('Y-m-d').':'.$to->format('Y-m-d');
+  }
 
-      $runs[] = [
-        'key'         => $ri_id . '|' . $fromStr . '|' . $toStr,
-        'ri_id'       => $ri_id,
-        'from'        => $fromStr,
-        'to'          => $toStr,
-        'description' => $desc,
-        'quantity'    => $qty,
-        'unit_price'  => $unitPrice,
-        'tax_scheme'  => $scheme,
-        'vat_rate'    => $vatRate,
-        'total_net'   => $net,
-        'total_gross' => $gross,
-      ];
+  // --- runs filtern, die fest an NICHT-stornierte Rechnungen gelinkt sind ---
+  function _ri_filter_out_ledger_linked(PDO $pdo, int $account_id, array $runs): array {
+    if (!$runs) return [];
+    $triples=[]; foreach($runs as $r){ $triples[]=[(int)$r['recurring_item_id'],$r['from'],$r['to']]; }
+    $keep=[];
+    foreach (array_chunk($triples,200) as $chunk) {
+      $place=[]; $params=[$account_id];
+      foreach ($chunk as $c){ $place[]='(?,?,?)'; array_push($params,$c[0],$c[1],$c[2]); }
+      $sql="
+        SELECT l.recurring_item_id, l.period_from, l.period_to, l.invoice_id, i.status
+        FROM recurring_item_ledger l
+        LEFT JOIN invoices i ON i.account_id=l.account_id AND i.id=l.invoice_id
+        WHERE l.account_id=? AND (l.recurring_item_id,l.period_from,l.period_to) IN (".implode(',',$place).")
+      ";
+      $st=$pdo->prepare($sql); $st->execute($params);
+      $blocked=[];
+      foreach($st->fetchAll() as $row){
+        $k=$row['recurring_item_id'].'|'.$row['period_from'].'|'.$row['period_to'];
+        $blocked[$k]=(!empty($row['invoice_id']) && ($row['status']??'')!=='storniert');
+      }
+      foreach($chunk as $c){
+        $k=$c[0].'|'.$c[1].'|'.$c[2];
+        if (empty($blocked[$k])) $keep[]=['recurring_item_id'=>$c[0],'from'=>$c[1],'to'=>$c[2]];
+      }
+    }
+    $index=[]; foreach($runs as $r){ $index[$r['recurring_item_id'].'|'.$r['from'].'|'.$r['to']]=$r; }
+    $out=[]; foreach($keep as $k){ $kk=$k['recurring_item_id'].'|'.$k['from'].'|'.$k['to']; if(isset($index[$kk])) $out[]=$index[$kk]; }
+    return $out;
+  }
 
-      $cursor = $nextStart;
-      // endLim kann die Startgrenze irgendwann „überschreiten“ – dann brich ab
-      if ($endLim && $cursor > $endLim) break;
+  // --- fällige Runs berechnen ---
+  function ri_compute_due_runs(PDO $pdo, int $account_id, int $company_id, string $issue_date): array {
+    $issue=_ri_dt($issue_date);
+    $items=_ri_load_items($pdo,$account_id,$company_id);
+    $runs=[];
+    foreach($items as $it){
+      $ri_id=(int)$it['id'];
+      $periods=_ri_periods_for_item($it,$issue);
+      if(!$periods) continue;
+      $qty=(float)$it['quantity'];
+      $price=(float)$it['unit_price'];
+      $scheme=(string)($it['tax_scheme']??'standard');
+      $vat=(float)($scheme==='standard' ? ($it['vat_rate']??0.0) : 0.0);
+      $tpl=(string)$it['description_tpl'];
+      foreach($periods as [$pf,$pt]){
+        $runs[]=[
+          'key'               => _ri_run_key($ri_id,$pf,$pt),
+          'recurring_item_id' => $ri_id,
+          'from'              => $pf->format('Y-m-d'),
+          'to'                => $pt->format('Y-m-d'),
+          'description_tpl'   => $tpl,
+          'description'       => ri_render_description($tpl,$pf,$pt),
+          'quantity'          => $qty,
+          'unit_price'        => $price,
+          'tax_scheme'        => $scheme,
+          'vat_rate'          => $vat,
+        ];
+      }
+    }
+    $runs=_ri_filter_out_ledger_linked($pdo,$account_id,$runs);
+    usort($runs,function($a,$b){ return ($a['from']===$b['from']) ? ($a['recurring_item_id']<=>$b['recurring_item_id']) : strcmp($a['from'],$b['from']); });
+    return $runs;
+  }
+
+  // --- Flags für UI ---
+  function ri_preview_due_flags(PDO $pdo, int $account_id, int $company_id, string $issue_date): array {
+    $runs = ri_compute_due_runs($pdo,$account_id,$company_id,$issue_date);
+    $hasAny = !empty($runs);
+    $hasNonStd=false;
+    foreach($runs as $r){
+      if (($r['tax_scheme']??'standard')!=='standard' || (float)($r['vat_rate']??0.0)<=0.0) { $hasNonStd=true; break; }
+    }
+    return [$hasAny,$hasNonStd];
+  }
+
+  // --- Ledger-Link setzen ---
+  function ri_mark_runs_linked(PDO $pdo, int $account_id, int $company_id, int $invoice_id, array $runs, array $selected_keys): void {
+    if (!$runs || !$selected_keys) return;
+    $sel = array_flip($selected_keys);
+    $ins = $pdo->prepare("
+      INSERT INTO recurring_item_ledger
+        (account_id, company_id, recurring_item_id, period_from, period_to, invoice_id)
+      VALUES (?,?,?,?,?,?)
+      ON DUPLICATE KEY UPDATE invoice_id=VALUES(invoice_id)
+    ");
+    foreach ($runs as $r) {
+      $key = (string)$r['key'];
+      if (!isset($sel[$key])) continue;
+      $ins->execute([
+        $account_id,
+        $company_id,
+        (int)$r['recurring_item_id'],
+        $r['from'],
+        $r['to'],
+        $invoice_id
+      ]);
     }
   }
 
-  // stabil sortieren (zuerst von-Datum, dann ri_id)
-  usort($runs, function($a, $b){
-    return [$a['from'],$a['ri_id']] <=> [$b['from'],$b['ri_id']];
-  });
-
-  return $runs;
-}
-
-/**
- * Prüft, ob in der Auswahl (Keys) Non-Standard enthalten ist.
- */
-function ri_selected_has_nonstandard(array $allRuns, array $keys): bool {
-  if (!$keys) return false;
-  $map = [];
-  foreach ($allRuns as $r) $map[$r['key']] = $r;
-  foreach ($keys as $k) {
-    if (isset($map[$k]) && ($map[$k]['tax_scheme'] ?? 'standard') !== 'standard') return true;
+  // --- Ledger-Links für Rechnung entfernen (Storno) ---
+  function ri_unlink_runs_for_invoice(PDO $pdo, int $account_id, int $invoice_id): void {
+    $pdo->prepare("DELETE FROM recurring_item_ledger WHERE account_id=? AND invoice_id=?")
+        ->execute([$account_id,$invoice_id]);
   }
-  return false;
+
+  // --- Runs anhängen + ledger markieren ---
+  function ri_attach_due_items(PDO $pdo, int $account_id, int $company_id, int $invoice_id, string $issue_date, int $start_pos, ?array $selected_keys=null): array {
+    $all = ri_compute_due_runs($pdo,$account_id,$company_id,$issue_date);
+
+    if ($selected_keys===null) {
+      $runs=$all; $picked=array_column($runs,'key');
+    } elseif (empty($selected_keys)) {
+      return [0.0,0.0,$start_pos];
+    } else {
+      $sel=array_flip($selected_keys);
+      $runs=array_values(array_filter($all,fn($r)=>isset($sel[$r['key']])));
+      $picked=$selected_keys;
+    }
+    if(!$runs) return [0.0,0.0,$start_pos];
+
+    $insItem=$pdo->prepare("
+      INSERT INTO invoice_items
+        (account_id, invoice_id, project_id, task_id, description,
+         quantity, unit_price, vat_rate, total_net, total_gross, position, tax_scheme, entry_mode)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ");
+
+    $pos=$start_pos; $sum_net=0.0; $sum_gross=0.0;
+    foreach($runs as $r){
+      $desc=(string)$r['description'];
+      $qty=round((float)$r['quantity'],3);
+      $price=(float)$r['unit_price'];
+      $scheme=(string)$r['tax_scheme'];
+      $vat=(float)($scheme==='standard' ? $r['vat_rate'] : 0.0);
+      $net=round($qty*$price,2);
+      $gross=round($net*(1+$vat/100),2);
+      $insItem->execute([$account_id,$invoice_id,null,null,$desc,$qty,$price,$vat,$net,$gross,$pos++,$scheme,'qty']);
+      $sum_net+=$net; $sum_gross+=$gross;
+    }
+
+    ri_mark_runs_linked($pdo,$account_id,$company_id,$invoice_id,$runs,$picked);
+    return [$sum_net,$sum_gross,$pos];
+  }
+
+  // -------------------------------
+  // NEU: Non-Standard-Prüf-Helfer
+  // -------------------------------
+
+  /**
+   * Variante A: Direkt übergebene Runs prüfen.
+   * @param array $runs Array der von ri_compute_due_runs() gelieferten Runs (oder Teilmenge)
+   */
+  function ri_runs_has_nonstandard(array $runs): bool {
+    foreach ($runs as $r) {
+      $scheme = $r['tax_scheme'] ?? 'standard';
+      $vat    = (float)($r['vat_rate'] ?? 0.0);
+      if ($scheme !== 'standard' || $vat <= 0.0) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Variante B: Ausgewählte Keys gegen die berechneten Runs prüfen.
+   * Signatur für bequemen Aufruf aus new.php:
+   *   ri_selected_has_nonstandard($pdo, $account_id, $company_id, $issue_date, $selected_keys)
+   *
+   * Alternativ akzeptiert die Funktion auch direkt ein Runs-Array:
+   *   ri_selected_has_nonstandard($runs)
+   */
+  function ri_selected_has_nonstandard(...$args): bool {
+    // Aufruf mit direkt übergebenen Runs
+    if (count($args) === 1 && is_array($args[0])) {
+      return ri_runs_has_nonstandard($args[0]);
+    }
+    // Aufruf mit (pdo, acc, comp, issue_date, selected_keys)
+    if (count($args) >= 5) {
+      /** @var PDO $pdo */
+      [$pdo, $account_id, $company_id, $issue_date, $selected_keys] = $args;
+      $all = ri_compute_due_runs($pdo, (int)$account_id, (int)$company_id, (string)$issue_date);
+      $sel = array_flip((array)$selected_keys);
+      $picked = array_values(array_filter($all, fn($r)=>isset($sel[$r['key']])));
+      return ri_runs_has_nonstandard($picked);
+    }
+    // Fallback: sicherheitshalber "false"
+    return false;
+  }
+
 }
 
 /**
- * Hängt ausgewählte „Runs“ als invoice_items an und schreibt sie in recurring_item_runs.
- * $posStart = Startposition (laufende Positionen in der Rechnung).
- * Rückgabe: [sum_net, sum_gross, posEnd]
+ * Liefert alle aktuell mit einer Rechnung verknüpften Recurring-Runs inkl. gerenderter Beschreibung.
+ * Rückgabe: [
+ *   ['recurring_item_id'=>int, 'from'=>'YYYY-MM-DD', 'to'=>'YYYY-MM-DD', 'key'=>'ri:..', 'description'=>string],
+ *   ...
+ * ]
  */
-function ri_attach_selected_runs(PDO $pdo, int $account_id, int $invoice_id, int $company_id,
-                                 string $issue_date, array $selected_keys, int $posStart = 1): array {
-  if (!$selected_keys) return [0.00, 0.00, $posStart];
-
-  // Fällige Runs zu diesem Stichtag neu berechnen, dann Auswahl filtern
-  $invStmt = $pdo->prepare("SELECT id FROM invoices WHERE id=? AND account_id=? AND company_id=? LIMIT 1");
-  $invStmt->execute([$invoice_id, $account_id, $company_id]);
-  if (!$invStmt->fetchColumn()) { return [0.00, 0.00, $posStart]; }
-
-  // Die Firma ziehen wir aus der Rechnung, $company_id ist schon geprüft.
-  // Alle Runs:
-  $dueAll = []; // wir brauchen company_id -> aber compute braucht company_id; hole aus invoice
-  $compStmt = $pdo->prepare("SELECT company_id FROM invoices WHERE id=? AND account_id=?");
-  $compStmt->execute([$invoice_id, $account_id]);
-  $cid = (int)$compStmt->fetchColumn();
-
-  $dueAll = ri_compute_due_runs($pdo, $account_id, $cid, $issue_date);
-  if (!$dueAll) return [0.00, 0.00, $posStart];
-
-  $pick = [];
-  $sel = array_flip($selected_keys);
-  foreach ($dueAll as $r) if (isset($sel[$r['key']])) $pick[] = $r;
-  if (!$pick) return [0.00, 0.00, $posStart];
-
-  // Insert-Statements
-  $insItem = $pdo->prepare("
-    INSERT INTO invoice_items
-      (account_id, invoice_id, project_id, task_id, description,
-       quantity, unit_price, vat_rate, total_net, total_gross, position, tax_scheme, entry_mode)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+function ri_runs_for_invoice(PDO $pdo, int $account_id, int $invoice_id): array {
+  $st = $pdo->prepare("
+    SELECT l.recurring_item_id, l.period_from, l.period_to, r.description_tpl
+    FROM recurring_item_ledger l
+    JOIN recurring_items r
+      ON r.account_id = l.account_id AND r.id = l.recurring_item_id
+    WHERE l.account_id = ? AND l.invoice_id = ?
   ");
-  $insRun = $pdo->prepare("
-    INSERT INTO recurring_item_runs
-      (account_id, recurring_item_id, period_start, period_end, invoice_id,
-       description_rendered, quantity, unit_price, vat_rate, tax_scheme, total_net, total_gross)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-  ");
+  $st->execute([$account_id, $invoice_id]);
+  $rows = $st->fetchAll() ?: [];
 
-  $sumN = 0.00; $sumG = 0.00; $pos = $posStart;
-
-  foreach ($pick as $r) {
-    $desc  = $r['description'];
-    $qty   = (float)$r['quantity'];
-    $rate  = (float)$r['unit_price'];
-    $vat   = (float)$r['vat_rate'];
-    $sch   = (string)$r['tax_scheme'];
-    $net   = (float)$r['total_net'];
-    $gross = (float)$r['total_gross'];
-
-    $insItem->execute([
-      $account_id, $invoice_id, null, null, $desc,
-      $qty, $rate, $vat, $net, $gross, $pos++, $sch, 'qty' // wiederkehrend = mengenbasierte Position
-    ]);
-    // recurring run protokollieren
-    $insRun->execute([
-      $account_id, (int)$r['ri_id'], $r['from'], $r['to'], $invoice_id,
-      $desc, $qty, $rate, $vat, $sch, $net, $gross
-    ]);
-
-    $sumN += $net; $sumG += $gross;
+  $out = [];
+  foreach ($rows as $row) {
+    $from = _ri_dt((string)$row['period_from']);
+    $to   = _ri_dt((string)$row['period_to']);
+    $out[] = [
+      'recurring_item_id' => (int)$row['recurring_item_id'],
+      'from'              => $from->format('Y-m-d'),
+      'to'                => $to->format('Y-m-d'),
+      'key'               => _ri_run_key((int)$row['recurring_item_id'], $from, $to),
+      'description'       => ri_render_description((string)$row['description_tpl'], $from, $to),
+    ];
   }
-
-  return [$sumN, $sumG, $pos];
-}
-
-/**
- * Aufruf bei Status-Änderungen der Rechnung – z. B. auf „storniert“.
- * Wenn storniert: recurring_item_runs.invoice_id auf NULL setzen, damit die Perioden wieder fällig werden.
- * Bei Wechsel von „storniert“ -> aktivem Status könnte man die Runs wieder binden (hier nicht benötigt).
- */
-function ri_on_invoice_status_change(PDO $pdo, int $account_id, int $invoice_id, string $new_status): void {
-  if ($new_status === 'storniert') {
-    $upd = $pdo->prepare("UPDATE recurring_item_runs SET invoice_id = NULL WHERE account_id=? AND invoice_id=?");
-    $upd->execute([$account_id, $invoice_id]);
-  }
+  return $out;
 }

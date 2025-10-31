@@ -93,6 +93,7 @@ $companies = $cs->fetchAll();
 // geprüfte Firma laden
 $company = null;
 $err = null; $ok = null;
+$show_tax_reason = false; // für UI
 
 if ($company_id) {
   $cchk = $pdo->prepare('SELECT * FROM companies WHERE id = ? AND account_id = ?');
@@ -103,10 +104,11 @@ if ($company_id) {
   }
 }
 
-// --- Preview der fälligen wiederkehrenden Positionen (zum initialen issue_date)
+// --- Preview der fälligen wiederkehrenden Positionen
+$issue_for_preview = $_POST['issue_date'] ?? $issue_default;
 $recurring_preview = [];
 if ($company_id) {
-  $recurring_preview = ri_compute_due_runs($pdo, $account_id, $company_id, $issue_default);
+  $recurring_preview = ri_compute_due_runs($pdo, $account_id, $company_id, $issue_for_preview);
 }
 
 // ---------- Speichern ----------
@@ -126,6 +128,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
   }
 
   $itemsForm = $_POST['items'] ?? []; // flache Items
+  $ri_selected_keys = array_keys($_POST['ri_pick'] ?? []);
 
   // Muss es überhaupt Positionen geben?
   if (!$err) {
@@ -137,8 +140,6 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
       $tids = array_values(array_filter(array_map('intval', (array)($row['time_ids'] ?? [])), fn($v)=>$v>0));
       if ($tids || $desc !== '' || ($qty > 0 && $rate >= 0)) { $hasAnyItem = true; break; }
     }
-    // auch wenn noch keine manuelle/Zeiten-Position: evtl. recurring wird gewählt
-    $ri_selected_keys = array_keys($_POST['ri_pick'] ?? []);
     if (!$hasAnyItem && !$ri_selected_keys) {
       $err = 'Keine Position ausgewählt.';
     }
@@ -152,15 +153,17 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
       $vat    = ($scheme === 'standard') ? dec($row['vat_rate'] ?? $DEFAULT_TAX) : 0.0;
       if ($scheme !== 'standard' || $vat <= 0.0) { $hasNonStandard = true; break; }
     }
-    // Recurring-Vorschau für das tatsächlich gepostete Datum ermitteln
+    // Recurring-Vorschau für das tatsächlich gepostete Datum
     $due_all = ri_compute_due_runs($pdo, $account_id, $company_id, $issue_date);
-    $ri_selected_keys = array_keys($_POST['ri_pick'] ?? []);
     if (ri_selected_has_nonstandard($due_all, $ri_selected_keys)) $hasNonStandard = true;
 
     if ($hasNonStandard && $tax_reason === '') {
       $err = 'Bitte Begründung für die Steuerbefreiung angeben.';
     }
   }
+
+  // für UI beim Re-Rendern
+  $show_tax_reason = $hasNonStandard || ($tax_reason !== '');
 
   if (!$err) {
     $pdo->beginTransaction();
@@ -199,15 +202,18 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
         $vat    = ($scheme === 'standard') ? (float)dec($row['vat_rate'] ?? $DEFAULT_TAX) : 0.0;
         $vat    = max(0.0, min(100.0, $vat));
 
-        $task_id = (int)($row['task_id'] ?? 0);
+        $task_id  = (int)($row['task_id'] ?? 0);
         $time_ids = array_values(array_filter(array_map('intval', (array)($row['time_ids'] ?? [])), fn($v)=>$v>0));
+
+        $net = 0.0; $gross = 0.0;
 
         if ($time_ids) {
           // AUTO (aus Zeiten)
           $minutes = sum_minutes_for_times($pdo, $account_id, $time_ids);
-          if ($minutes <= 0) continue;
+          if ($minutes <= 0) { continue; }
+
           $qty   = round($minutes / 60.0, 3);
-          $net   = round(($minutes / 60.0) * $rate, 2);
+          $net   = round($qty * $rate, 2);
           $gross = round($net * (1 + $vat/100), 2);
 
           $insItem->execute([
@@ -230,10 +236,11 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
             $mode = 'qty';
             $qty_hours = (float)dec($row['quantity'] ?? 0);
           }
-          if ($desc === '' && $qty_hours <= 0 && $rate <= 0) continue;
+
+          if ($desc === '' && $qty_hours <= 0 && $rate <= 0) { continue; }
 
           $qty   = round($qty_hours, 3);
-          $net   = round($qty_hours * $rate, 2);
+          $net   = round($qty * $rate, 2);
           $gross = round($net * (1 + $vat/100), 2);
 
           $insItem->execute([
@@ -247,10 +254,9 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
       }
 
       // --- Wiederkehrende Positionen (nur die angehakten Keys)
-      $ri_selected_keys = array_keys($_POST['ri_pick'] ?? []);
       if ($ri_selected_keys) {
-        [$ri_net, $ri_gross, $pos] = ri_attach_selected_runs(
-          $pdo, $account_id, $invoice_id, $company_id, $issue_date, $ri_selected_keys, $pos
+        list($ri_net, $ri_gross, $pos) = ri_attach_due_items(
+          $pdo, $account_id, $company_id, $invoice_id, $issue_date, $pos, $ri_selected_keys
         );
         $sum_net   += $ri_net;
         $sum_gross += $ri_gross;
@@ -267,12 +273,20 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
       $pdo->rollBack();
       $err = 'Rechnung konnte nicht angelegt werden. ('.$e->getMessage().')';
     }
+  } else {
+    // Bei Fehler: Preview für das gepostete Datum anzeigen
+    $recurring_preview = ri_compute_due_runs($pdo, $account_id, $company_id, $issue_date);
   }
 }
 
 // ---------- View ----------
 require __DIR__ . '/../../src/layout/header.php';
 $return_to = pick_return_to('/companies/show.php?id='.$company_id);
+
+// Für das UI: welche Recurring-Keys waren angehakt?
+$ri_selected_keys_post = array_keys($_POST['ri_pick'] ?? []);
+$ri_selected_set = array_flip($ri_selected_keys_post);
+$tax_reason_value = isset($_POST['tax_exemption_reason']) ? (string)$_POST['tax_exemption_reason'] : '';
 ?>
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h3>Neue Rechnung</h3>
@@ -307,8 +321,8 @@ $return_to = pick_return_to('/companies/show.php?id='.$company_id);
     </div>
   </div>
 
-  <!-- Steuerbefreiung-Begründung (wird evtl. benötigt) -->
-  <div class="card mb-3" id="tax-exemption-reason-wrap" style="display:none">
+  <!-- Steuerbefreiung-Begründung -->
+  <div class="card mb-3" id="tax-exemption-reason-wrap" style="<?php echo $show_tax_reason || ($tax_reason_value !== '') ? '' : 'display:none' ?>">
     <div class="card-body">
       <label class="form-label">Begründung für die Steuerbefreiung</label>
       <textarea
@@ -316,19 +330,19 @@ $return_to = pick_return_to('/companies/show.php?id='.$company_id);
         id="tax-exemption-reason"
         name="tax_exemption_reason"
         rows="2"
-        placeholder="z. B. § 19 UStG (Kleinunternehmer) / Reverse-Charge nach § 13b UStG / Art. 196 MwStSystRL"></textarea>
+        placeholder="z. B. § 19 UStG (Kleinunternehmer) / Reverse-Charge nach § 13b UStG / Art. 196 MwStSystRL"><?php echo h($tax_reason_value) ?></textarea>
       <div class="form-text">
-        Wird nur benötigt, wenn mindestens eine Position steuerfrei oder Reverse-Charge ist.
+        Wird benötigt, wenn mindestens eine Position steuerfrei oder Reverse-Charge ist, oder der MwSt-Satz 0,00 % beträgt.
       </div>
     </div>
   </div>
 
-  <!-- NEU: fällige wiederkehrende Positionen -->
+  <!-- Fällige wiederkehrende Positionen -->
   <div class="card mb-3">
     <div class="card-body">
       <h5 class="card-title">Fällige wiederkehrende Positionen</h5>
       <?php if (!$recurring_preview): ?>
-        <div class="text-muted">Für das Datum <?php echo h($issue_default) ?> sind keine wiederkehrenden Positionen fällig.</div>
+        <div class="text-muted">Für das Datum <?php echo h($issue_for_preview) ?> sind keine wiederkehrenden Positionen fällig.</div>
       <?php else: ?>
         <div class="table-responsive">
           <table class="table table-sm align-middle mb-0">
@@ -346,19 +360,27 @@ $return_to = pick_return_to('/companies/show.php?id='.$company_id);
               </tr>
             </thead>
             <tbody>
-              <?php foreach ($recurring_preview as $r): ?>
-                <tr>
+              <?php foreach ($recurring_preview as $r):
+                $qty   = (float)$r['quantity'];
+                $price = (float)$r['unit_price'];
+                $scheme= (string)$r['tax_scheme'];
+                $vat   = ($scheme === 'standard') ? (float)$r['vat_rate'] : 0.0;
+                $net   = round($qty * $price, 2);
+                $gross = round($net * (1 + $vat/100), 2);
+                $checked = empty($_POST) ? true : isset($ri_selected_set[$r['key']]);
+              ?>
+                <tr class="ri-row" data-scheme="<?php echo h($scheme) ?>" data-vat="<?php echo h(number_format($vat,2,'.','')) ?>">
                   <td>
                     <input type="checkbox" class="form-check-input"
-                           name="ri_pick[<?php echo h($r['key']) ?>]" value="1" checked>
+                           name="ri_pick[<?php echo h($r['key']) ?>]" value="1" <?php echo $checked ? 'checked' : '' ?>>
                   </td>
                   <td><?php echo h($r['description']) ?></td>
-                  <td class="text-end"><?php echo h(number_format((float)$r['quantity'],3,',','.')) ?></td>
-                  <td class="text-end"><?php echo h(number_format((float)$r['unit_price'],2,',','.')) ?></td>
-                  <td class="text-end"><?php echo h($r['tax_scheme']) ?></td>
-                  <td class="text-end"><?php echo h(number_format((float)$r['vat_rate'],2,',','.')) ?></td>
-                  <td class="text-end"><?php echo h(number_format((float)$r['total_net'],2,',','.')) ?></td>
-                  <td class="text-end"><?php echo h(number_format((float)$r['total_gross'],2,',','.')) ?></td>
+                  <td class="text-end"><?php echo h(number_format($qty,3,',','.')) ?></td>
+                  <td class="text-end"><?php echo h(number_format($price,2,',','.')) ?></td>
+                  <td class="text-end"><?php echo h($scheme) ?></td>
+                  <td class="text-end"><?php echo h(number_format($vat,2,',','.')) ?></td>
+                  <td class="text-end"><?php echo h(number_format($net,2,',','.')) ?></td>
+                  <td class="text-end"><?php echo h(number_format($gross,2,',','.')) ?></td>
                   <td><?php echo h($r['from']) ?> – <?php echo h($r['to']) ?></td>
                 </tr>
               <?php endforeach; ?>
@@ -457,6 +479,94 @@ $return_to = pick_return_to('/companies/show.php?id='.$company_id);
          <button type="button" class="btn btn-sm btn-outline-danger btn-remove-item">Entfernen</button>
        </td>`;
     insertBeforeGrand(tr);
+    // nach dem Einfügen: Listener binden
+    bindTaxListeners(tr);
+  });
+})();
+
+// --- Clientseitige Pflichtprüfung Steuerbefreiungshinweis ---
+(function(){
+  const form = document.getElementById('invForm');
+  if (!form) return;
+
+  const wrap = document.getElementById('tax-exemption-reason-wrap');
+  const reason = document.getElementById('tax-exemption-reason');
+
+  function requiresTaxReason(){
+    let need = false;
+
+    // Manuelle/Zeiten-Positionen
+    document.querySelectorAll('#invoice-items tr.inv-item-row').forEach(function(row){
+      const sel = row.querySelector('select[name*="[tax_scheme]"]');
+      const vatEl = row.querySelector('input[name*="[vat_rate]"]');
+      const scheme = sel ? sel.value : 'standard';
+      const vat = vatEl ? parseFloat(vatEl.value || '0') : 0;
+      if (scheme !== 'standard' || vat <= 0) need = true;
+    });
+
+    // Recurring rows (nur angehakte)
+    document.querySelectorAll('tr.ri-row input[type="checkbox"]').forEach(function(cb){
+      if (!cb.checked) return;
+      const tr = cb.closest('tr');
+      if (!tr) return;
+      const scheme = (tr.dataset.scheme || 'standard').toLowerCase();
+      const vat = parseFloat(tr.dataset.vat || '0');
+      if (scheme !== 'standard' || vat <= 0) need = true;
+    });
+
+    return need;
+  }
+
+  function setReasonVisible(v){
+    if (!wrap) return;
+    wrap.style.display = v ? '' : 'none';
+  }
+
+  function enforce(){
+    const need = requiresTaxReason();
+    setReasonVisible(need || (reason && reason.value.trim() !== ''));
+    return need;
+  }
+
+  // Bind changes on tax fields and recurring checkboxes
+  function bindTaxListeners(scope){
+    const root = scope || document;
+    root.querySelectorAll('.inv-tax-sel, .inv-vat-input').forEach(function(el){
+      el.addEventListener('change', enforce);
+      el.addEventListener('input', enforce);
+    });
+    root.querySelectorAll('tr.ri-row input[type="checkbox"]').forEach(function(cb){
+      cb.addEventListener('change', enforce);
+    });
+  }
+
+  bindTaxListeners(document);
+
+  // Initial state
+  enforce();
+
+  form.addEventListener('submit', function(e){
+    const need = requiresTaxReason();
+    if (need && reason && reason.value.trim() === '') {
+      e.preventDefault();
+      setReasonVisible(true);
+      reason.focus();
+      reason.classList.add('is-invalid');
+      // kleine optische Hilfe
+      if (!reason.nextElementSibling || !reason.nextElementSibling.classList.contains('invalid-feedback')) {
+        const fb = document.createElement('div');
+        fb.className = 'invalid-feedback';
+        fb.textContent = 'Bitte eine Begründung für die Steuerbefreiung angeben.';
+        reason.insertAdjacentElement('afterend', fb);
+      }
+      return false;
+    }
+    // Cleanup beim erfolgreichen Submit
+    if (reason) {
+      reason.classList.remove('is-invalid');
+      const fb = reason.nextElementSibling;
+      if (fb && fb.classList.contains('invalid-feedback')) fb.remove();
+    }
   });
 })();
 </script>

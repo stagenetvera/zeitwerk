@@ -5,6 +5,7 @@ require_once __DIR__ . '/../../src/lib/invoice_number.php';
 require_once __DIR__ . '/../../src/lib/settings.php';
 require_once __DIR__ . '/../../src/utils.php';
 require_once __DIR__ . '/../../src/lib/flash.php';
+require_once __DIR__ . '/../../src/lib/recurring.php';
 
 require_login();
 csrf_check();
@@ -348,6 +349,45 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '')==='save') {
         }
       }
 
+      // --- Recurring-Ledger aufräumen: Entfernte Runs freigeben ---
+      $linked_runs = ri_runs_for_invoice($pdo, $account_id, $invoice_id);
+
+      // 2 Varianten, um "behaltene" Runs zu erkennen:
+      // A) Best Case: pro Zeile kam ein Hidden-Feld items[idx][ri_key] mit (siehe Punkt 3)
+      // B) Fallback: match nur über die Beschreibung (robust, auch wenn Werte geändert wurden)
+
+      $keptKeys = [];
+      foreach ((array)($_POST['items'] ?? []) as $row) {
+        $k = trim((string)($row['ri_key'] ?? ''));
+        if ($k !== '') { $keptKeys[$k] = true; }
+      }
+
+      $del = $pdo->prepare("
+        DELETE FROM recurring_item_ledger
+        WHERE account_id=? AND invoice_id=? AND recurring_item_id=? AND period_from=? AND period_to=?
+      ");
+
+      if ($keptKeys) {
+        // Variante A: vergleiche Keys
+        foreach ($linked_runs as $L) {
+          if (empty($keptKeys[$L['key']])) {
+            $del->execute([$account_id, $invoice_id, $L['recurring_item_id'], $L['from'], $L['to']]);
+          }
+        }
+      } else {
+        // Variante B (Fallback): vergleiche Beschreibungen
+        $descSet = [];
+        foreach ((array)($_POST['items'] ?? []) as $row) {
+          $d = trim((string)($row['description'] ?? ''));
+          if ($d !== '') $descSet[$d] = true;
+        }
+        foreach ($linked_runs as $L) {
+          if (empty($descSet[$L['description']])) {
+            $del->execute([$account_id, $invoice_id, $L['recurring_item_id'], $L['from'], $L['to']]);
+          }
+        }
+      }
+      // --- Ende Ledger-Aufräumen ---
       $pdo->commit();
       $ok = 'Rechnung gespeichert.';
       redirect(url('/invoices/edit.php').'?id='.(int)$invoice['id']);
@@ -474,6 +514,11 @@ $return_to = pick_return_to('/companies/show.php?id='.$company_id);
               $mode = 'edit';
               $rowName  = 'items';
               $timesName = 'time_ids';
+
+              $ri_runs = ri_runs_for_invoice($pdo, $account_id, $invoice_id);
+              $ri_key_by_desc = [];
+              foreach ($ri_runs as $r) { $ri_key_by_desc[$r['description']] = $r['key']; }
+
               require __DIR__ . '/_items_table.php';
             ?>
             <button type="button" id="addManualItem" class="btn btn-sm btn-outline-primary" data-default-vat="<?= h($defVat) ?>">+ Position</button>
@@ -553,6 +598,97 @@ $return_to = pick_return_to('/companies/show.php?id='.$company_id);
        </td>`;
     insertBeforeGrand(tr);
   });
+})();
+</script>
+<script>
+(function () {
+  const form   = document.getElementById('invForm');
+  const wrap   = document.getElementById('tax-exemption-reason-wrap');
+  const reason = document.getElementById('tax-exemption-reason');
+  const table  = document.getElementById('invoice-items');
+
+  function parseVat(input) {
+    if (!input) return 0;
+    const v = String(input.value || '').replace(',', '.');
+    const n = parseFloat(v);
+    return isFinite(n) ? n : 0;
+  }
+
+  function needsReason() {
+    if (!table) return false;
+    const rows = table.querySelectorAll('tr.inv-item-row');
+    for (const tr of rows) {
+      const schemeSel = tr.querySelector('.inv-tax-sel');
+      const vatInput  = tr.querySelector('.inv-vat-input');
+      if (!schemeSel || !vatInput) continue;
+
+      const scheme = (schemeSel.value || '').toLowerCase();
+      const vat    = parseVat(vatInput);
+
+      // Gleiche Logik wie serverseitig:
+      // - jede Steuerart ≠ 'standard' → Begründung nötig
+      // - oder 'standard' mit 0,00 % → Begründung nötig
+      if (scheme !== 'standard' || vat <= 0) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function updateReasonUI() {
+    const need = needsReason();
+    if (need) {
+      wrap && (wrap.style.display = '');
+      if (reason) {
+        reason.setAttribute('required', 'required');
+        reason.setAttribute('aria-required', 'true');
+      }
+    } else {
+      wrap && (wrap.style.display = 'none');
+      if (reason) {
+        reason.removeAttribute('required');
+        reason.removeAttribute('aria-required');
+      }
+    }
+  }
+
+  // Reagiert auf Änderungen an Steuerart & MwSt
+  document.addEventListener('input', function (e) {
+    if (e.target && (e.target.classList.contains('inv-tax-sel') || e.target.classList.contains('inv-vat-input'))) {
+      updateReasonUI();
+    }
+  });
+  document.addEventListener('change', function (e) {
+    if (e.target && (e.target.classList.contains('inv-tax-sel') || e.target.classList.contains('inv-vat-input'))) {
+      updateReasonUI();
+    }
+  });
+
+  // Beobachte Hinzufügen/Entfernen von Zeilen (MutationObserver)
+  if (table) {
+    const mo = new MutationObserver(updateReasonUI);
+    mo.observe(table, { childList: true, subtree: true });
+  }
+
+  // Initial
+  updateReasonUI();
+
+  // Blockiere Submit, wenn Begründung fehlt, obwohl nötig
+  if (form) {
+    form.addEventListener('submit', function (e) {
+      if (needsReason()) {
+        if (!reason || !reason.value.trim()) {
+          wrap && (wrap.style.display = '');
+          reason && reason.setAttribute('required', 'required');
+          // Native Validierung triggern (sofern verfügbar)
+          reason && reason.reportValidity && reason.reportValidity();
+          reason && reason.focus && reason.focus();
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      }
+    });
+  }
 })();
 </script>
 

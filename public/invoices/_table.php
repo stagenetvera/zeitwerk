@@ -89,6 +89,13 @@ if (!isset($invoices) && isset($rows) && is_array($rows)) {
             <td class="text-end"><?= number_format((float)($inv['total_net'] ?? 0), 2, ',', '.') ?></td>
             <td class="text-end"><?= number_format((float)($inv['total_gross'] ?? 0), 2, ',', '.') ?></td>
             <td class="text-end">
+              <form method="post" action="<?= url('/invoices/cancel.php') ?>" class="d-inline"
+                    onsubmit="return confirm('Rechnung wirklich stornieren?');">
+                <?= csrf_field() ?>
+                <input type="hidden" name="id" value="<?= (int)$inv['id'] ?>">
+                <input type="hidden" name="return_to" value="<?= h($return_to) ?>">
+                <button class="btn btn-sm btn-outline-danger">Stornieren</button>
+              </form>
               <a class="btn btn-sm btn-outline-secondary" href="<?= url('/invoices/edit.php') ?>?id=<?= (int)$inv['id'] ?>"><i class="bi bi-eye"></i>
     <span class="visually-hidden">Ansehen</span></a>
               <a class="btn btn-sm btn-outline-secondary" href="<?= url('/invoices/export_xml.php') ?>?id=<?= (int)$inv['id'] ?>">XML</a>
