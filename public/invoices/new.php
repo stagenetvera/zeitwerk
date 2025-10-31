@@ -85,6 +85,8 @@ if ($rows) {
   $groups = [[ 'rows' => array_values($byTask) ]];
 }
 
+
+
 // Firmenliste
 $cs = $pdo->prepare('SELECT id, name FROM companies WHERE account_id = ? ORDER BY name');
 $cs->execute([$account_id]);
@@ -101,6 +103,24 @@ if ($company_id) {
   $company = $cchk->fetch();
   if (!$company) {
     $err = 'Ungültige Firma.'; $company_id = 0;
+  }
+}
+
+// Default-Stundensatz für neu hinzugefügte manuelle Positionen
+$default_manual_rate = 0.00;
+
+// 1) Firmen-Default
+if (!empty($company)) {
+  $default_manual_rate = (float)($company['hourly_rate'] ?? 0.0);
+}
+
+// 2) Falls 0: nimm den ersten verfügbaren effektiven Satz aus den offenen Zeiten
+if ($default_manual_rate <= 0 && !empty($groups) && !empty($groups[0]['rows'])) {
+  foreach ($groups as $g) {
+    foreach ($g['rows'] as $r) {
+      $er = (float)($r['hourly_rate'] ?? 0);
+      if ($er > 0) { $default_manual_rate = $er; break 2; }
+    }
   }
 }
 
@@ -403,10 +423,13 @@ $tax_reason_value = isset($_POST['tax_exemption_reason']) ? (string)$_POST['tax_
         $timesName = 'time_ids';
         require __DIR__ . '/_items_table.php';
       ?>
-      <button type="button" id="addManualItem" class="btn btn-sm btn-outline-primary"
-                data-default-vat="<?php echo h(number_format((float)$settings['default_vat_rate'],2,'.','')) ?>">
-          + Position
-        </button>
+      <button
+        type="button"
+        id="addManualItem"
+        class="btn btn-sm btn-outline-primary"
+        data-default-vat="<?php echo h(number_format((float)$settings['default_vat_rate'],2,'.','')) ?>"
+        data-default-rate="<?php echo h(number_format((float)$default_manual_rate,2,'.','')) ?>">+ Position</button>
+
     </div>
   </div>
 
@@ -417,11 +440,12 @@ $tax_reason_value = isset($_POST['tax_exemption_reason']) ? (string)$_POST['tax_
 </form>
 
 <script>
-// "+ Position": manuelle Zeile (qty) in der flachen Tabelle anlegen
+// Manuelle Zeilen (qty|time) mit ICON-Toggle in der input-group
 (function(){
-  const btn = document.getElementById('addManualItem');
-  if (!btn) return;
-  const root = document.getElementById('invoice-items');
+  const addBtn = document.getElementById('addManualItem');
+  const root   = document.getElementById('invoice-items');
+  if (!root) return;
+
   function nextIndex(){
     const rows = root.querySelectorAll('tr.inv-item-row');
     let max = 0;
@@ -433,56 +457,206 @@ $tax_reason_value = isset($_POST['tax_exemption_reason']) ? (string)$_POST['tax_
     const tb = root.querySelector('tbody');
     if (gt && tb) tb.insertBefore(tr, gt);
   }
-  btn.addEventListener('click', function(){
-    const idx = nextIndex();
-    const defVat = btn.getAttribute('data-default-vat') || '19.00';
-    const tr = document.createElement('tr');
-    tr.className = 'inv-item-row';
-    tr.setAttribute('data-row', String(idx));
-    tr.setAttribute('data-mode', 'qty');
-    tr.setAttribute('aria-expanded','false');
-    tr.innerHTML =
-      `<td class="text-center">
-         <div class="d-flex justify-content-center gap-1">
-           <span class="row-reorder-handle" draggable="true" aria-label="Position verschieben" title="Ziehen zum Sortieren">
-             <svg class="grip" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
-               <path d="M5 4h2v2H5V4Zm4 0h2v2H9V4ZM5 8h2v2H5V8Zm4 0h2v2H9V8ZM5 12h2v2H5v-2Zm4 0h2v2H9v-2Z" fill="currentColor"/>
-             </svg>
-           </span>
-         </div>
-       </td>
-       <td>
-         <input type="hidden" class="entry-mode" name="items[${idx}][entry_mode]" value="qty">
-         <input type="text" class="form-control" name="items[${idx}][description]" value="">
-       </td>
-       <td class="text-end">
-         <input type="number" step="0.001" class="form-control text-end quantity" name="items[${idx}][quantity]" value="1.000">
-       </td>
-       <td class="text-end">
-         <input type="number" step="0.01" class="form-control text-end rate" name="items[${idx}][hourly_rate]" value="0.00">
-       </td>
-       <td class="text-end">
-         <select name="items[${idx}][tax_scheme]" class="form-select inv-tax-sel"
-                 data-rate-standard="${defVat}" data-rate-tax-exempt="0.00" data-rate-reverse-charge="0.00">
-           <option value="standard" selected>standard (mit MwSt)</option>
-           <option value="tax_exempt">steuerfrei</option>
-           <option value="reverse_charge">Reverse-Charge</option>
-         </select>
-       </td>
-       <td class="text-end">
-         <input type="number" step="0.01" min="0" max="100" class="form-control text-end inv-vat-input"
-                name="items[${idx}][vat_rate]" value="${defVat}">
-       </td>
-       <td class="text-end"><span class="net">0,00</span></td>
-       <td class="text-end"><span class="gross">0,00</span></td>
-       <td class="text-end text-nowrap">
-         <button type="button" class="btn btn-sm btn-outline-danger btn-remove-item">Entfernen</button>
-       </td>`;
-    insertBeforeGrand(tr);
-    // nach dem Einfügen: Listener binden
-    bindTaxListeners(tr);
+
+  function setBtnActive(btn, active){
+    btn.classList.toggle('btn-secondary', active);
+    btn.classList.toggle('text-white', active);
+    btn.classList.toggle('btn-outline-secondary', !active);
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+  }
+
+  function switchRowMode(tr, mode){
+    const entry = tr.querySelector('input.entry-mode') || tr.appendChild(Object.assign(document.createElement('input'), {type:'hidden', className:'entry-mode', value:'qty'}));
+    entry.value = mode;
+
+    const qty   = tr.querySelector('input.quantity');
+    const hours = tr.querySelector('input.hours-input');
+
+    if (mode === 'time') {
+      if (qty)   { qty.classList.add('d-none'); qty.disabled = true; }
+      if (hours) { hours.classList.remove('d-none'); hours.disabled = false; }
+    } else {
+      if (qty)   { qty.classList.remove('d-none'); qty.disabled = false; }
+      if (hours) { hours.classList.add('d-none');  hours.disabled = true; }
+    }
+
+    tr.querySelectorAll('.mode-btn').forEach(b=>{
+      setBtnActive(b, b.dataset.mode === mode);
+    });
+  }
+
+  // Baut (falls nötig) die input-group mit Icon-Toggle um vorhandene Felder
+  function ensureIconToggle(tr){
+    // schon vorhanden?
+    if (tr.querySelector('.mode-btn')) return;
+
+    const qtyCell = tr.querySelector('td:nth-child(3)'); // Spalte Menge/Zeit (wie in deiner Tabelle)
+    if (!qtyCell) return;
+
+    // existierende Inputs suchen oder anlegen
+    let qty   = tr.querySelector('input.quantity');
+    let hours = tr.querySelector('input.hours-input');
+
+    if (!qty) {
+      qty = document.createElement('input');
+      qty.type = 'number'; qty.step = '0.001';
+      qty.className = 'form-control text-end quantity';
+      qty.name = 'items['+(tr.getAttribute('data-row')||'')+'][quantity]';
+      qty.value = '1.000';
+    }
+    if (!hours) {
+      hours = document.createElement('input');
+      hours.type = 'text';
+      hours.className = 'form-control text-end hours-input d-none';
+      hours.name = 'items['+(tr.getAttribute('data-row')||'')+'][hours]';
+      hours.placeholder = 'hh:mm oder 1.5';
+      hours.disabled = true;
+    }
+
+    // input-group mit Icon-Buttons bauen
+    const group = document.createElement('div');
+    group.className = 'input-group input-group-sm flex-nowrap';
+
+    const btnQty  = document.createElement('button');
+    btnQty.type   = 'button';
+    btnQty.className = 'btn btn-outline-secondary mode-btn';
+    btnQty.dataset.mode = 'qty';
+    btnQty.title  = 'Menge';
+    btnQty.innerHTML = '<i class="bi bi-123" aria-hidden="true"></i><span class="visually-hidden">Menge</span>';
+
+    const btnTime = document.createElement('button');
+    btnTime.type  = 'button';
+    btnTime.className = 'btn btn-outline-secondary mode-btn';
+    btnTime.dataset.mode = 'time';
+    btnTime.title = 'Zeit';
+    btnTime.innerHTML = '<i class="bi bi-clock" aria-hidden="true"></i><span class="visually-hidden">Zeit</span>';
+
+    group.appendChild(btnQty);
+    group.appendChild(btnTime);
+    group.appendChild(qty);
+    group.appendChild(hours);
+
+    // Inhalt der Zelle ersetzen
+    qtyCell.innerHTML = '';
+    qtyCell.appendChild(group);
+  }
+
+  function initRow(tr){
+    // Toggle-UI sicherstellen (auch in edit.php für bestehende Zeilen)
+    ensureIconToggle(tr);
+
+    // Ausgangsmodus bestimmen
+    const attr  = tr.getAttribute('data-mode');
+    const entry = tr.querySelector('input.entry-mode')?.value;
+    const mode  = (attr || entry || 'qty');
+    switchRowMode(tr, mode);
+  }
+
+  // Delegierte Clicks (Buttons & Keyboard)
+  root.addEventListener('click', function(e){
+    const btn = e.target.closest('.mode-btn');
+    if (!btn) return;
+    const tr = btn.closest('tr.inv-item-row');
+    if (!tr) return;
+    switchRowMode(tr, btn.dataset.mode);
   });
+  root.addEventListener('keydown', function(e){
+    const btn = e.target.closest('.mode-btn');
+    if (!btn) return;
+    if (e.key === ' ' || e.key === 'Enter') {
+      e.preventDefault();
+      btn.click();
+    }
+  });
+
+  // "+ Position" (neue manuelle Zeile mit Icon-Toggle)
+  if (addBtn) {
+    addBtn.addEventListener('click', function(){
+      const idx    = nextIndex();
+      const defVat = addBtn.getAttribute('data-default-vat') || '19.00';
+      const defRate = addBtn.getAttribute('data-default-rate') || '0.00';
+
+      const tr = document.createElement('tr');
+      tr.className = 'inv-item-row';
+      tr.setAttribute('data-row', String(idx));
+      tr.setAttribute('data-mode', 'qty');
+      tr.setAttribute('aria-expanded','false');
+
+      tr.innerHTML =
+        `<td class="text-center">
+           <div class="d-flex justify-content-center gap-1">
+             <span class="row-reorder-handle" draggable="true" aria-label="Position verschieben" title="Ziehen zum Sortieren">
+               <svg class="grip" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+                 <path d="M5 4h2v2H5V4Zm4 0h2v2H9V4ZM5 8h2v2H5V8Zm4 0h2v2H9V8ZM5 12h2v2H5v-2Zm4 0h2v2H9v-2Z" fill="currentColor"/>
+               </svg>
+             </span>
+           </div>
+         </td>
+
+         <td>
+           <input type="hidden" class="entry-mode" name="items[${idx}][entry_mode]" value="qty">
+           <input type="text" class="form-control" name="items[${idx}][description]" value="">
+         </td>
+
+         <td class="text-end">
+           <div class="input-group input-group-sm flex-nowrap">
+             <button type="button" class="btn btn-outline-secondary mode-btn" data-mode="qty" title="Menge" aria-pressed="true">
+               <i class="bi bi-123" aria-hidden="true"></i><span class="visually-hidden">Menge</span>
+             </button>
+             <button type="button" class="btn btn-outline-secondary mode-btn" data-mode="time" title="Zeit" aria-pressed="false">
+               <i class="bi bi-clock" aria-hidden="true"></i><span class="visually-hidden">Zeit</span>
+             </button>
+
+             <input type="number" step="0.001"
+                    class="form-control text-end quantity"
+                    name="items[${idx}][quantity]" value="1.000">
+             <input type="text"
+                    class="form-control text-end hours-input d-none"
+                    name="items[${idx}][hours]" placeholder="hh:mm oder 1.5" disabled>
+           </div>
+         </td>
+
+         <td class="text-end">
+           <input type="number" step="0.01" class="form-control text-end rate"
+                  name="items[${idx}][hourly_rate]"  value="${defRate}">
+         </td>
+
+         <td class="text-end">
+           <select name="items[${idx}][tax_scheme]" class="form-select inv-tax-sel"
+                   data-rate-standard="${defVat}" data-rate-tax-exempt="0.00" data-rate-reverse-charge="0.00">
+             <option value="standard" selected>standard (mit MwSt)</option>
+             <option value="tax_exempt">steuerfrei</option>
+             <option value="reverse_charge">Reverse-Charge</option>
+           </select>
+         </td>
+
+         <td class="text-end">
+           <input type="number" step="0.01" min="0" max="100" class="form-control text-end inv-vat-input"
+                  name="items[${idx}][vat_rate]" value="${defVat}">
+         </td>
+
+         <td class="text-end"><span class="net">0,00</span></td>
+         <td class="text-end"><span class="gross">0,00</span></td>
+
+         <td class="text-end text-nowrap">
+           <button type="button" class="btn btn-sm btn-outline-danger btn-remove-item">Entfernen</button>
+         </td>`;
+
+      insertBeforeGrand(tr);
+      // Aktiv-Optik setzen
+      const btnQty = tr.querySelector('.mode-btn[data-mode="qty"]');
+      const btnTim = tr.querySelector('.mode-btn[data-mode="time"]');
+      setBtnActive(btnQty, true);
+      setBtnActive(btnTim, false);
+      switchRowMode(tr, 'qty');
+    });
+  }
+
+  // Bestehende Zeilen (v.a. in edit.php) initialisieren und ggf. upgraden
+  document.querySelectorAll('#invoice-items tr.inv-item-row').forEach(initRow);
 })();
+</script>
+<script>
 
 // --- Clientseitige Pflichtprüfung Steuerbefreiungshinweis ---
 (function(){

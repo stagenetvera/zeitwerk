@@ -97,6 +97,11 @@
   @media (min-width: 768px) {
     .extra-row .col-md-2 .form-label { white-space: nowrap; }
   }
+  /* Toggle-Buttons kompakt & bündig */
+  .input-group .btn.mode-btn { min-width: 2.6rem; }
+  /* Visuelle Hilfe unter Preisfeld entfällt überall */
+  .rate-help { display: none !important; }
+  .mode-btn i { pointer-events: none; } /* Icon klickt wie der Button */
   </style>
 </head>
 <body class="bg-light">
