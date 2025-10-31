@@ -12,7 +12,7 @@ $account_id = (int)$user['account_id'];
 
 $settings = get_account_settings($pdo, $account_id);
 
-// Defaults aus Account-Einstellungen
+// Defaults
 $DEFAULT_TAX      = (float)$settings['default_vat_rate'];
 $DEFAULT_SCHEME   = $settings['default_tax_scheme']; // 'standard'|'tax_exempt'|'reverse_charge'
 $DEFAULT_DUE_DAYS = (int)($settings['default_due_days'] ?? 14);
@@ -35,11 +35,9 @@ function sum_minutes_for_times(PDO $pdo, int $account_id, array $ids): int {
 
 // --------- Kontext / Daten laden ----------
 $company_id = (int)($_GET['company_id'] ?? $_POST['company_id'] ?? 0);
-
-// return_to
 $return_to = pick_return_to('/companies/show.php?id='.$company_id);
 
-// Offene Zeiten der Firma flach für _items_table.php (NEW-Modus)
+// Offene Zeiten der Firma flach (NEW-Modus)
 $q = $pdo->prepare("
   SELECT
     t.id          AS time_id,
@@ -63,10 +61,6 @@ $q = $pdo->prepare("
 $q->execute([':acc'=>$account_id, ':cid'=>$company_id]);
 $rows = $q->fetchAll();
 
-/**
- * $groups Struktur für _items_table.php (flach; nur eine Gruppe mit rows[])
- * rows[]: { task_id, task_desc, hourly_rate, tax_rate, times[] }
- */
 $groups = [];
 if ($rows) {
   $byTask = [];
@@ -91,7 +85,7 @@ if ($rows) {
   $groups = [[ 'rows' => array_values($byTask) ]];
 }
 
-// Firmenliste (für Auswahl)
+// Firmenliste
 $cs = $pdo->prepare('SELECT id, name FROM companies WHERE account_id = ? ORDER BY name');
 $cs->execute([$account_id]);
 $companies = $cs->fetchAll();
@@ -109,7 +103,7 @@ if ($company_id) {
   }
 }
 
-// Preview fälliger wiederkehrender Positionen für das aktuelle Issue-Datum
+// --- Preview der fälligen wiederkehrenden Positionen (zum initialen issue_date)
 $recurring_preview = [];
 if ($company_id) {
   $recurring_preview = ri_compute_due_runs($pdo, $account_id, $company_id, $issue_default);
@@ -131,10 +125,9 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
     if (!$cchk->fetchColumn()) $err = 'Ungültige Firma.';
   }
 
-  // Eingaben (einheitlich aus dem flachen Items-Table)
-  $itemsForm = $_POST['items'] ?? []; // items[idx][task_id? | description | entry_mode | time_ids[]? | quantity/hours | hourly_rate | tax_scheme | vat_rate]
+  $itemsForm = $_POST['items'] ?? []; // flache Items
 
-  // Mindestens irgendetwas?
+  // Muss es überhaupt Positionen geben?
   if (!$err) {
     $hasAnyItem = false;
     foreach ((array)$itemsForm as $row) {
@@ -144,14 +137,14 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
       $tids = array_values(array_filter(array_map('intval', (array)($row['time_ids'] ?? [])), fn($v)=>$v>0));
       if ($tids || $desc !== '' || ($qty > 0 && $rate >= 0)) { $hasAnyItem = true; break; }
     }
-    if (!$hasAnyItem) $err = 'Keine Position ausgewählt.';
+    // auch wenn noch keine manuelle/Zeiten-Position: evtl. recurring wird gewählt
+    $ri_selected_keys = array_keys($_POST['ri_pick'] ?? []);
+    if (!$hasAnyItem && !$ri_selected_keys) {
+      $err = 'Keine Position ausgewählt.';
+    }
   }
 
-  // Auswahl wiederkehrender Positionen (Checkboxen)
-  $ri_selected_keys = array_keys($_POST['ri_pick'] ?? []);
-  $ri_selected_runs = [];
-
-  // Pflichtprüfung Steuerbegründung?
+  // Pflichtprüfung Steuerbegründung, falls Non-Standard in Items oder Recurring-Auswahl
   $hasNonStandard = false;
   if (!$err) {
     foreach ((array)$itemsForm as $row) {
@@ -159,24 +152,10 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
       $vat    = ($scheme === 'standard') ? dec($row['vat_rate'] ?? $DEFAULT_TAX) : 0.0;
       if ($scheme !== 'standard' || $vat <= 0.0) { $hasNonStandard = true; break; }
     }
-
-    // Wiederkehrende Positionen (erneut zu diesem Datum berechnen, falls Issue-Datum im Formular geändert wurde)
-    if ($company_id) {
-      $issue_for_ri = $_POST['issue_date'] ?? $issue_default;
-      $due_all = ri_compute_due_runs($pdo, $account_id, $company_id, $issue_for_ri);
-
-      if ($ri_selected_keys) {
-        $sel = array_flip($ri_selected_keys);
-        foreach ($due_all as $r) { if (isset($sel[$r['key']])) $ri_selected_runs[] = $r; }
-      }
-
-      // Flags (wenn eine der ausgewählten runs non-standard ist)
-      foreach ($ri_selected_runs as $r) {
-        $rscheme = $r['tax_scheme'] ?? 'standard';
-        $rvat    = (float)($r['vat_rate'] ?? 0.0);
-        if ($rscheme !== 'standard' || $rvat <= 0.0) { $hasNonStandard = true; break; }
-      }
-    }
+    // Recurring-Vorschau für das tatsächlich gepostete Datum ermitteln
+    $due_all = ri_compute_due_runs($pdo, $account_id, $company_id, $issue_date);
+    $ri_selected_keys = array_keys($_POST['ri_pick'] ?? []);
+    if (ri_selected_has_nonstandard($due_all, $ri_selected_keys)) $hasNonStandard = true;
 
     if ($hasNonStandard && $tax_reason === '') {
       $err = 'Bitte Begründung für die Steuerbefreiung angeben.';
@@ -211,7 +190,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
 
       $pos = 1; $sum_net = 0.00; $sum_gross = 0.00;
 
-      // In der Reihenfolge der Items einfügen
+      // Items aus Formular (Zeiten/Mengen) in Reihenfolge
       foreach ((array)$itemsForm as $row) {
         $desc   = trim((string)($row['description'] ?? ''));
         $mode   = strtolower(trim((string)($row['entry_mode'] ?? 'qty')));
@@ -251,7 +230,6 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
             $mode = 'qty';
             $qty_hours = (float)dec($row['quantity'] ?? 0);
           }
-          // komplett leere ignorieren
           if ($desc === '' && $qty_hours <= 0 && $rate <= 0) continue;
 
           $qty   = round($qty_hours, 3);
@@ -268,65 +246,15 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
         $sum_gross+= $gross;
       }
 
-      // Wiederkehrende Positionen (nur ausgewählte Keys anhängen)
-      $ri_net = 0.0; $ri_gross = 0.0;
-      if (!empty($ri_selected_keys)) {
-        if (function_exists('ri_attach_due_items')) {
-          try {
-            $ref = new ReflectionFunction('ri_attach_due_items');
-            if ($ref->getNumberOfParameters() >= 7) {
-              // neue Signatur mit $selected_keys
-              [$ri_net, $ri_gross, $pos] = ri_attach_due_items(
-                $pdo, $account_id, $company_id, $invoice_id, $issue_date, $pos, $ri_selected_keys
-              );
-            } else {
-              // alte Signatur (würde alle fälligen anhängen) -> in diesem Fall lieber gar nicht aufrufen
-              // und stattdessen manuell anhängen:
-              foreach ($ri_selected_runs as $r) {
-                $desc   = trim((string)($r['description_resolved'] ?? $r['description'] ?? ''));
-                $qty    = (float)($r['quantity'] ?? $r['qty'] ?? 1.0);
-                $price  = (float)($r['unit_price'] ?? $r['price'] ?? 0.0);
-                $scheme = (string)($r['tax_scheme'] ?? 'standard');
-                $vat    = (float)($scheme === 'standard' ? ($r['vat_rate'] ?? $DEFAULT_TAX) : 0.0);
-                $qtyR   = round($qty, 3);
-                $net    = round($qty * $price, 2);
-                $gross  = round($net * (1 + $vat/100), 2);
-
-                $insItem->execute([
-                  $account_id, $invoice_id, null, null, $desc,
-                  $qtyR, $price, $vat, $net, $gross, $pos++, $scheme, 'qty'
-                ]);
-
-                $ri_net   += $net;
-                $ri_gross += $gross;
-              }
-            }
-          } catch (Throwable $e) {
-            // Fallback: wie oben manuell anhängen, falls Reflection fehlschlägt
-            foreach ($ri_selected_runs as $r) {
-              $desc   = trim((string)($r['description_resolved'] ?? $r['description'] ?? ''));
-              $qty    = (float)($r['quantity'] ?? $r['qty'] ?? 1.0);
-              $price  = (float)($r['unit_price'] ?? $r['price'] ?? 0.0);
-              $scheme = (string)($r['tax_scheme'] ?? 'standard');
-              $vat    = (float)($scheme === 'standard' ? ($r['vat_rate'] ?? $DEFAULT_TAX) : 0.0);
-              $qtyR   = round($qty, 3);
-              $net    = round($qty * $price, 2);
-              $gross  = round($net * (1 + $vat/100), 2);
-
-              $insItem->execute([
-                $account_id, $invoice_id, null, null, $desc,
-                $qtyR, $price, $vat, $net, $gross, $pos++, $scheme, 'qty'
-              ]);
-
-              $ri_net   += $net;
-              $ri_gross += $gross;
-            }
-          }
-        }
+      // --- Wiederkehrende Positionen (nur die angehakten Keys)
+      $ri_selected_keys = array_keys($_POST['ri_pick'] ?? []);
+      if ($ri_selected_keys) {
+        [$ri_net, $ri_gross, $pos] = ri_attach_selected_runs(
+          $pdo, $account_id, $invoice_id, $company_id, $issue_date, $ri_selected_keys, $pos
+        );
+        $sum_net   += $ri_net;
+        $sum_gross += $ri_gross;
       }
-
-      $sum_net   += $ri_net;
-      $sum_gross += $ri_gross;
 
       // Summen aktualisieren
       $updInv = $pdo->prepare("UPDATE invoices SET total_net=?, total_gross=? WHERE id=? AND account_id=?");
@@ -344,9 +272,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
 
 // ---------- View ----------
 require __DIR__ . '/../../src/layout/header.php';
-// return_to
 $return_to = pick_return_to('/companies/show.php?id='.$company_id);
-
 ?>
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h3>Neue Rechnung</h3>
@@ -381,6 +307,7 @@ $return_to = pick_return_to('/companies/show.php?id='.$company_id);
     </div>
   </div>
 
+  <!-- Steuerbefreiung-Begründung (wird evtl. benötigt) -->
   <div class="card mb-3" id="tax-exemption-reason-wrap" style="display:none">
     <div class="card-body">
       <label class="form-label">Begründung für die Steuerbefreiung</label>
@@ -391,8 +318,58 @@ $return_to = pick_return_to('/companies/show.php?id='.$company_id);
         rows="2"
         placeholder="z. B. § 19 UStG (Kleinunternehmer) / Reverse-Charge nach § 13b UStG / Art. 196 MwStSystRL"></textarea>
       <div class="form-text">
-        Wird benötigt, wenn mindestens eine Position steuerfrei oder Reverse-Charge ist.
+        Wird nur benötigt, wenn mindestens eine Position steuerfrei oder Reverse-Charge ist.
       </div>
+    </div>
+  </div>
+
+  <!-- NEU: fällige wiederkehrende Positionen -->
+  <div class="card mb-3">
+    <div class="card-body">
+      <h5 class="card-title">Fällige wiederkehrende Positionen</h5>
+      <?php if (!$recurring_preview): ?>
+        <div class="text-muted">Für das Datum <?php echo h($issue_default) ?> sind keine wiederkehrenden Positionen fällig.</div>
+      <?php else: ?>
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr>
+                <th style="width:36px"></th>
+                <th>Bezeichnung</th>
+                <th class="text-end">Menge</th>
+                <th class="text-end">Einzelpreis</th>
+                <th class="text-end">Steuerart</th>
+                <th class="text-end">MwSt %</th>
+                <th class="text-end">Netto</th>
+                <th class="text-end">Brutto</th>
+                <th>Zeitraum</th>
+              </tr>
+            </thead>
+            <tbody>
+              <?php foreach ($recurring_preview as $r): ?>
+                <tr>
+                  <td>
+                    <input type="checkbox" class="form-check-input"
+                           name="ri_pick[<?php echo h($r['key']) ?>]" value="1" checked>
+                  </td>
+                  <td><?php echo h($r['description']) ?></td>
+                  <td class="text-end"><?php echo h(number_format((float)$r['quantity'],3,',','.')) ?></td>
+                  <td class="text-end"><?php echo h(number_format((float)$r['unit_price'],2,',','.')) ?></td>
+                  <td class="text-end"><?php echo h($r['tax_scheme']) ?></td>
+                  <td class="text-end"><?php echo h(number_format((float)$r['vat_rate'],2,',','.')) ?></td>
+                  <td class="text-end"><?php echo h(number_format((float)$r['total_net'],2,',','.')) ?></td>
+                  <td class="text-end"><?php echo h(number_format((float)$r['total_gross'],2,',','.')) ?></td>
+                  <td><?php echo h($r['from']) ?> – <?php echo h($r['to']) ?></td>
+                </tr>
+              <?php endforeach; ?>
+            </tbody>
+          </table>
+        </div>
+        <div class="form-text mt-2">
+          Das Vorschau-Datum ist das Rechnungsdatum. Wenn du das Rechnungsdatum änderst, wird die tatsächliche Auswahl beim Speichern
+          automatisch für dieses Datum neu berechnet.
+        </div>
+      <?php endif; ?>
     </div>
   </div>
 
@@ -405,88 +382,11 @@ $return_to = pick_return_to('/companies/show.php?id='.$company_id);
         require __DIR__ . '/_items_table.php';
       ?>
       <button type="button" id="addManualItem" class="btn btn-sm btn-outline-primary"
-              data-default-vat="<?php echo h(number_format((float)$settings['default_vat_rate'],2,'.','')) ?>">
-        + Position
-      </button>
+                data-default-vat="<?php echo h(number_format((float)$settings['default_vat_rate'],2,'.','')) ?>">
+          + Position
+        </button>
     </div>
   </div>
-
-  <?php if (!empty($recurring_preview)): ?>
-    <div class="card mb-4">
-      <div class="card-body">
-        <h5 class="card-title d-flex justify-content-between align-items-center">
-          <span>Fällige wiederkehrende Positionen</span>
-          <small class="text-muted">Auswahl wird beim Speichern als zusätzliche Position eingefügt</small>
-        </h5>
-        <div class="table-responsive">
-          <table class="table table-sm align-middle mb-0">
-            <thead>
-            <tr>
-              <th style="width:38px"></th>
-              <th>Bezeichnung</th>
-              <th class="text-end" style="width:110px">Menge</th>
-              <th class="text-end" style="width:120px">Einzelpreis</th>
-              <th class="text-end" style="width:140px">Steuerart</th>
-              <th class="text-end" style="width:90px">MwSt %</th>
-              <th class="text-end" style="width:120px">Netto</th>
-              <th class="text-end" style="width:120px">Brutto</th>
-              <th class="text-end" style="width:160px">Zeitraum</th>
-            </tr>
-            </thead>
-            <tbody>
-            <?php
-            $ri_total_net = 0.0; $ri_total_gross = 0.0;
-            foreach ($recurring_preview as $r):
-              $key   = (string)($r['key'] ?? '');
-              $desc  = (string)($r['description_resolved'] ?? $r['description'] ?? ($r['title'] ?? 'Wiederkehrende Position'));
-              $qty   = (float)($r['quantity'] ?? $r['qty'] ?? 1.0);
-              $unit  = (float)($r['unit_price'] ?? $r['price'] ?? 0.0);
-              $scheme= (string)($r['tax_scheme'] ?? 'standard');
-              $vat   = (float)($scheme === 'standard' ? ($r['vat_rate'] ?? $DEFAULT_TAX) : 0.0);
-              $net   = isset($r['total_net'])   ? (float)$r['total_net']   : round($qty * $unit, 2);
-              $gross = isset($r['total_gross']) ? (float)$r['total_gross'] : round($net * (1 + $vat/100), 2);
-              $period= (string)($r['period_label'] ?? ($r['from'] ?? '').(($r['from']??'')||($r['to']??'')?' – ':'').($r['to'] ?? ''));
-              $ri_total_net  += $net; $ri_total_gross += $gross;
-              ?>
-              <tr>
-                <td class="text-center">
-                  <input class="form-check-input ri-pick"
-                         type="checkbox"
-                         name="ri_pick[<?=h($key)?>]"
-                         value="1"
-                         data-tax-scheme="<?=h($scheme)?>"
-                         checked>
-                </td>
-                <td><?=h($desc)?></td>
-                <td class="text-end"><?=h(number_format($qty,3,',','.'))?></td>
-                <td class="text-end"><?=h(number_format($unit,2,',','.'))?></td>
-                <td class="text-end">
-                  <?php
-                    $label = ($scheme==='standard'?'standard (mit MwSt)':($scheme==='tax_exempt'?'steuerfrei':'Reverse-Charge'));
-                    echo h($label);
-                  ?>
-                </td>
-                <td class="text-end"><?=h(number_format($vat,2,',','.'))?></td>
-                <td class="text-end"><?=h(number_format($net,2,',','.'))?></td>
-                <td class="text-end"><?=h(number_format($gross,2,',','.'))?></td>
-                <td class="text-end"><small class="text-muted"><?=h($period)?></small></td>
-              </tr>
-            <?php endforeach; ?>
-            </tbody>
-            <tfoot>
-              <tr>
-                <th></th>
-                <th class="text-end" colspan="5">Summe (vorausgewählt)</th>
-                <th class="text-end"><?=h(number_format($ri_total_net,2,',','.'))?></th>
-                <th class="text-end"><?=h(number_format($ri_total_gross,2,',','.'))?></th>
-                <th></th>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
-      </div>
-    </div>
-  <?php endif; ?>
 
   <div class="d-flex justify-content-end gap-2">
     <a class="btn btn-outline-secondary" href="<?php echo h(url($return_to)) ?>">Abbrechen</a>
@@ -557,48 +457,7 @@ $return_to = pick_return_to('/companies/show.php?id='.$company_id);
          <button type="button" class="btn btn-sm btn-outline-danger btn-remove-item">Entfernen</button>
        </td>`;
     insertBeforeGrand(tr);
-    // Trigger Steuer-Begründungs-Check
-    if (window.updateTaxReasonVisibility) window.updateTaxReasonVisibility();
   });
-})();
-
-// Erweiterte Pflichtfeld-Logik für Steuer-Begründung:
-// berücksichtigt sowohl .inv-tax-sel (Items) als auch ausgewählte wiederkehrende Positionen (.ri-pick)
-(function(){
-  function extendedTaxReasonVisibility(){
-    const wrap = document.getElementById('tax-exemption-reason-wrap');
-    const area = document.getElementById('tax-exemption-reason');
-    if (!wrap) return;
-
-    let any = false;
-
-    // normale Item-Selects
-    document.querySelectorAll('.inv-tax-sel').forEach(sel=>{
-      if (sel.value && sel.value !== 'standard') any = true;
-    });
-
-    // ausgewählte wiederkehrende Positionen
-    document.querySelectorAll('.ri-pick:checked').forEach(cb=>{
-      const sch = cb.getAttribute('data-tax-scheme') || 'standard';
-      if (sch !== 'standard') any = true;
-    });
-
-    wrap.style.display = any ? '' : 'none';
-    if (area) area.required = !!any;
-    if (!any && area) area.value = '';
-  }
-
-  // Überschreibe ggf. vorhandene Helper-Funktion aus _items_table.php
-  window.updateTaxReasonVisibility = extendedTaxReasonVisibility;
-
-  document.addEventListener('change', function(e){
-    if (e.target && (e.target.matches('.inv-tax-sel') || e.target.matches('.ri-pick'))) {
-      extendedTaxReasonVisibility();
-    }
-  });
-
-  // initial
-  extendedTaxReasonVisibility();
 })();
 </script>
 <?php endif; ?>
