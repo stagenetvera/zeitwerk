@@ -49,6 +49,13 @@ function hurl($s){ return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
         </div>
       </div>
       <div class="col-md-3">
+        <label class="form-label">Länge für {SEQ}</label>
+        <input type="number" name="invoice_seq_pad" min="1" max="12"
+              class="form-control"
+              value="<?= h((int)($set['invoice_seq_pad'] ?? 5)) ?>">
+        <div class="form-text">Anzahl Ziffern, mit führenden Nullen.</div>
+      </div>
+      <div class="col-md-3">
         <label class="form-label">Nächste Sequenz</label>
         <input type="number" class="form-control" name="invoice_next_seq"
                value="<?= (int)$set['invoice_next_seq'] ?>" min="1">
