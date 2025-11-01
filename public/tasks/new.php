@@ -1,5 +1,5 @@
 <?php
-require __DIR__ . '/../../src/layout/header.php';
+require __DIR__ . '/../../src/bootstrap.php';
 require_login();
 csrf_check();
 
@@ -120,7 +120,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST["action"]) && $_POST["
 
   }
 }
-
+require __DIR__ . '/../../src/layout/header.php';
 ?>
 <div class="row">
   <div class="col-md-8">

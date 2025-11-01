@@ -1,6 +1,9 @@
 <?php
 // public/tasks/edit.php
-require __DIR__ . '/../../src/layout/header.php';
+require __DIR__ . '/../../src/bootstrap.php';
+require_once __DIR__ . '/../../src/lib/flash.php';
+require_once __DIR__ . '/../../src/lib/return_to.php';
+
 require_login();
 csrf_check();
 
@@ -87,13 +90,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       $ok = false; $err = 'Ungültige Projekt-/Firmenkombination.';
     }
   }
-
+var_dump($return_to);
   if ($ok) {
     $upd = $pdo->prepare('UPDATE tasks
                           SET project_id = ?, description = ?, planned_minutes = ?, priority = ?, deadline = ?, status = ?, billable = ?
                           WHERE id = ? AND account_id = ?');
     $upd->execute([$project_id, $description, $planned, $priority, $deadline, $status, $billable, $id, $account_id]);
     flash('Aufgabe gespeichert.', 'success');
+
     redirect($return_to);
   } else {
     // Werte für erneutes Rendern überschreiben
@@ -110,6 +114,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // --------------------------------------------------
 // View
 // --------------------------------------------------
+require __DIR__ . '/../../src/layout/header.php';
+
 ?>
 <div class="row">
   <div class="col-md-8">

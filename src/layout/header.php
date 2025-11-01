@@ -4,7 +4,7 @@
  require_once __DIR__ . '/../lib/flash.php';
  $user = auth_user();
 
- $return_to = $_SERVER['REQUEST_URI'] ?? url('/dashboard/index.php');
+//  $return_to = $_SERVER['REQUEST_URI'] ?? url('/dashboard/index.php');
  if ($user) {
   $__rt_running = null;
   try {
@@ -146,13 +146,13 @@
             <form method="post" action="<?php echo url('/times/stop.php') ?>" class="d-inline">
               <?php echo csrf_field() ?>
               <input type="hidden" name="id" value="<?php echo $__rt_running['id'] ?>">
-              <?php echo return_to_hidden($return_to) ?>
+              <?php #echo return_to_hidden($return_to) ?>
               <button class="btn btn-warning me-2">Timer stoppen</button>
             </form>
           <?php else: ?>
             <form method="post" action="<?php echo url('/times/start.php') ?>" class="d-inline">
               <?php echo csrf_field() ?>
-              <input type="hidden" name="return_to" value="<?php echo h(url($return_to)) ?>">
+              <!-- <input type="hidden" name="return_to" value="<?php #echo h(url($return_to)) ?>"> -->
               <button class="btn me-2 btn-success">Timer starten</button>
             </form>
 
@@ -179,7 +179,7 @@
              } catch (Throwable $e) {
               $rt_started_ts = time();
              }
-             $return_to = $_SERVER['REQUEST_URI'] ?? '/';
+            //  $return_to = $_SERVER['REQUEST_URI'] ?? '/';
             ?>
             <div class="border-bottom bg-light">
               <div class="container py-2">
