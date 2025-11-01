@@ -99,11 +99,11 @@ require __DIR__ . '/../../src/layout/header.php';
   </div>
   <div class="col-md-3">
     <label class="form-label">Menge</label>
-    <input type="number" step="0.001" name="quantity" class="form-control" value="<?= h(number_format((float)$row['quantity'],3,'.','')) ?>">
+    <input type="number"  name="quantity" class="form-control no-spin" value="<?= h(_fmt_qty((float)$row['quantity'],3,'.','')) ?>">
   </div>
   <div class="col-md-3">
     <label class="form-label">Einzelpreis (€)</label>
-    <input type="number" step="0.01" name="unit_price" class="form-control" value="<?= h(number_format((float)$row['unit_price'],2,'.','')) ?>">
+    <input type="number" name="unit_price" class="form-control no-spin" value="<?= h(number_format((float)$row['unit_price'],2,'.','')) ?>">
   </div>
 
   <div class="col-md-3">
@@ -116,8 +116,8 @@ require __DIR__ . '/../../src/layout/header.php';
   </div>
   <div class="col-md-3">
     <label class="form-label">MwSt %</label>
-    <input type="number" step="0.01" name="vat_rate" class="form-control ri-vat"
-           value="<?= h(number_format((float)$row['tax_scheme']==='standard' ? (float)$row['vat_rate'] : 0.0,2,'.','')) ?>">
+    <input type="number" name="vat_rate" class="form-control ri-vat no-spin"
+           value="<?= h(number_format($row['tax_scheme']==='standard' ? (float)$row['vat_rate'] : 0.0,2,'.','')) ?>">
     <div class="form-text">Bei steuerfrei/Reverse-Charge automatisch 0,00.</div>
   </div>
 
@@ -133,7 +133,7 @@ require __DIR__ . '/../../src/layout/header.php';
   </div>
   <div class="col-md-3">
     <label class="form-label">alle (Anzahl)</label>
-    <input type="number" min="1" step="1" name="interval_count" class="form-control" value="<?= (int)$row['interval_count'] ?>">
+    <input type="number" min="1" name="interval_count" class="form-control no-spin" value="<?= (int)$row['interval_count'] ?>">
   </div>
 
   <div class="col-md-3">

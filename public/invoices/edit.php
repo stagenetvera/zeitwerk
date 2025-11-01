@@ -474,7 +474,7 @@ $return_to = pick_return_to('/companies/show.php?id='.$company_id);
 
 <div class="card mb-3">
   <div class="card-body">
-    <form method="post" class="row g-3">
+    <form method="post" id="invForm" class="row g-3">
       <?=csrf_field()?>
       <input type="hidden" name="id" value="<?=$invoice_id?>">
       <input type="hidden" name="action" value="save">
@@ -508,7 +508,6 @@ $return_to = pick_return_to('/companies/show.php?id='.$company_id);
         <div class="card-body">
           <div class="d-flex justify-content-between align-items-center mb-2">
             <?php $defVat = number_format((float)$settings['default_vat_rate'],2,'.',''); ?>
-
           </div>
           <label class="form-label">Begründung für die Steuerbefreiung</label>
           <textarea
@@ -538,6 +537,7 @@ $return_to = pick_return_to('/companies/show.php?id='.$company_id);
 
               require __DIR__ . '/_items_table.php';
             ?>
+            <?php if ($canEditItems): ?>
             <button
               type="button"
               id="addManualItem"
@@ -545,6 +545,7 @@ $return_to = pick_return_to('/companies/show.php?id='.$company_id);
               data-default-vat="<?php echo h(number_format((float)$settings['default_vat_rate'],2,'.','')) ?>"
               data-default-rate="<?php echo h(number_format((float)$default_manual_rate,2,'.','')) ?>"
             >+ Position</button>
+            <?php endif; ?>
           </div>
         </div>
       </div>
@@ -584,43 +585,81 @@ $return_to = pick_return_to('/companies/show.php?id='.$company_id);
   }
 
   function switchRowMode(tr, mode){
+    // helpers für optionale Wertübernahme beim Umschalten
+    function decToHHMM(val){
+      var n = parseFloat(String(val||'').replace(',','.'));
+      if (!isFinite(n)) n = 0;
+      var h = Math.floor(Math.max(0,n));
+      var m = Math.round((n - h) * 60);
+      if (m === 60) { h += 1; m = 0; }
+      return (h<10?'0':'')+h+':' + (m<10?'0':'')+m;
+    }
+    function hhmmToDec(v){
+      v = String(v||'').trim();
+      if (v.includes(':')) {
+        var p = v.split(':'); var h = parseInt(p[0]||'0',10)||0; var m = parseInt(p[1]||'0',10)||0;
+        return (h + m/60).toFixed(3);
+      }
+      var n = parseFloat(v.replace(',','.')); return isFinite(n) ? n.toFixed(3) : '0.000';
+    }
+
     const entry = tr.querySelector('input.entry-mode') || tr.appendChild(Object.assign(document.createElement('input'), {type:'hidden', className:'entry-mode', value:'qty'}));
     entry.value = mode;
+    tr.setAttribute('data-mode', mode);
 
     const qty   = tr.querySelector('input.quantity');
     const hours = tr.querySelector('input.hours-input');
 
     if (mode === 'time') {
+      // ggf. Menge → HH:MM übernehmen, wenn noch leer
+      if (hours && qty && (!hours.value || hours.value === '00:00')) {
+        hours.value = decToHHMM(qty.value || '0');
+      }
       if (qty)   { qty.classList.add('d-none'); qty.disabled = true; }
       if (hours) { hours.classList.remove('d-none'); hours.disabled = false; }
     } else {
+      // ggf. HH:MM → Menge übernehmen, wenn Menge leer ist
+      if (qty && hours && (!qty.value || qty.value === '0' || qty.value === '0.000')) {
+        qty.value = hhmmToDec(hours.value || '0');
+      }
       if (qty)   { qty.classList.remove('d-none'); qty.disabled = false; }
       if (hours) { hours.classList.add('d-none');  hours.disabled = true; }
     }
 
     tr.querySelectorAll('.mode-btn').forEach(b=>{
-      setBtnActive(b, b.dataset.mode === mode);
+      b.classList.toggle('btn-secondary', b.dataset.mode === mode);
+      b.classList.toggle('text-white',   b.dataset.mode === mode);
+      b.classList.toggle('btn-outline-secondary', b.dataset.mode !== mode);
+      b.setAttribute('aria-pressed', b.dataset.mode === mode ? 'true' : 'false');
     });
+
+    // WICHTIG: Neuberechnung triggern (delegierter 'input'-Listener im zweiten Script ruft recalcRow)
+    const activeInput = (mode === 'time') ? hours : qty;
+    if (activeInput) {
+      activeInput.dispatchEvent(new Event('input', { bubbles: true }));
+    }
   }
 
   // Baut (falls nötig) die input-group mit Icon-Toggle um vorhandene Felder
   function ensureIconToggle(tr){
+    // Toggle nur für nicht-auto Zeilen
+    if (tr.getAttribute('data-mode') === 'auto') return;
+
     // schon vorhanden?
     if (tr.querySelector('.mode-btn')) return;
 
-    const qtyCell = tr.querySelector('td:nth-child(3)'); // Spalte Menge/Zeit (wie in deiner Tabelle)
+    const qtyCell = tr.querySelector('td:nth-child(3)');
     if (!qtyCell) return;
 
-    // existierende Inputs suchen oder anlegen
     let qty   = tr.querySelector('input.quantity');
     let hours = tr.querySelector('input.hours-input');
 
     if (!qty) {
       qty = document.createElement('input');
-      qty.type = 'number'; qty.step = '0.001';
-      qty.className = 'form-control text-end quantity';
+      qty.type = 'number';
+      qty.className = 'form-control text-end quantity no-spin';
       qty.name = 'items['+(tr.getAttribute('data-row')||'')+'][quantity]';
-      qty.value = '1.000';
+      qty.value = '1';
     }
     if (!hours) {
       hours = document.createElement('input');
@@ -631,13 +670,12 @@ $return_to = pick_return_to('/companies/show.php?id='.$company_id);
       hours.disabled = true;
     }
 
-    // input-group mit Icon-Buttons bauen
     const group = document.createElement('div');
     group.className = 'input-group input-group-sm flex-nowrap';
 
     const btnQty  = document.createElement('button');
     btnQty.type   = 'button';
-    btnQty.className = 'btn btn-outline-secondary mode-btn';
+    btnQty.className = 'btn btn-outline-secondary mode-btn no-spin';
     btnQty.dataset.mode = 'qty';
     btnQty.title  = 'Menge';
     btnQty.innerHTML = '<i class="bi bi-123" aria-hidden="true"></i><span class="visually-hidden">Menge</span>';
@@ -654,7 +692,6 @@ $return_to = pick_return_to('/companies/show.php?id='.$company_id);
     group.appendChild(qty);
     group.appendChild(hours);
 
-    // Inhalt der Zelle ersetzen
     qtyCell.innerHTML = '';
     qtyCell.appendChild(group);
   }
@@ -725,9 +762,9 @@ $return_to = pick_return_to('/companies/show.php?id='.$company_id);
                <i class="bi bi-clock" aria-hidden="true"></i><span class="visually-hidden">Zeit</span>
              </button>
 
-             <input type="number" step="0.001"
-                    class="form-control text-end quantity"
-                    name="items[${idx}][quantity]" value="1.000">
+             <input type="number"
+                    class="form-control text-end quantity no-spin"
+                    name="items[${idx}][quantity]" value="1">
              <input type="text"
                     class="form-control text-end hours-input d-none"
                     name="items[${idx}][hours]" placeholder="hh:mm oder 1.5" disabled>
@@ -735,7 +772,7 @@ $return_to = pick_return_to('/companies/show.php?id='.$company_id);
          </td>
 
          <td class="text-end">
-           <input type="number" step="0.01" class="form-control text-end rate"
+           <input type="number" class="form-control text-end rate no_spin"
                   name="items[${idx}][hourly_rate]" value="${defRate}">
          </td>
 
@@ -749,7 +786,7 @@ $return_to = pick_return_to('/companies/show.php?id='.$company_id);
          </td>
 
          <td class="text-end">
-           <input type="number" step="0.01" min="0" max="100" class="form-control text-end inv-vat-input"
+           <input type="number" min="0" max="100" class="form-control text-end inv-vat-input no-spin"
                   name="items[${idx}][vat_rate]" value="${defVat}">
          </td>
 

@@ -88,11 +88,11 @@ require __DIR__ . '/../../src/layout/header.php';
   </div>
   <div class="col-md-3">
     <label class="form-label">Menge</label>
-    <input type="number" step="0.001" name="quantity" class="form-control" value="1.000">
+    <input type="number"  name="quantity" class="form-control no-spin" value="1">
   </div>
   <div class="col-md-3">
     <label class="form-label">Einzelpreis (€)</label>
-    <input type="number" step="0.01" name="unit_price" class="form-control" value="0.00">
+    <input type="number" name="unit_price" class="form-control no-spin" value="0.00">
   </div>
 
   <div class="col-md-3">
@@ -105,7 +105,7 @@ require __DIR__ . '/../../src/layout/header.php';
   </div>
   <div class="col-md-3">
     <label class="form-label">MwSt %</label>
-    <input type="number" step="0.01" name="vat_rate" class="form-control ri-vat" value="<?= h($def_vat) ?>">
+    <input type="number"  name="vat_rate" class="form-control ri-vat no-spin" value="<?= h($def_vat) ?>">
     <div class="form-text">Bei steuerfrei/Reverse-Charge automatisch 0,00.</div>
   </div>
 

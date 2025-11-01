@@ -395,13 +395,13 @@ $tax_reason_value = isset($_POST['tax_exemption_reason']) ? (string)$_POST['tax_
                            name="ri_pick[<?php echo h($r['key']) ?>]" value="1" <?php echo $checked ? 'checked' : '' ?>>
                   </td>
                   <td><?php echo h($r['description']) ?></td>
-                  <td class="text-end"><?php echo h(number_format($qty,3,',','.')) ?></td>
+                  <td class="text-end"><?php echo h(_fmt_qty($qty)) ?></td>
                   <td class="text-end"><?php echo h(number_format($price,2,',','.')) ?></td>
                   <td class="text-end"><?php echo h($scheme) ?></td>
                   <td class="text-end"><?php echo h(number_format($vat,2,',','.')) ?></td>
                   <td class="text-end"><?php echo h(number_format($net,2,',','.')) ?></td>
                   <td class="text-end"><?php echo h(number_format($gross,2,',','.')) ?></td>
-                  <td><?php echo h($r['from']) ?> – <?php echo h($r['to']) ?></td>
+                  <td><?php echo h(_fmt_dmy($r['from'])) ?> – <?php echo h(_fmt_dmy($r['to'])) ?></td>
                 </tr>
               <?php endforeach; ?>
             </tbody>
@@ -466,43 +466,82 @@ $tax_reason_value = isset($_POST['tax_exemption_reason']) ? (string)$_POST['tax_
   }
 
   function switchRowMode(tr, mode){
+    // helpers für optionale Wertübernahme beim Umschalten
+    function decToHHMM(val){
+      var n = parseFloat(String(val||'').replace(',','.'));
+      if (!isFinite(n)) n = 0;
+      var h = Math.floor(Math.max(0,n));
+      var m = Math.round((n - h) * 60);
+      if (m === 60) { h += 1; m = 0; }
+      return (h<10?'0':'')+h+':' + (m<10?'0':'')+m;
+    }
+    function hhmmToDec(v){
+      v = String(v||'').trim();
+      if (v.includes(':')) {
+        var p = v.split(':'); var h = parseInt(p[0]||'0',10)||0; var m = parseInt(p[1]||'0',10)||0;
+        return (h + m/60).toFixed(3);
+      }
+      var n = parseFloat(v.replace(',','.')); return isFinite(n) ? n.toFixed(3) : '0.000';
+    }
+
     const entry = tr.querySelector('input.entry-mode') || tr.appendChild(Object.assign(document.createElement('input'), {type:'hidden', className:'entry-mode', value:'qty'}));
     entry.value = mode;
+    tr.setAttribute('data-mode', mode);
 
     const qty   = tr.querySelector('input.quantity');
     const hours = tr.querySelector('input.hours-input');
 
     if (mode === 'time') {
+      // ggf. Menge → HH:MM übernehmen, wenn noch leer
+      if (hours && qty && (!hours.value || hours.value === '00:00')) {
+        hours.value = decToHHMM(qty.value || '0');
+      }
       if (qty)   { qty.classList.add('d-none'); qty.disabled = true; }
       if (hours) { hours.classList.remove('d-none'); hours.disabled = false; }
     } else {
+      // ggf. HH:MM → Menge übernehmen, wenn Menge leer ist
+      if (qty && hours && (!qty.value || qty.value === '0' || qty.value === '0.000')) {
+        qty.value = hhmmToDec(hours.value || '0');
+      }
       if (qty)   { qty.classList.remove('d-none'); qty.disabled = false; }
       if (hours) { hours.classList.add('d-none');  hours.disabled = true; }
     }
 
     tr.querySelectorAll('.mode-btn').forEach(b=>{
-      setBtnActive(b, b.dataset.mode === mode);
+      b.classList.toggle('btn-secondary', b.dataset.mode === mode);
+      b.classList.toggle('text-white',   b.dataset.mode === mode);
+      b.classList.toggle('btn-outline-secondary', b.dataset.mode !== mode);
+      b.setAttribute('aria-pressed', b.dataset.mode === mode ? 'true' : 'false');
     });
+
+    // WICHTIG: Neuberechnung triggern (delegierter 'input'-Listener im zweiten Script ruft recalcRow)
+    const activeInput = (mode === 'time') ? hours : qty;
+    if (activeInput) {
+      activeInput.dispatchEvent(new Event('input', { bubbles: true }));
+    }
   }
+
 
   // Baut (falls nötig) die input-group mit Icon-Toggle um vorhandene Felder
   function ensureIconToggle(tr){
+    // Toggle nur für nicht-auto Zeilen
+    if (tr.getAttribute('data-mode') === 'auto') return;
+
     // schon vorhanden?
     if (tr.querySelector('.mode-btn')) return;
 
-    const qtyCell = tr.querySelector('td:nth-child(3)'); // Spalte Menge/Zeit (wie in deiner Tabelle)
+    const qtyCell = tr.querySelector('td:nth-child(3)');
     if (!qtyCell) return;
 
-    // existierende Inputs suchen oder anlegen
     let qty   = tr.querySelector('input.quantity');
     let hours = tr.querySelector('input.hours-input');
 
     if (!qty) {
       qty = document.createElement('input');
-      qty.type = 'number'; qty.step = '0.001';
-      qty.className = 'form-control text-end quantity';
+      qty.type = 'number';
+      qty.className = 'form-control text-end quantity no-spin';
       qty.name = 'items['+(tr.getAttribute('data-row')||'')+'][quantity]';
-      qty.value = '1.000';
+      qty.value = '1';
     }
     if (!hours) {
       hours = document.createElement('input');
@@ -513,13 +552,12 @@ $tax_reason_value = isset($_POST['tax_exemption_reason']) ? (string)$_POST['tax_
       hours.disabled = true;
     }
 
-    // input-group mit Icon-Buttons bauen
     const group = document.createElement('div');
     group.className = 'input-group input-group-sm flex-nowrap';
 
     const btnQty  = document.createElement('button');
     btnQty.type   = 'button';
-    btnQty.className = 'btn btn-outline-secondary mode-btn';
+    btnQty.className = 'btn btn-outline-secondary mode-btn no-spin';
     btnQty.dataset.mode = 'qty';
     btnQty.title  = 'Menge';
     btnQty.innerHTML = '<i class="bi bi-123" aria-hidden="true"></i><span class="visually-hidden">Menge</span>';
@@ -536,7 +574,6 @@ $tax_reason_value = isset($_POST['tax_exemption_reason']) ? (string)$_POST['tax_
     group.appendChild(qty);
     group.appendChild(hours);
 
-    // Inhalt der Zelle ersetzen
     qtyCell.innerHTML = '';
     qtyCell.appendChild(group);
   }
@@ -607,9 +644,9 @@ $tax_reason_value = isset($_POST['tax_exemption_reason']) ? (string)$_POST['tax_
                <i class="bi bi-clock" aria-hidden="true"></i><span class="visually-hidden">Zeit</span>
              </button>
 
-             <input type="number" step="0.001"
-                    class="form-control text-end quantity"
-                    name="items[${idx}][quantity]" value="1.000">
+             <input type="number"
+                    class="form-control text-end quantity no-spin"
+                    name="items[${idx}][quantity]" value="1">
              <input type="text"
                     class="form-control text-end hours-input d-none"
                     name="items[${idx}][hours]" placeholder="hh:mm oder 1.5" disabled>
@@ -617,7 +654,7 @@ $tax_reason_value = isset($_POST['tax_exemption_reason']) ? (string)$_POST['tax_
          </td>
 
          <td class="text-end">
-           <input type="number" step="0.01" class="form-control text-end rate"
+           <input type="number" class="form-control text-end rate no-spin"
                   name="items[${idx}][hourly_rate]"  value="${defRate}">
          </td>
 
@@ -631,7 +668,7 @@ $tax_reason_value = isset($_POST['tax_exemption_reason']) ? (string)$_POST['tax_
          </td>
 
          <td class="text-end">
-           <input type="number" step="0.01" min="0" max="100" class="form-control text-end inv-vat-input"
+           <input type="number" min="0" max="100" class="form-control text-end inv-vat-input no-spin"
                   name="items[${idx}][vat_rate]" value="${defVat}">
          </td>
 

@@ -111,9 +111,9 @@ $is_sortable = $is_sortable ?? false;
           </span></td>
           <td><?= h($r['status'] ?? '—') ?></td>
           <td><?php if ($badge_deadline): ?>
-            <span class="<?= $badge_deadline ?>"><?= !empty($r['deadline']) ? h($r['deadline']) : '—' ?></span>
+            <span class="<?= $badge_deadline ?>"><?= !empty($r['deadline']) ? h(_fmt_dmy($r['deadline'])) : '—' ?></span>
             <?php else: ?>
-                <?= !empty($r['deadline']) ? h($r['deadline']) : '—' ?>
+                <?= !empty($r['deadline']) ? h(_fmt_dmy($r['deadline'])) : '—' ?>
             <?php endif; ?>
             </td>
           <td><?= $planned ? fmt_minutes($planned) : '—' ?></td>

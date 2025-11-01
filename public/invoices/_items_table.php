@@ -140,7 +140,7 @@ if (!empty($groups)) {
           <input type="hidden" name="items[<?=$idx?>][sum_minutes]" value="<?=$sumMin?>" class="sum-minutes">
         </td>
         <td class="text-end">
-          <input type="number" step="0.01" class="form-control text-end rate" name="items[<?=$idx?>][hourly_rate]" value="<?=$rate?>">
+          <input type="number" class="form-control text-end rate no-spin" name="items[<?=$idx?>][hourly_rate]" value="<?=$rate?>">
         </td>
         <td class="text-end">
           <select name="items[<?=$idx?>][tax_scheme]" class="form-select inv-tax-sel"
@@ -151,7 +151,7 @@ if (!empty($groups)) {
           </select>
         </td>
         <td class="text-end">
-          <input type="number" step="0.01" min="0" max="100" class="form-control text-end inv-vat-input"
+          <input type="number" min="0" max="100" class="form-control text-end inv-vat-input no-spin"
                  name="items[<?=$idx?>][vat_rate]" value="<?= h(number_format($taxNum,2,'.','')) ?>">
         </td>
         <td class="text-end"><span class="net"><?=number_format($net,2,',','.')?></span></td>
@@ -252,18 +252,18 @@ if (empty($groups) && !empty($items)) {
           <input type="hidden" name="items[<?=$idx?>][sum_minutes]" value="<?=$sumMin?>" class="sum-minutes">
         <?php elseif ($entryMode==='time'): ?>
           <div class="d-flex gap-1 align-items-center justify-content-end">
-            <input type="text" class="form-control text-end hours-input" style="max-width:120px"
+            <input type="text" class="form-control text-end hours-input"
                    name="items[<?=$idx?>][hours]" value="<?= _fmt_hours_from_dec($quantity) ?>" <?=$dis?>>
           </div>
           <input type="hidden" class="quantity-dec" name="items[<?=$idx?>][quantity]" value="<?= number_format($quantity,3,'.','') ?>">
         <?php else: ?>
-          <input type="number" step="0.001" class="form-control text-end quantity"
-                 name="items[<?=$idx?>][quantity]" value="<?= number_format($quantity,3,'.','') ?>" <?=$dis?>>
+          <input type="number" class="form-control text-end quantity no-spin"
+                 name="items[<?=$idx?>][quantity]" value="<?= _fmt_qty($quantity,3,'.','') ?>" <?=$dis?>>
         <?php endif; ?>
       </td>
 
       <td class="text-end">
-        <input type="number" step="0.01" class="form-control text-end rate"
+        <input type="number"  class="form-control text-end rate no-spin"
                name="items[<?=$idx?>][hourly_rate]" value="<?=$rate?>" <?=$dis?>>
       </td>
 
@@ -276,8 +276,8 @@ if (empty($groups) && !empty($items)) {
         </select>
       </td>
       <td class="text-end">
-        <input type="number" step="0.01" min="0" max="100"
-               class="form-control text-end inv-vat-input"
+        <input type="number" min="0" max="100"
+               class="form-control text-end inv-vat-input no-spin"
                name="items[<?=$idx?>][vat_rate]"
                value="<?= h($it_vat) ?>" <?=$dis?>>
       </td>
@@ -469,7 +469,7 @@ if (empty($groups) && !empty($items)) {
         var td = qty.closest('td');
         qty.remove();
         var html = '<div class="d-flex gap-1 align-items-center justify-content-end">'
-                 + '<input type="text" class="form-control text-end hours-input" style="max-width:120px" name="" value="00:00"></div>';
+                 + '<input type="text" class="form-control text-end hours-input"  name="" value="00:00"></div>';
         td.insertAdjacentHTML('afterbegin', html);
         if (!qhid) { var h = document.createElement('input'); h.type='hidden'; h.className='quantity-dec'; td.appendChild(h); }
       }
@@ -478,7 +478,7 @@ if (empty($groups) && !empty($items)) {
         var td = hrs.closest('td');
         hrs.closest('div').remove();
         if (qhid) qhid.remove();
-        var html = '<input type="number" step="0.001" class="form-control text-end quantity" value="1.000">';
+        var html = '<input type="number" class="form-control text-end quantity no-spin" value="1">';
         td.insertAdjacentHTML('afterbegin', html);
       }
     }

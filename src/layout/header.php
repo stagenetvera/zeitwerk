@@ -102,6 +102,19 @@
   /* Visuelle Hilfe unter Preisfeld entfällt überall */
   .rate-help { display: none !important; }
   .mode-btn i { pointer-events: none; } /* Icon klickt wie der Button */
+
+  /* Chrome, Edge, Safari, Opera */
+  .no-spin::-webkit-outer-spin-button,
+  .no-spin::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  /* Firefox (und generisch) */
+  .no-spin {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
   </style>
 </head>
 <body class="bg-light">

@@ -683,29 +683,39 @@ $recurrings = $riStmt->fetchAll();
               default   => 'alle '.$ic.' Monate',
             };
           ?>
-            <tr>
-              <td>
-                <div class="fw-semibold"><?= h($ri['description_tpl']) ?></div>
-              </td>
-              <td class="text-end"><?= number_format($qty,3,',','.') ?></td>
-              <td class="text-end"><?= number_format($unit,2,',','.') ?></td>
-              <td class="text-end"><?= h($sch) ?></td>
-              <td class="text-end"><?= number_format($vat,2,',','.') ?></td>
-              <td class="text-end"><?= number_format($net,2,',','.') ?></td>
-              <td class="text-end"><?= number_format($gross,2,',','.') ?></td>
-              <td><?= h($intLabel) ?></td>
-              <td>
-                <?= h($ri['start_date']) ?>
-                <?php if (!empty($ri['end_date'])): ?> – <?= h($ri['end_date']) ?><?php else: ?> (unbegrenzt)<?php endif; ?>
-                <?php if (empty($ri['active'])): ?><div class="small text-muted">inaktiv</div><?php endif; ?>
-              </td>
-              <td class="text-end">
-                <a class="btn btn-sm btn-outline-secondary" href="<?= url('/recurring/edit.php') ?>?id=<?= (int)$ri['id'] ?>">
-                  Bearbeiten
-                </a>
-              </td>
-            </tr>
-          <?php endforeach; ?>
+              <tr>
+                <td>
+                  <div class="fw-semibold"><?=h($ri['description_tpl'])?></div>
+                  <div class="text-muted small">
+                    Platzhalter: {from}, {to}, {period}, {month}, {year}
+                  </div>
+                </td>
+                <td class="text-end"><?= h(_fmt_qty($qty)) ?></td>
+                <td class="text-end"><?= number_format($unit,2,',','.') ?></td>
+                <td class="text-end"><?= h($sch) ?></td>
+                <td class="text-end"><?= number_format($vat,2,',','.') ?></td>
+                <td class="text-end"><?= number_format($net,2,',','.') ?></td>
+                <td class="text-end"><?= number_format($gross,2,',','.') ?></td>
+                <td><?= h($intLabel) ?></td>
+                <td>
+                  <?= h(_fmt_dmy($ri['start_date'])) ?>
+                  <?php if (!empty($ri['end_date'])): ?> – <?= h(_fmt_dmy($ri['end_date'])) ?><?php else: ?> (unbegrenzt)<?php endif; ?>
+                </td>
+                <td class="text-end">
+                  <a class="btn btn-sm btn-outline-secondary" href="<?= url('/recurring/edit.php') ?>?id=<?= (int)$ri['id'] ?>">
+                    Bearbeiten
+                  </a>
+                  <form method="post" class="d-inline">
+                    <?=csrf_field()?>
+                    <input type="hidden" name="ri_action" value="del">
+                    <input type="hidden" name="ri_id" value="<?= (int)$ri['id'] ?>">
+                    <button class="btn btn-sm btn-outline-danger" onclick="return confirm('Löschen?')">
+                      Löschen
+                    </button>
+                  </form>
+                </td>
+              </tr>
+            <?php endforeach; ?>
           </tbody>
         </table>
       </div>
