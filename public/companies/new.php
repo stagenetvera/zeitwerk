@@ -10,7 +10,8 @@ csrf_check();
 $user       = auth_user();
 $account_id = (int)$user['account_id'];
 
-$return_to = '/companies/index.php';
+$return_to = pick_return_to('/companies/index.php');
+
 
 // Account-Settings für Platzhalter/JS (z. B. Standard-MwSt)
 $settings = get_account_settings($pdo, $account_id);

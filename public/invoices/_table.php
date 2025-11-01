@@ -18,6 +18,15 @@ $empty_message = $empty_message ?? 'Keine Rechnungen.';
 if (!isset($invoices) && isset($rows) && is_array($rows)) {
   $invoices = $rows;
 }
+
+/* NEU: $return_to robust setzen (falls nicht vom Aufrufer gesetzt) */
+if (!isset($return_to) || $return_to === null || $return_to === '') {
+  if (function_exists('rt_current_path_and_query')) {
+    $return_to = rt_current_path_and_query();
+  } else {
+    $return_to = $_SERVER['REQUEST_URI'] ?? '/invoices/index.php';
+  }
+}
 ?>
 
 <div class="table-responsive">
@@ -96,9 +105,16 @@ if (!isset($invoices) && isset($rows) && is_array($rows)) {
                 <input type="hidden" name="return_to" value="<?= h($return_to) ?>">
                 <button class="btn btn-sm btn-outline-danger">Stornieren</button>
               </form>
-              <a class="btn btn-sm btn-outline-secondary" href="<?= url('/invoices/edit.php') ?>?id=<?= (int)$inv['id'] ?>"><i class="bi bi-eye"></i>
-    <span class="visually-hidden">Ansehen</span></a>
-              <a class="btn btn-sm btn-outline-secondary" href="<?= url('/invoices/export_xml.php') ?>?id=<?= (int)$inv['id'] ?>">XML</a>
+
+              <form method="post" action="<?= url('/invoices/edit.php') ?>" class="d-inline">
+                <?= csrf_field() ?>
+                <input type="hidden" name="id" value="<?= (int)$inv['id'] ?>">
+                <input type="hidden" name="return_to" value="<?= h($return_to) ?>">
+                <button class="btn btn-sm btn-outline-secondary"><i class="bi bi-eye"></i></button>
+                <span class="visually-hidden">Ansehen</span>
+              </form>
+
+              <!-- <a class="btn btn-sm btn-outline-secondary" href="<?= url('/invoices/export_xml.php') ?>?id=<?= (int)$inv['id'] ?>">XML</a> -->
             </td>
           </tr>
         <?php endforeach; ?>

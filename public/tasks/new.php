@@ -1,5 +1,5 @@
 <?php
-require __DIR__ . '/../../src/layout/header.php';
+require __DIR__ . '/../../src/bootstrap.php';
 require_login();
 csrf_check();
 
@@ -36,13 +36,18 @@ if ($company_id) {
   if (count($projects) === 1) {
     $_POST['project_id'] = (int)$projects[0]['id'];
   }
+  $return_to = pick_return_to('/companies/show.php?id='.$company_id);
+
+}
+else {
+  $return_to = pick_return_to('/dashboard/index.php');
+
 }
 $project_id = isset($_POST['project_id']) ? (int)$_POST['project_id']
             : (isset($_GET['project_id']) ? (int)$_GET['project_id'] : 0);
 $err = null;
 
 
-$return_to = pick_return_to('/companies/show.php?id='.$company_id);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST["action"]) && $_POST["action"] == "save") {
   $company_id = (int)($_POST['company_id'] ?? 0);
@@ -120,7 +125,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST["action"]) && $_POST["
 
   }
 }
-
+require __DIR__ . '/../../src/layout/header.php';
 ?>
 <div class="row">
   <div class="col-md-8">

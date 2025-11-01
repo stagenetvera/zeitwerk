@@ -4,6 +4,7 @@ require __DIR__ . '/../../src/bootstrap.php';
 require_once __DIR__ . '/../../src/lib/settings.php';
 require_once __DIR__ . '/../../src/utils.php'; // dec(), parse_hours_to_decimal()
 require_once __DIR__ . '/../../src/lib/recurring.php';
+require_once __DIR__ . '/../../src/lib/return_to.php';
 require_login();
 csrf_check();
 
@@ -288,7 +289,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
 
       $pdo->commit();
 
-      redirect(url('/companies/show.php').'?id='.$company_id);
+      redirect_to_return_to(url('/companies/show.php').'?id='.$company_id);
     } catch (Throwable $e) {
       $pdo->rollBack();
       $err = 'Rechnung konnte nicht angelegt werden. ('.$e->getMessage().')';

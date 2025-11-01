@@ -6,6 +6,7 @@ require_once __DIR__ . '/../../src/lib/settings.php';
 require_once __DIR__ . '/../../src/utils.php';
 require_once __DIR__ . '/../../src/lib/flash.php';
 require_once __DIR__ . '/../../src/lib/recurring.php';
+require_once __DIR__ . '/../../src/lib/return_to.php';
 
 require_login();
 csrf_check();
@@ -454,8 +455,6 @@ if ($default_manual_rate <= 0 && !empty($groups) && !empty($groups[0]['rows'])) 
 }
 // ---------- View ----------
 require __DIR__ . '/../../src/layout/header.php';
-// return_to
-$return_to = pick_return_to('/companies/show.php?id='.$company_id);
 
 ?>
 <div class="d-flex justify-content-between align-items-center mb-3">

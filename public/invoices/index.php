@@ -186,7 +186,7 @@ foreach ($status as $st) $persist['status[]'][] = $st;
     // JOIN companies c ON c.id = i.company_id AND c.account_id = i.account_id
     // WHERE i.account_id = :acc
     // ... (filters, order, limit/offset)
-
+    $return_to = pick_return_to('/invoices/index.php');
     $invoice_table_mode = 'with_company';
     $empty_message = 'Keine Rechnungen gefunden.';
     require __DIR__ . '/_table.php';

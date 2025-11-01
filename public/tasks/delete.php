@@ -1,6 +1,6 @@
 <?php
 // public/tasks/delete.php
-require __DIR__ . '/../../src/layout/header.php';
+require __DIR__ . '/../../src/bootstrap.php';
 require_once __DIR__ . '/../../src/lib/flash.php';
 require_login();
 csrf_check();
