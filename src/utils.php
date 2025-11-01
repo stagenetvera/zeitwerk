@@ -68,7 +68,7 @@ function fmt_minutes($m){
   $m = (int)$m; $h = intdiv($m,60); $r = $m%60;
   return sprintf('%d:%02d',$h,$r);
 }
-// NEU: Datum in TT-MM-YYYY (Zeit behalten, Sekunden kappen)
+// NEU: Datum in TT.MM.YYYY (Zeit behalten, Sekunden kappen)
 function _fmt_dmy($s){
   if (!$s) return '';
   $ts = strtotime((string)$s);
