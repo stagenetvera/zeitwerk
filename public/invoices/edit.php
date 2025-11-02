@@ -162,6 +162,9 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '')==='save') {
   $due_date   = $_POST['due_date']   ?? $invoice['due_date'];
   $tax_reason = trim($_POST['tax_exemption_reason'] ?? '');
 
+  $intro_text = (string)($_POST['invoice_intro_text'] ?? '');
+  $outro_text = (string)($_POST['invoice_outro_text'] ?? '');
+
   $assign_number = (empty($invoice['invoice_number']) && in_array($new_status, ['gestellt','gemahnt','bezahlt','storniert'], true));
   $number = $invoice['invoice_number'] ?? null;
   if ($assign_number) {
@@ -323,17 +326,17 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '')==='save') {
       if ($assign_number) {
         $updInv = $pdo->prepare("
           UPDATE invoices
-            SET issue_date=?, due_date=?, status=?, invoice_number=?, total_net=?, total_gross=?, tax_exemption_reason=?
+            SET issue_date=?, due_date=?, status=?, invoice_number=?, total_net=?, total_gross=?, tax_exemption_reason=?,invoice_intro_text=?, invoice_outro_text=?
           WHERE account_id=? AND id=?
         ");
-        $updInv->execute([$issue_date, $due_date, $new_status, $number, (float)$sum_net, (float)$sum_gross, $tax_reason, $account_id, (int)$invoice['id']]);
+        $updInv->execute([$issue_date, $due_date, $new_status, $number, (float)$sum_net, (float)$sum_gross, $tax_reason, $intro_text, $outro_text, $account_id, (int)$invoice['id']]);
       } else {
         $updInv = $pdo->prepare("
           UPDATE invoices
-            SET issue_date=?, due_date=?, status=?, total_net=?, total_gross=?, tax_exemption_reason=?
+            SET issue_date=?, due_date=?, status=?, total_net=?, total_gross=?, tax_exemption_reason=?, invoice_intro_text=?, invoice_outro_text=?
           WHERE account_id=? AND id=?
         ");
-        $updInv->execute([$issue_date, $due_date, $new_status, (float)$sum_net, (float)$sum_gross, $tax_reason, $account_id, (int)$invoice['id']]);
+        $updInv->execute([$issue_date, $due_date, $new_status, (float)$sum_net, (float)$sum_gross, $tax_reason, $intro_text, $outro_text, $account_id, (int)$invoice['id']]);
       }
 
       // Times-Status bei Statuswechsel
@@ -503,6 +506,35 @@ require __DIR__ . '/../../src/layout/header.php';
         </select>
       </div>
 
+      <?php
+        // Für Platzhalter in Edit-Ansicht (falls leer):
+        $eff_intro_edit = (string)($settings['invoice_intro_text'] ?? '');
+        $eff_outro_edit = (string)($settings['invoice_outro_text'] ?? '');
+        if ($company) {
+          $coIntro = isset($company['invoice_intro_text']) ? (string)$company['invoice_intro_text'] : '';
+          $coOutro = isset($company['invoice_outro_text']) ? (string)$company['invoice_outro_text'] : '';
+          if (trim($coIntro) !== '') $eff_intro_edit = $coIntro;
+          if (trim($coOutro) !== '') $eff_outro_edit = $coOutro;
+        }
+      ?>
+      <div class="col-12">
+        <div class="card mt-3">
+          <div class="card-body">
+            <div class="mb-3">
+              <label class="form-label">Rechnungs-Einleitung</label>
+              <textarea
+                class="form-control"
+                name="invoice_intro_text"
+                rows="3"
+                placeholder="<?= h($eff_intro_edit) ?>"
+              ><?= h((string)($invoice['invoice_intro_text'] ?? '')) ?></textarea>
+            </div>
+
+
+          </div>
+        </div>
+      </div>
+
       <div class="card mb-3" id="tax-exemption-reason-wrap" style="<?= !empty($invoice['tax_exemption_reason']) ? '' : 'display:none' ?>">
         <div class="card-body">
           <div class="d-flex justify-content-between align-items-center mb-2">
@@ -548,6 +580,16 @@ require __DIR__ . '/../../src/layout/header.php';
           </div>
         </div>
       </div>
+
+      <div>
+              <label class="form-label">Rechnungs-Schlussformel</label>
+              <textarea
+                class="form-control"
+                name="invoice_outro_text"
+                rows="3"
+                placeholder="<?= h($eff_outro_edit) ?>"
+              ><?= h((string)($invoice['invoice_outro_text'] ?? '')) ?></textarea>
+            </div>
 
       <div class="col-12 text-end">
         <a class="btn btn-outline-secondary" href="<?=h(url($return_to))?>">Abbrechen</a>

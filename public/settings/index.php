@@ -131,10 +131,16 @@ function hurl($s){ return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
         </script>
 
 
-      <div class="col-12">
-        <label class="form-label">Einleitender Text auf Rechnungen</label>
-        <textarea class="form-control" name="invoice_intro_text" rows="4"><?= h($set['invoice_intro_text']) ?></textarea>
-        <div class="form-text">Wird bei neuen Rechnungen als Standardtext verwendet (Export/Vorlage).</div>
+
+
+      <div class="mb-3">
+        <label class="form-label">Standard-Einleitungstext</label>
+        <textarea class="form-control" name="invoice_intro_text" rows="3"><?= h($set['invoice_intro_text'] ?? '') ?></textarea>
+      </div>
+
+      <div class="mb-3">
+        <label class="form-label">Standard-Schlussformel</label>
+        <textarea class="form-control" name="invoice_outro_text" rows="3"><?= h($set['invoice_outro_text'] ?? '') ?></textarea>
       </div>
 
       <hr class="my-3">

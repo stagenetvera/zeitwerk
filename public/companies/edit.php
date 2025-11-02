@@ -42,6 +42,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   $vat     = trim($_POST['vat_id'] ?? '');
   $status  = $_POST['status'] ?? 'aktiv';
 
+  // NEU: Firmenspezifische Rechnungstexte (leer = kein Override -> NULL speichern)
+  $co_intro_raw = (string)($_POST['invoice_intro_text'] ?? '');
+  $co_outro_raw = (string)($_POST['invoice_outro_text'] ?? '');
+  $co_intro = trim($co_intro_raw) !== '' ? $co_intro_raw : null;
+  $co_outro = trim($co_outro_raw) !== '' ? $co_outro_raw : null;
+
   // Fallback-Mapping alter Werte
   if ($status === 'laufend') $status = 'aktiv';
 
@@ -67,9 +73,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
   if (!$err) {
     $upd = $pdo->prepare('UPDATE companies
-                          SET name = ?, address = ?, hourly_rate = ?, vat_id = ?, status = ?, default_tax_scheme = ?, default_vat_rate = ?
+                          SET name = ?, address = ?, hourly_rate = ?, vat_id = ?, status = ?, default_tax_scheme = ?, default_vat_rate = ?,
+                          invoice_intro_text = ?, invoice_outro_text = ?
                           WHERE id = ? AND account_id = ?');
-    $upd->execute([$name, $address, $rate, $vat, $status, $tax_scheme, $vat_val, $id, $account_id]);
+    $upd->execute([$name, $address, $rate, $vat, $status, $tax_scheme, $vat_val, $co_intro, $co_outro, $id, $account_id]);
 
     flash('Firma gespeichert.', 'success');
     redirect($rt_target);
@@ -201,6 +208,32 @@ $acct_vat_js = number_format((float)$settings['default_vat_rate'], 2, '.', ''); 
           </select>
         </div>
       </div>
+
+      <div class="mb-3">
+          <label class="form-label">Rechnungs-Einleitung (Firma, optional)</label>
+          <textarea
+            name="invoice_intro_text"
+            class="form-control"
+            rows="3"
+            placeholder="<?= h($settings['invoice_intro_text'] ?? '') ?>"
+          ><?= h($company['invoice_intro_text'] ?? '') ?></textarea>
+          <div class="form-text">
+            Leer lassen = Account-Standard verwenden.
+          </div>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label">Rechnungs-Schlussformel (Firma, optional)</label>
+          <textarea
+            name="invoice_outro_text"
+            class="form-control"
+            rows="3"
+            placeholder="<?= h($settings['invoice_outro_text'] ?? '') ?>"
+          ><?= h($company['invoice_outro_text'] ?? '') ?></textarea>
+          <div class="form-text">
+            Leer lassen = Account-Standard verwenden.
+          </div>
+        </div>
 
       <div class="d-flex gap-2">
         <button class="btn btn-primary">Speichern</button>

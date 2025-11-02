@@ -132,6 +132,23 @@ if ($company_id) {
   $recurring_preview = ri_compute_due_runs($pdo, $account_id, $company_id, $issue_for_preview);
 }
 
+// --- Effektive Default-Texte für die neue Rechnung
+$eff_intro = '';
+$eff_outro = '';
+if ($company) {
+  $coIntro = isset($company['invoice_intro_text']) ? (string)$company['invoice_intro_text'] : '';
+  $coOutro = isset($company['invoice_outro_text']) ? (string)$company['invoice_outro_text'] : '';
+  $eff_intro = (trim($coIntro) !== '') ? $coIntro : (string)($settings['invoice_intro_text'] ?? '');
+  $eff_outro = (trim($coOutro) !== '') ? $coOutro : (string)($settings['invoice_outro_text'] ?? '');
+} else {
+  $eff_intro = (string)($settings['invoice_intro_text'] ?? '');
+  $eff_outro = (string)($settings['invoice_outro_text'] ?? '');
+}
+
+// Prefill (POST hat Vorrang, z. B. nach Validierungsfehler)
+$prefill_intro = array_key_exists('invoice_intro_text', $_POST) ? (string)$_POST['invoice_intro_text'] : $eff_intro;
+$prefill_outro = array_key_exists('invoice_outro_text', $_POST) ? (string)$_POST['invoice_outro_text'] : $eff_outro;
+
 // ---------- Speichern ----------
 if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['action']==='save') {
   $company_id = (int)($_POST['company_id'] ?? 0);
@@ -186,6 +203,9 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
   // für UI beim Re-Rendern
   $show_tax_reason = $hasNonStandard || ($tax_reason !== '');
 
+  $intro_text = (string)($_POST['invoice_intro_text'] ?? '');
+  $outro_text = (string)($_POST['invoice_outro_text'] ?? '');
+
   if (!$err) {
     $pdo->beginTransaction();
     try {
@@ -193,12 +213,13 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
       $insInv = $pdo->prepare("
         INSERT INTO invoices (
           account_id, company_id, status, issue_date, due_date,
-          total_net, total_gross, tax_exemption_reason
-        ) VALUES (?,?,?,?,?,?,?,?)
+          total_net, total_gross, tax_exemption_reason,
+          invoice_intro_text, invoice_outro_text
+        ) VALUES (?,?,?,?,?,?,?,?,?,?)
       ");
       $insInv->execute([
         $account_id, $company_id, 'in_vorbereitung', $issue_date, $due_date,
-        0.00, 0.00, ($hasNonStandard ? $tax_reason : ''),
+        0.00, 0.00, ($hasNonStandard ? $tax_reason : ''),  $intro_text, $outro_text
       ]);
       $invoice_id = (int)$pdo->lastInsertId();
 
@@ -354,6 +375,31 @@ $tax_reason_value = isset($_POST['tax_exemption_reason']) ? (string)$_POST['tax_
         placeholder="z. B. § 19 UStG (Kleinunternehmer) / Reverse-Charge nach § 13b UStG / Art. 196 MwStSystRL"><?php echo h($tax_reason_value) ?></textarea>
       <div class="form-text">
         Wird benötigt, wenn mindestens eine Position steuerfrei oder Reverse-Charge ist, oder der MwSt-Satz 0,00 % beträgt.
+      </div>
+    </div>
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-body">
+      <div class="mb-3">
+        <label class="form-label">Rechnungs-Einleitung</label>
+        <textarea
+          class="form-control"
+          name="invoice_intro_text"
+          rows="3"
+          placeholder="<?= h($eff_intro) ?>"
+        ><?= h($prefill_intro) ?></textarea>
+        <div class="form-text">Vorbelegt: Firmen-Texte, sonst Account-Standard. Du kannst hier frei anpassen.</div>
+      </div>
+
+      <div>
+        <label class="form-label">Rechnungs-Schlussformel</label>
+        <textarea
+          class="form-control"
+          name="invoice_outro_text"
+          rows="3"
+          placeholder="<?= h($eff_outro) ?>"
+        ><?= h($prefill_outro) ?></textarea>
       </div>
     </div>
   </div>

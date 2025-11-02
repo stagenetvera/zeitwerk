@@ -8,76 +8,56 @@
  * Rückgabe: Array mit gelesenen Feldern; 'invoice_seq_pad' ist gesetzt, wenn vorhanden.
  */
 function load_account_settings(PDO $pdo, int $account_id): array {
-  // 1) Versuch: inkl. optionaler Spalte invoice_seq_pad
-  try {
-    $st = $pdo->prepare("
-      SELECT account_id, invoice_number_pattern, invoice_next_seq,
-             default_vat_rate, default_tax_scheme, default_due_days,
-             invoice_intro_text, bank_iban, bank_bic, sender_address,
-             invoice_seq_pad
-      FROM account_settings
-      WHERE account_id = ?
-      FOR UPDATE
-    ");
-    $st->execute([$account_id]);
-    $row = $st->fetch();
-  } catch (\PDOException $e) {
-    // 2) Fallback: ohne invoice_seq_pad (älteres Schema)
-    $st = $pdo->prepare("
-      SELECT account_id, invoice_number_pattern, invoice_next_seq,
-             default_vat_rate, default_tax_scheme, default_due_days,
-             invoice_intro_text, bank_iban, bank_bic, sender_address
-      FROM account_settings
-      WHERE account_id = ?
-      FOR UPDATE
-    ");
-    $st->execute([$account_id]);
-    $row = $st->fetch();
-    if ($row && !array_key_exists('invoice_seq_pad', $row)) {
-      $row['invoice_seq_pad'] = null; // explizit setzen
-    }
-  }
+  // HINWEIS: Erwartet laufende Transaktion (FOR UPDATE)!
+  $sel = $pdo->prepare("
+    SELECT
+      account_id,
+      invoice_number_pattern,
+      invoice_seq_pad,
+      invoice_next_seq,
+      default_vat_rate,
+      default_tax_scheme,
+      default_due_days,
+      invoice_intro_text,
+      invoice_outro_text,
+      bank_iban,
+      bank_bic,
+      sender_address
+    FROM account_settings
+    WHERE account_id = ?
+    FOR UPDATE
+  ");
+  $sel->execute([$account_id]);
+  $row = $sel->fetch();
 
   if ($row) return $row;
 
-  // Wenn es keinen Datensatz gibt: einen Default anlegen (behält deine bisherigen Defaults bei)
+  // Kein Datensatz vorhanden → mit Defaults anlegen
   $ins = $pdo->prepare("
     INSERT INTO account_settings
-      (account_id, invoice_number_pattern, invoice_next_seq,
-       default_vat_rate, default_tax_scheme, default_due_days,
-       invoice_intro_text, bank_iban, bank_bic, sender_address)
+      (account_id,
+       invoice_number_pattern,
+       invoice_seq_pad,
+       invoice_next_seq,
+       default_vat_rate,
+       default_tax_scheme,
+       default_due_days,
+       invoice_intro_text,
+       invoice_outro_text,
+       bank_iban,
+       bank_bic,
+       sender_address)
     VALUES
-      (?, '{YYYY}-{SEQ:5}', 1, 19.00, 'standard', 14, NULL, NULL, NULL, NULL)
+      (?, '{YYYY}-{SEQ}', 5, 1, 19.00, 'standard', 14, NULL, NULL, NULL, NULL, NULL)
   ");
   $ins->execute([$account_id]);
 
-  // Danach erneut (mit FOR UPDATE) laden – wieder mit try/fallback wie oben
-  try {
-    $st = $pdo->prepare("
-      SELECT account_id, invoice_number_pattern, invoice_next_seq,
-             default_vat_rate, default_tax_scheme, default_due_days,
-             invoice_intro_text, bank_iban, bank_bic, sender_address,
-             invoice_seq_pad
-      FROM account_settings
-      WHERE account_id = ?
-      FOR UPDATE
-    ");
-    $st->execute([$account_id]);
-    $row = $st->fetch();
-  } catch (\PDOException $e) {
-    $st = $pdo->prepare("
-      SELECT account_id, invoice_number_pattern, invoice_next_seq,
-             default_vat_rate, default_tax_scheme, default_due_days,
-             invoice_intro_text, bank_iban, bank_bic, sender_address
-      FROM account_settings
-      WHERE account_id = ?
-      FOR UPDATE
-    ");
-    $st->execute([$account_id]);
-    $row = $st->fetch();
-    if ($row && !array_key_exists('invoice_seq_pad', $row)) {
-      $row['invoice_seq_pad'] = null;
-    }
+  // Danach erneut (gesperrt) laden
+  $sel->execute([$account_id]);
+  $row = $sel->fetch();
+
+  if (!$row) {
+    throw new RuntimeException('Konnte account_settings nicht laden/erzeugen.');
   }
 
   return $row;
