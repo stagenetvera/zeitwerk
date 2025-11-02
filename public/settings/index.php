@@ -130,7 +130,24 @@ function hurl($s){ return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
         });
         </script>
 
-
+      <div class="col-md-3">
+        <label class="form-label">Minuten-Rundung</label>
+        <div class="input-group">
+          <input
+            type="number"
+            name="invoice_round_minutes"
+            min="0"
+            max="60"
+            step="1"
+            class="form-control"
+            value="<?= (int)($set['invoice_round_minutes'] ?? 0) ?>">
+          <span class="input-group-text">Min</span>
+        </div>
+        <div class="form-text">
+          0 = keine Rundung. &gt;0: Nach Summenbildung je Position auf N Minuten <em>aufrunden</em> (ceil).
+          Typische Werte: 5, 6, 10, 15 …
+        </div>
+      </div>
 
 
       <div class="mb-3">

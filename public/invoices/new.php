@@ -13,7 +13,6 @@ $account_id = (int)$user['account_id'];
 
 $settings = get_account_settings($pdo, $account_id);
 
-
 function contact_greeting_line(array $c): string {
   $sal = strtolower(trim((string)($c['salutation'] ?? '')));
   $fn  = trim((string)($c['first_name'] ?? ''));
@@ -32,6 +31,8 @@ function contact_greeting_line(array $c): string {
 $DEFAULT_TAX      = (float)$settings['default_vat_rate'];
 $DEFAULT_SCHEME   = $settings['default_tax_scheme']; // 'standard'|'tax_exempt'|'reverse_charge'
 $DEFAULT_DUE_DAYS = (int)($settings['default_due_days'] ?? 14);
+// Rundung: 0 = aus, >0 = auf N Minuten (pro AUTO-Position) aufrunden
+$ROUND_UNIT_MINS  = max(0, (int)($settings['invoice_round_minutes'] ?? 0));
 
 $issue_default = date('Y-m-d');
 $due_default   = date('Y-m-d', strtotime('+' . max(0, $DEFAULT_DUE_DAYS) . ' days'));
@@ -48,6 +49,17 @@ function sum_minutes_for_times(PDO $pdo, int $account_id, array $ids): int {
   $st->execute(array_merge([$account_id], $ids));
   return (int)$st->fetchColumn();
 }
+
+/**
+ * Rundet Minuten auf den nächsten N-Minuten-Block auf.
+ * N==0 → keine Rundung.
+ */
+function round_minutes_up(int $minutes, int $unit): int {
+  if ($unit <= 0) return $minutes;
+  if ($minutes <= 0) return 0;
+  return (int)(ceil($minutes / $unit) * $unit);
+}
+
 
 // --------- Kontext / Daten laden ----------
 $company_id = (int)($_GET['company_id'] ?? $_POST['company_id'] ?? 0);
@@ -328,11 +340,15 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
         if ($time_ids) {
           // AUTO (aus Zeiten)
           $minutes = sum_minutes_for_times($pdo, $account_id, $time_ids);
+          // Rundung nach Summenbildung (pro Position)
+          $minutes = round_minutes_up($minutes, $ROUND_UNIT_MINS);
           if ($minutes <= 0) { continue; }
 
-          $qty   = round($minutes / 60.0, 3);
-          $net   = round($qty * $rate, 2);
-          $gross = round($net * (1 + $vat/100), 2);
+          $hours_precise = $minutes / 60.0;        // aus GERUNDETEN Minuten (!) – volle Präzision
+          $qty          = round($hours_precise, 3); // nur Anzeige / Speicherung der Menge
+          $net          = round($hours_precise * $rate, 2);
+          $gross        = round($net * (1 + $vat/100), 2);
+
 
           $insItem->execute([
             $account_id, $invoice_id, null, ($task_id ?: null), $desc,

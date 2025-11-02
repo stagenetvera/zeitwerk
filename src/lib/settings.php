@@ -4,13 +4,14 @@
 function settings_defaults(): array {
   return [
     'invoice_number_pattern' => '{YYYY}-{SEQ}',
-    'invoice_seq_pad'        => 5,        // Breite für {SEQ} ohne :N
+    'invoice_seq_pad'        => 5,
     'invoice_next_seq'       => 1,
     'default_vat_rate'       => 19.00,
-    'default_tax_scheme'     => 'standard', // standard | tax_exempt | reverse_charge
+    'default_tax_scheme'     => 'standard',
     'default_due_days'       => 14,
+    'invoice_round_minutes'  => 0,      // NEU: Rundung in Minuten
     'invoice_intro_text'     => '',
-    'invoice_outro_text'     => '',       // Standard-Schlussformel
+    'invoice_outro_text'     => '',
     'bank_iban'              => '',
     'bank_bic'               => '',
     'sender_address'         => '',
@@ -31,18 +32,19 @@ function get_account_settings(PDO $pdo, int $account_id): array {
     $ins = $pdo->prepare('
       INSERT INTO account_settings
         (account_id,
-         invoice_number_pattern,
-         invoice_seq_pad,
-         invoice_next_seq,
-         default_vat_rate,
-         default_tax_scheme,
-         default_due_days,
-         invoice_intro_text,
-         invoice_outro_text,
-         bank_iban,
-         bank_bic,
-         sender_address)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+        invoice_number_pattern,
+        invoice_seq_pad,
+        invoice_next_seq,
+        default_vat_rate,
+        default_tax_scheme,
+        default_due_days,
+        invoice_round_minutes,
+        invoice_intro_text,
+        invoice_outro_text,
+        bank_iban,
+        bank_bic,
+        sender_address)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
     ');
     $ins->execute([
       $account_id,
@@ -52,6 +54,7 @@ function get_account_settings(PDO $pdo, int $account_id): array {
       (float)$defs['default_vat_rate'],
       $defs['default_tax_scheme'],
       (int)$defs['default_due_days'],
+      (int)$defs['invoice_round_minutes'],
       $defs['invoice_intro_text'],
       $defs['invoice_outro_text'],
       $defs['bank_iban'],
@@ -114,21 +117,26 @@ function save_account_settings(PDO $pdo, int $account_id, array $in): void {
   $st->execute([$account_id]);
   $exists = (bool)$st->fetchColumn();
 
+  $roundMin = (int)($in['invoice_round_minutes'] ?? 0);
+  if ($roundMin < 0)  $roundMin = 0;
+  if ($roundMin > 60) $roundMin = 60; // harte Obergrenze
+
   if ($exists) {
     $upd = $pdo->prepare('
       UPDATE account_settings
-         SET invoice_number_pattern = ?,
-             invoice_seq_pad        = ?,
-             invoice_next_seq       = ?,
-             default_vat_rate       = ?,
-             default_tax_scheme     = ?,
-             default_due_days       = ?,
-             invoice_intro_text     = ?,
-             invoice_outro_text     = ?,
-             bank_iban              = ?,
-             bank_bic               = ?,
-             sender_address         = ?
-       WHERE account_id = ?
+        SET invoice_number_pattern = ?,
+            invoice_seq_pad        = ?,
+            invoice_next_seq       = ?,
+            default_vat_rate       = ?,
+            default_tax_scheme     = ?,
+            default_due_days       = ?,
+            invoice_round_minutes  = ?,
+            invoice_intro_text     = ?,
+            invoice_outro_text     = ?,
+            bank_iban              = ?,
+            bank_bic               = ?,
+            sender_address         = ?
+      WHERE account_id = ?
     ');
     $upd->execute([
       $pattern,
@@ -137,6 +145,7 @@ function save_account_settings(PDO $pdo, int $account_id, array $in): void {
       $vat,
       $scheme,
       $dueDays,
+      $roundMin,
       $intro,
       $outro,
       $iban,
@@ -145,36 +154,38 @@ function save_account_settings(PDO $pdo, int $account_id, array $in): void {
       $account_id,
     ]);
   } else {
-    $ins = $pdo->prepare('
-      INSERT INTO account_settings
-        (account_id,
-         invoice_number_pattern,
-         invoice_seq_pad,
-         invoice_next_seq,
-         default_vat_rate,
-         default_tax_scheme,
-         default_due_days,
-         invoice_intro_text,
-         invoice_outro_text,
-         bank_iban,
-         bank_bic,
-         sender_address)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-    ');
-    $ins->execute([
-      $account_id,
-      $pattern,
-      $seqPad,
-      $nextSeq,
-      $vat,
-      $scheme,
-      $dueDays,
-      $intro,
-      $outro,
-      $iban,
-      $bic,
-      $sender,
-    ]);
+     $ins = $pdo->prepare('
+        INSERT INTO account_settings
+          (account_id,
+          invoice_number_pattern,
+          invoice_seq_pad,
+          invoice_next_seq,
+          default_vat_rate,
+          default_tax_scheme,
+          default_due_days,
+          invoice_round_minutes,   -- NEU
+          invoice_intro_text,
+          invoice_outro_text,
+          bank_iban,
+          bank_bic,
+          sender_address)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+      ');
+      $ins->execute([
+        $account_id,
+        $pattern,
+        $seqPad,
+        $nextSeq,
+        $vat,
+        $scheme,
+        $dueDays,
+        $roundMin,    // NEU
+        $intro,
+        $outro,
+        $iban,
+        $bic,
+        $sender,
+      ]);
   }
 }
 

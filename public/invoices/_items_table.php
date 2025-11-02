@@ -29,6 +29,16 @@ $mode = $mode ?? 'new'; // 'new' oder 'edit'
 function _fmt_hhmm($min){ $min=(int)$min; $h=intdiv($min,60); $r=$min%60; return sprintf('%02d:%02d',$h,$r); }
 function _fmt_hours_from_dec($d){ $d=(float)$d; $h=(int)floor($d); $m=(int)round(($d-$h)*60); return sprintf('%02d:%02d',$h,$m); }
 
+$ROUND_UNIT_MINS = max(0, (int)($settings['invoice_round_minutes'] ?? 0));
+if (!function_exists('_round_minutes_up')) {
+  function _round_minutes_up(int $minutes, int $unit): int {
+    if ($unit <= 0) return $minutes;
+    if ($minutes <= 0) return 0;
+    return (int)(ceil($minutes / $unit) * $unit);
+  }
+}
+
+
 $GRAND_NET = 0.0; $GRAND_GROSS = 0.0;
 ?>
 <style>
@@ -74,7 +84,7 @@ $GRAND_NET = 0.0; $GRAND_GROSS = 0.0;
 <div id="invoice-hidden-trash"></div>
 <div id="invoice-order-tracker"></div>
 
-<div id="invoice-items">
+<div id="invoice-items" data-round-unit="<?= (int)$ROUND_UNIT_MINS ?>">
   <table class="table align-middle">
     <thead>
       <tr>
@@ -103,10 +113,12 @@ if (!empty($groups)) {
       $rate    = number_format($rateNum, 2, '.', '');
       $taxNum  = isset($row['tax_rate']) ? (float)$row['tax_rate'] : ($eff_scheme==='standard' ? $eff_vat_num : 0.0);
       $tax     = number_format($taxNum, 2, '.', '');
-      $sumMin  = array_sum(array_map(fn($t)=>(int)$t['minutes'], $row['times']));
-      $sumHHM  = _fmt_hhmm($sumMin);
-      $net     = ($sumMin/60.0) * $rateNum;
-      $gross   = $net * (1 + $taxNum/100);
+      $sumMinRaw  = array_sum(array_map(fn($t)=>(int)$t['minutes'], $row['times']));
+      $sumMin     = _round_minutes_up($sumMinRaw, $ROUND_UNIT_MINS);
+      $sumHHM     = _fmt_hhmm($sumMin);
+      $hoursPrec  = $sumMin / 60.0;            // aus GERUNDETEN Minuten
+      $net        = $hoursPrec * $rateNum;
+      $gross      = $net * (1 + $taxNum/100);
       $GRAND_NET += $net; $GRAND_GROSS += $gross;
 
 
@@ -203,7 +215,12 @@ if (empty($groups) && !empty($items)) {
     $quantity  = (float)($it['quantity'] ?? 0.0);
 
     $sumMin=0; $sumHHM='00:00';
-    if ($hasTimes) { foreach ($times as $te) if (!empty($te['selected'])) $sumMin+=(int)$te['minutes']; $sumHHM=_fmt_hhmm($sumMin); }
+    if ($hasTimes) {
+      foreach ($times as $te) if (!empty($te['selected'])) $sumMin+=(int)$te['minutes'];
+      // nur AUTO-Positionen werden nach Summenbildung gerundet
+      $sumMin = ($entryMode==='auto') ? _round_minutes_up($sumMin, $ROUND_UNIT_MINS) : $sumMin;
+      $sumHHM=_fmt_hhmm($sumMin);
+    }
 
     if (array_key_exists('total_net',$it) && array_key_exists('total_gross',$it)) {
       $netVal=(float)$it['total_net']; $grossVal=(float)$it['total_gross'];
@@ -332,7 +349,7 @@ if (empty($groups) && !empty($items)) {
 <script>
 (function(){
   var root = document.getElementById('invoice-items'); if (!root) return;
-
+  var roundUnit = parseInt(root.getAttribute('data-round-unit') || '0', 10) || 0;
   /* ---------- Helpers ---------- */
   function getDetailsRowByMain(mainTr){
     if (!mainTr) return null;
@@ -400,6 +417,11 @@ if (empty($groups) && !empty($items)) {
         var sm = tr.querySelector('.sum-minutes');
         minutes = sm ? parseInt(sm.value||'0',10) : 0;
       }
+       // Clientseitige Vorschau: Minuten nach Summenbildung runden (nur Anzeige)
+      if (roundUnit > 0 && minutes > 0) {
+        minutes = Math.ceil(minutes / roundUnit) * roundUnit;
+      }
+
       var rate = toNumber(tr.querySelector('.rate')?.value||'0');
       var vat  = toNumber(tr.querySelector('.inv-vat-input')?.value||'0');
       var net   = (minutes/60.0) * rate;
