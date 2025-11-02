@@ -199,7 +199,7 @@ require __DIR__ . '/../../src/layout/header.php';
           </select>
         </div>
         <div class="col-md-4 mb-3 form-check mt-4">
-          <input class="form-check-input" type="checkbox" name="billable" id="billable" <?=isset($_POST['billable'])?'checked':''?>>
+          <input class="form-check-input" type="checkbox" name="billable" id="billable" checked >
           <label class="form-check-label" for="billable">fakturierbar</label>
         </div>
       </div>

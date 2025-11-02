@@ -85,7 +85,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   unset($_POST['status']);
 
   $task_id  = isset($_POST['task_id']) && $_POST['task_id'] !== '' ? (int)$_POST['task_id'] : null;
-  $billable = isset($_POST['billable']) ? (int)($_POST['billable']) : 0;
+  $billable = isset($_POST['billable']) ? (int)$_POST['billable'] : 0; // kommt jetzt garantiert als "0" oder "1"
   $billable = enforce_task_billable_on_time($pdo, $account_id, $task_id, $billable);
 
   $started_at = trim($_POST['started_at'] ?? '');
@@ -321,7 +321,8 @@ $return_to = pick_return_to('/times/index.php');
 
       <div class="row">
         <div class="col-md-4 mb-3 form-check mt-4">
-          <input class="form-check-input" type="checkbox" name="billable" id="billable" <?= !empty($time['billable']) ? 'checked' : '' ?>>
+          <input type="hidden" name="billable" value="0">
+          <input class="form-check-input" type="checkbox" name="billable" id="billable" value="1" <?= !empty($time['billable']) ? 'checked' : '' ?>>
           <label class="form-check-label" for="billable">fakturierbar</label>
         </div>
       </div>
