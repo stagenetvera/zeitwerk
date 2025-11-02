@@ -118,6 +118,26 @@ function set_times_status_for_invoice(PDO $pdo, int $account_id, int $invoice_id
   $upd->execute([$target, $account_id, $invoice_id]);
 }
 
+function free_times_if_unlinked(PDO $pdo, int $account_id, array $timeIds): void {
+  $timeIds = array_values(array_filter(array_map('intval', $timeIds), fn($v)=>$v>0));
+  if (!$timeIds) return;
+  $in  = implode(',', array_fill(0, count($timeIds), '?'));
+
+  $sql = "
+    UPDATE times t
+       SET t.status = 'offen'
+     WHERE t.account_id = ?
+       AND t.id IN ($in)
+       AND NOT EXISTS (
+             SELECT 1
+               FROM invoice_item_times i
+              WHERE i.account_id = t.account_id
+                AND i.time_id     = t.id
+           )
+  ";
+  $pdo->prepare($sql)->execute(array_merge([$account_id], $timeIds));
+}
+
 /** Item inkl. Time-Links löschen + Times ggf. zurücksetzen */
 function delete_item_with_times(PDO $pdo, int $account_id, int $invoice_id, int $item_id): void {
   $ts = $pdo->prepare("SELECT time_id FROM invoice_item_times WHERE account_id = ? AND invoice_item_id = ?");
@@ -129,22 +149,8 @@ function delete_item_with_times(PDO $pdo, int $account_id, int $invoice_id, int 
   $pdo->prepare("DELETE FROM invoice_items WHERE account_id = ? AND id = ? AND invoice_id = ?")
       ->execute([$account_id, $item_id, $invoice_id]);
 
-  if ($timeIds) {
-    $in = implode(',', array_fill(0, count($timeIds), '?'));
-    $sql = "
-      UPDATE times t
-      LEFT JOIN (
-        SELECT iit.time_id
-        FROM invoice_item_times iit
-        WHERE iit.account_id = ? AND iit.time_id IN ($in)
-        GROUP BY iit.time_id
-      ) still_linked ON still_linked.time_id = t.id
-      SET t.status = 'offen'
-      WHERE t.account_id = ? AND t.id IN ($in) AND still_linked.time_id IS NULL
-    ";
-    $params = array_merge([$account_id], $timeIds, [$account_id], $timeIds);
-    $pdo->prepare($sql)->execute($params);
-  }
+  // Zeiten nur dann freigeben, wenn wirklich nirgends mehr verlinkt
+  if ($timeIds) free_times_if_unlinked($pdo, $account_id, $timeIds);
 }
 
 // ---------- POST ----------
@@ -264,15 +270,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '')==='save') {
             }
             if ($toRemove) {
               foreach ($toRemove as $tid) { $delLink->execute([$account_id, $item_id, $tid]); }
-              $ph = implode(',', array_fill(0, count($toRemove), '?'));
-              $sqlOpen = "
-                UPDATE times t
-                LEFT JOIN invoice_item_times iit
-                  ON iit.account_id=t.account_id AND iit.time_id=t.id
-                SET t.status='offen'
-                WHERE t.account_id=? AND t.id IN ($ph) AND iit.time_id IS NULL
-              ";
-              $pdo->prepare($sqlOpen)->execute(array_merge([$account_id], $toRemove));
+              free_times_if_unlinked($pdo, $account_id, $toRemove);
             }
 
             // Update + Position
@@ -352,6 +350,18 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '')==='save') {
           set_times_status_for_invoice($pdo, $account_id, (int)$invoice['id'], $map[$new_status]);
         }
       }
+
+      $pdo->prepare("
+        UPDATE times t
+          SET t.status = 'offen'
+        WHERE t.account_id = ?
+          AND t.status = 'in_abrechnung'
+          AND NOT EXISTS (
+                SELECT 1 FROM invoice_item_times i
+                  WHERE i.account_id = t.account_id
+                    AND i.time_id     = t.id
+              )
+      ")->execute([$account_id]);
 
       // --- Recurring-Ledger aufräumen: Entfernte Runs freigeben ---
       $linked_runs = ri_runs_for_invoice($pdo, $account_id, $invoice_id);
