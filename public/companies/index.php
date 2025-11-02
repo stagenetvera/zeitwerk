@@ -188,7 +188,7 @@ $persist = ['status' => $statuses]; // <<< FIX: persistiere als Array unter 'sta
                 <span class="visually-hidden">Bearbeiten</span>
               </a>
               <!-- Rechnung erstellen -->
-              <a class="btn btn-sm btn-success btn-icon"
+              <a class="btn btn-sm btn-outline-secondary btn-icon"
                  href="<?= url('/invoices/new.php') ?>?company_id=<?= (int)$r['id'] ?>"
                  title="Rechnung erstellen" aria-label="Rechnung erstellen">
                 <i class="bi bi-currency-euro"></i>

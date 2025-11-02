@@ -703,14 +703,18 @@ $recurrings = $riStmt->fetchAll();
                 </td>
                 <td class="text-end">
                   <a class="btn btn-sm btn-outline-secondary" href="<?= url('/recurring/edit.php') ?>?id=<?= (int)$ri['id'] ?>">
-                    Bearbeiten
+                    <i class="bi bi-pencil"></i>
+                    <span class="visually-hidden">Bearbeiten</span>
                   </a>
+
+
                   <form method="post" class="d-inline">
                     <?=csrf_field()?>
                     <input type="hidden" name="ri_action" value="del">
                     <input type="hidden" name="ri_id" value="<?= (int)$ri['id'] ?>">
                     <button class="btn btn-sm btn-outline-danger" onclick="return confirm('Löschen?')">
-                      Löschen
+                      <i class="bi bi-trash"></i>
+                      <span class="visually-hidden">Löschen</span>
                     </button>
                   </form>
                 </td>
