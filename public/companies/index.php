@@ -1,6 +1,8 @@
 <?php
 // public/companies/index.php
 require __DIR__ . '/../../src/layout/header.php';
+require_once __DIR__ . '/../../src/lib/recurring.php'; // für ri_compute_due_runs()
+
 require_login();
 
 $user       = auth_user();
@@ -81,6 +83,12 @@ $rows = $st->fetchAll();
 
 // Offene (noch nicht abgerechnete) billable Zeiten je Firma aufsummieren (nur für die aufgelisteten Firmen)
 $open_by_company = [];
+
+// Anzahl fälliger Recurring-Items je Firma (für das heutige Datum)
+$due_by_company = [];
+// Optional: kurze Vorschau (Bezeichnungen) fürs title-Attribut
+$due_preview = [];
+
 if ($rows) {
   $ids = array_map(fn($r)=>(int)$r['id'], $rows);
   $ph  = implode(',', array_fill(0, count($ids), '?'));
@@ -101,6 +109,25 @@ if ($rows) {
   foreach ($os->fetchAll() as $r) {
     $open_by_company[(int)$r['cid']] = (int)$r['open_minutes'];
   }
+
+  // Recurring-Fälligkeiten für HEUTE ermitteln (gleiches Default wie in /invoices/new.php)
+  $as_of = date('Y-m-d');
+  foreach ($rows as $r) {
+    $cid = (int)$r['id'];
+    try {
+      $runs = ri_compute_due_runs($pdo, $account_id, $cid, $as_of) ?: [];
+    } catch (Throwable $e) {
+      $runs = [];
+    }
+    $due_by_company[$cid] = count($runs);
+    if ($runs) {
+      // maximal 5 Bezeichnungen in den Tooltip
+      $lbls = array_map(fn($x)=> (string)($x['description'] ?? ''), $runs);
+      $lbls = array_values(array_filter($lbls, fn($s)=>trim($s) !== ''));
+      $due_preview[$cid] = implode(' • ', array_slice($lbls, 0, 5));
+    }
+  }
+
 }
 
 $base    = url('/companies/index.php');
@@ -155,12 +182,14 @@ $persist = ['status' => $statuses]; // <<< FIX: persistiere als Array unter 'sta
             <th>Status</th>
             <th>Stundensatz</th>
             <th class="text-end">Offene Zeiten</th>
+            <th class="text-end">Wdh. fällig</th>
             <th class="text-end">Aktionen</th>
           </tr>
         </thead>
         <tbody>
         <?php foreach ($rows as $r): ?>
           <?php $open_min = $open_by_company[(int)$r['id']] ?? 0; ?>
+          <?php $due_cnt  = $due_by_company[(int)$r['id']] ?? 0; ?>
           <tr>
             <td>
              <a class=""
@@ -173,6 +202,20 @@ $persist = ['status' => $statuses]; // <<< FIX: persistiere als Array unter 'sta
             <td>€ <?= $r['hourly_rate'] !== null ? h(number_format((float)$r['hourly_rate'], 2, ',', '.')) : '—' ?></td>
             <td class="text-end"><?= fmt_minutes($open_min) ?></td>
             <td class="text-end">
+              <?php if ($due_cnt > 0): ?>
+                <a
+                  href="<?= url('/invoices/new.php') ?>?company_id=<?= (int)$r['id'] ?>"
+                  class="badge bg-warning text-dark text-decoration-none"
+                  title="<?= h(($due_preview[(int)$r['id']] ?? 'Fällige wiederkehrende Positionen')) ?>"
+                  aria-label="Wiederkehrende Positionen fällig"
+                >
+                  <?= (int)$due_cnt ?> fällig
+                </a>
+              <?php else: ?>
+                <span class="text-muted">—</span>
+              <?php endif; ?>
+            </td>
+             <td class="text-end">
               <!-- Ansehen -->
               <a class="btn btn-sm btn-outline-secondary btn-icon"
                  href="<?= url('/companies/show.php') ?>?id=<?= (int)$r['id'] ?>"
@@ -209,7 +252,7 @@ $persist = ['status' => $statuses]; // <<< FIX: persistiere als Array unter 'sta
           </tr>
         <?php endforeach; ?>
         <?php if (!$rows): ?>
-          <tr><td colspan="5" class="text-center text-muted">Keine Firmen für diesen Filter.</td></tr>
+          <tr><td colspan="6" class="text-center text-muted">Keine Firmen für diesen Filter.</td></tr>
         <?php endif; ?>
         </tbody>
       </table>
