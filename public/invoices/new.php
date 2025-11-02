@@ -13,6 +13,21 @@ $account_id = (int)$user['account_id'];
 
 $settings = get_account_settings($pdo, $account_id);
 
+
+function contact_greeting_line(array $c): string {
+  $sal = strtolower(trim((string)($c['salutation'] ?? '')));
+  $fn  = trim((string)($c['first_name'] ?? ''));
+  $ln  = trim((string)($c['last_name'] ?? ''));
+  $gl  = trim((string)($c['greeting_line'] ?? ''));
+  if ($gl !== '') return $gl;
+
+  if ($sal === 'frau' && $ln !== '') return "Sehr geehrte Frau $ln";
+  if ($sal === 'herr' && $ln !== '') return "Sehr geehrter Herr $ln";
+
+  $full = trim($fn.' '.$ln);
+  return $full !== '' ? "Guten Tag $full" : "Guten Tag";
+}
+
 // Defaults
 $DEFAULT_TAX      = (float)$settings['default_vat_rate'];
 $DEFAULT_SCHEME   = $settings['default_tax_scheme']; // 'standard'|'tax_exempt'|'reverse_charge'
@@ -107,6 +122,28 @@ if ($company_id) {
   }
 }
 
+// --- Kontakte (Rechnungsempfänger) der Firma
+$contacts = [];
+$recipient_contact_id = 0;
+if ($company) {
+  $cst = $pdo->prepare("
+    SELECT id, salutation, first_name, last_name, greeting_line, is_invoice_addressee
+    FROM contacts
+    WHERE account_id = ? AND company_id = ?
+    ORDER BY is_invoice_addressee DESC, last_name, first_name
+  ");
+  $cst->execute([$account_id, (int)$company['id']]);
+  $contacts = $cst->fetchAll();
+
+  // Default: markierter „Rechnungen erhalten“-Kontakt
+  foreach ($contacts as $ct) {
+    if ((int)($ct['is_invoice_addressee'] ?? 0) === 1) { $recipient_contact_id = (int)$ct['id']; break; }
+  }
+}
+
+// Falls POST → Vorrang
+$recipient_contact_id = (int)($_POST['recipient_contact_id'] ?? $recipient_contact_id);
+
 // Default-Stundensatz für neu hinzugefügte manuelle Positionen
 $default_manual_rate = 0.00;
 
@@ -143,6 +180,26 @@ if ($company) {
 } else {
   $eff_intro = (string)($settings['invoice_intro_text'] ?? '');
   $eff_outro = (string)($settings['invoice_outro_text'] ?? '');
+}
+
+// Ausgewählten Kontakt suchen (für Vorbelegung)
+$sel_contact = null;
+if ($recipient_contact_id && $contacts) {
+  foreach ($contacts as $ct) {
+    if ((int)$ct['id'] === $recipient_contact_id) { $sel_contact = $ct; break; }
+  }
+}
+
+// Prefill vorbereiten
+$prefill_intro = array_key_exists('invoice_intro_text', $_POST) ? (string)$_POST['invoice_intro_text'] : $eff_intro;
+$prefill_outro = array_key_exists('invoice_outro_text', $_POST) ? (string)$_POST['invoice_outro_text'] : $eff_outro;
+
+// Wenn erstmals geöffnet (kein POST-Inhalt) und ein Empfänger gewählt ist → Anrede voranstellen
+if (!array_key_exists('invoice_intro_text', $_POST) && $sel_contact) {
+  $greet = contact_greeting_line($sel_contact);
+  if ($greet !== '') {
+    $prefill_intro = $greet . "\n\n" . ltrim((string)$prefill_intro);
+  }
 }
 
 // Prefill (POST hat Vorrang, z. B. nach Validierungsfehler)
@@ -206,6 +263,25 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
   $intro_text = (string)($_POST['invoice_intro_text'] ?? '');
   $outro_text = (string)($_POST['invoice_outro_text'] ?? '');
 
+  // ggf. gewählten Kontakt erneut laden (serverseitig sicher)
+  $recipient_contact_id = (int)($_POST['recipient_contact_id'] ?? 0);
+  $prepend_greet = isset($_POST['prepend_contact_greeting']) && $_POST['prepend_contact_greeting'] === '1';
+
+  if ($recipient_contact_id && $prepend_greet) {
+    $gst = $pdo->prepare("
+      SELECT salutation, first_name, last_name, greeting_line
+      FROM contacts
+      WHERE account_id=? AND company_id=? AND id=?
+    ");
+    $gst->execute([$account_id, $company_id, $recipient_contact_id]);
+    $rc = $gst->fetch();
+    if ($rc) {
+      $greet = contact_greeting_line($rc);
+      if ($greet !== '' && strpos((string)$intro_text, $greet) !== 0) {
+        $intro_text = $greet . "\n\n" . ltrim((string)$intro_text);
+      }
+    }
+  }
   if (!$err) {
     $pdo->beginTransaction();
     try {
@@ -381,6 +457,45 @@ $tax_reason_value = isset($_POST['tax_exemption_reason']) ? (string)$_POST['tax_
 
   <div class="card mb-3">
     <div class="card-body">
+      <div class="row g-3">
+        <div class="col-md-6">
+          <label class="form-label">Rechnungsempfänger (Ansprechpartner)</label>
+          <select name="recipient_contact_id" id="recipient_contact_id" class="form-select">
+            <option value="0">— keiner —</option>
+            <?php foreach ($contacts as $ct):
+              $name = trim(($ct['first_name'] ?? '').' '.($ct['last_name'] ?? ''));
+              if ($name === '') $name = 'Kontakt #'.(int)$ct['id'];
+              $label = $name . (!empty($ct['is_invoice_addressee']) ? ' • Standard' : '');
+            ?>
+              <option value="<?= (int)$ct['id'] ?>" <?= $recipient_contact_id===(int)$ct['id']?'selected':'' ?>>
+                <?= h($label) ?>
+              </option>
+            <?php endforeach; ?>
+          </select>
+          <div class="form-text">Voreinstellung ist der Kontakt mit „Rechnungen erhalten“.</div>
+        </div>
+
+        <div class="col-md-6 align-self-end">
+          <?php
+            $checked = isset($_POST['prepend_contact_greeting'])
+              ? ($_POST['prepend_contact_greeting'] === '1')
+              : true; // Erstaufruf: standardmäßig aktiv
+          ?>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox"
+                  id="prepend_contact_greeting" name="prepend_contact_greeting" value="1"
+                  <?= $checked ? 'checked' : '' ?>>
+            <label class="form-check-label" for="prepend_contact_greeting">
+              Anrede des Empfängers in die Einleitung einsetzen
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-body">
       <div class="mb-3">
         <label class="form-label">Rechnungs-Einleitung</label>
         <textarea
@@ -389,17 +504,6 @@ $tax_reason_value = isset($_POST['tax_exemption_reason']) ? (string)$_POST['tax_
           rows="3"
           placeholder="<?= h($eff_intro) ?>"
         ><?= h($prefill_intro) ?></textarea>
-        <div class="form-text">Vorbelegt: Firmen-Texte, sonst Account-Standard. Du kannst hier frei anpassen.</div>
-      </div>
-
-      <div>
-        <label class="form-label">Rechnungs-Schlussformel</label>
-        <textarea
-          class="form-control"
-          name="invoice_outro_text"
-          rows="3"
-          placeholder="<?= h($eff_outro) ?>"
-        ><?= h($prefill_outro) ?></textarea>
       </div>
     </div>
   </div>
@@ -477,6 +581,21 @@ $tax_reason_value = isset($_POST['tax_exemption_reason']) ? (string)$_POST['tax_
         data-default-vat="<?php echo h(number_format((float)$settings['default_vat_rate'],2,'.','')) ?>"
         data-default-rate="<?php echo h(number_format((float)$default_manual_rate,2,'.','')) ?>">+ Position</button>
 
+    </div>
+  </div>
+
+
+  <div class="card mb-3">
+    <div class="card-body">
+      <div>
+        <label class="form-label">Rechnungs-Schlussformel</label>
+        <textarea
+          class="form-control"
+          name="invoice_outro_text"
+          rows="3"
+          placeholder="<?= h($eff_outro) ?>"
+        ><?= h($prefill_outro) ?></textarea>
+      </div>
     </div>
   </div>
 

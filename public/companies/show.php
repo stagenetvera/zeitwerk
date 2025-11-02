@@ -66,7 +66,7 @@ if (!$company) {
 }
 
 // Contacts (no pagination change)
-$ks = $pdo->prepare('SELECT * FROM contacts WHERE account_id = ? AND company_id = ? ORDER BY name');
+$ks = $pdo->prepare('SELECT * FROM contacts WHERE account_id = ? AND company_id = ? ORDER BY last_name');
 $ks->execute([$account_id, $id]);
 $contacts = $ks->fetchAll();
 
@@ -262,7 +262,7 @@ require __DIR__ . '/../../src/layout/header.php';
               <tbody>
                 <?php foreach ($contacts as $k): ?>
                   <tr>
-                    <td><?= h($k['name']) ?></td>
+                    <td><?= h(trim($k['first_name']." ".$k['last_name'])) ?></td>
                     <td><?= h($k['email'] ?? '') ?></td>
                     <td><?= h($k['phone'] ?? '') ?></td>
                     <td class="text-end">
