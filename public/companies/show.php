@@ -916,5 +916,13 @@ $recurrings = $riStmt->fetchAll();
   });
 })();
 </script>
-
+<?php if (($_GET['dl'] ?? '') === 'xml'): ?>
+  <?php if (isset($_GET["invoice_id"])) {
+    $invoice_id = $_GET["invoice_id"];
+  }?>
+  <script>
+    // Öffnet den XML-Export in neuem Tab, Nutzer bleibt in der Bearbeitung
+    window.open('<?= h(url("/invoices/export_xml.php")."?id=".(int)$invoice_id) ?>', '_blank');
+  </script>
+<?php endif; ?>
 <?php require __DIR__ . '/../../src/layout/footer.php'; ?>

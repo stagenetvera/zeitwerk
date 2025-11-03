@@ -98,14 +98,6 @@ if (!isset($return_to) || $return_to === null || $return_to === '') {
             <td class="text-end"><?= number_format((float)($inv['total_net'] ?? 0), 2, ',', '.') ?></td>
             <td class="text-end"><?= number_format((float)($inv['total_gross'] ?? 0), 2, ',', '.') ?></td>
             <td class="text-end">
-              <form method="post" action="<?= url('/invoices/cancel.php') ?>" class="d-inline"
-                    onsubmit="return confirm('Rechnung wirklich stornieren?');">
-                <?= csrf_field() ?>
-                <input type="hidden" name="id" value="<?= (int)$inv['id'] ?>">
-                <input type="hidden" name="return_to" value="<?= h($return_to) ?>">
-                <button class="btn btn-sm btn-outline-danger">Stornieren</button>
-              </form>
-
               <form method="post" action="<?= url('/invoices/edit.php') ?>" class="d-inline">
                 <?= csrf_field() ?>
                 <input type="hidden" name="id" value="<?= (int)$inv['id'] ?>">
@@ -113,8 +105,33 @@ if (!isset($return_to) || $return_to === null || $return_to === '') {
                 <button class="btn btn-sm btn-outline-secondary"><i class="bi bi-eye"></i></button>
                 <span class="visually-hidden">Ansehen</span>
               </form>
-
               <a class="btn btn-sm btn-outline-secondary" href="<?= url('/invoices/export_xml.php') ?>?id=<?= (int)$inv['id'] ?>">XML</a>
+              <?php
+                $st = $inv['status'] ?? 'in_vorbereitung';
+                $has_no_number = empty($inv['invoice_number']);
+                $can_delete = ($st === 'in_vorbereitung' && $has_no_number);
+                $can_cancel = in_array($st, ['gestellt','gemahnt','bezahlt'], true); // „storniert“ schon storniert → deaktivieren
+
+              ?>
+              <form method="post" action="<?= url('/invoices/cancel.php') ?>" class="d-inline"
+                    onsubmit="return confirm('Rechnung wirklich stornieren?');">
+                <?= csrf_field() ?>
+                <input type="hidden" name="id" value="<?= (int)$inv['id'] ?>">
+                <input type="hidden" name="return_to" value="<?= h($return_to) ?>">
+                <button class="btn btn-sm btn-outline-danger" <?= $can_cancel ? '' : 'disabled' ?>>Stornieren</button>
+              </form>
+
+              <form method="post" action="<?= url('/invoices/delete.php') ?>" class="d-inline">
+                <?= csrf_field() ?>
+                <?= return_to_hidden($return_to) ?>
+                <input type="hidden" name="id" value="<?= (int)$inv['id'] ?>">
+                <button class="btn btn-sm btn-outline-danger" <?= $can_delete ? '' : 'disabled' ?>>
+                  <i class="bi bi-trash"></i>
+                </button>
+              </form>
+
+
+
             </td>
           </tr>
         <?php endforeach; ?>

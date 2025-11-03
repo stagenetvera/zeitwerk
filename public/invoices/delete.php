@@ -19,20 +19,21 @@ if ($invoice_id <= 0) {
 
 $pdo->beginTransaction();
 try {
-  // Rechnung holen + prüfen
+  // Rechnung sperren + prüfen
   $st = $pdo->prepare("SELECT * FROM invoices WHERE id=? AND account_id=? FOR UPDATE");
   $st->execute([$invoice_id, $account_id]);
   $inv = $st->fetch();
   if (!$inv) throw new RuntimeException('Rechnung nicht gefunden.');
 
-  if (($inv['status'] ?? '') === 'storniert') {
-    // schon storniert → nichts tun
-    $pdo->commit();
-    flash('Rechnung ist bereits storniert.', 'info');
-    redirect($return_to); exit;
+  // Nur löschen, wenn noch keine Rechnungsnummer (und z.B. Status in_vorbereitung)
+  if (!empty($inv['invoice_number'])) {
+    throw new RuntimeException('Rechnung hat bereits eine Nummer und kann nicht gelöscht werden. Bitte stornieren.');
+  }
+  if (($inv['status'] ?? '') !== 'in_vorbereitung') {
+    throw new RuntimeException('Nur Rechnungen im Status „in_vorbereitung“ dürfen gelöscht werden.');
   }
 
-  // 1) alle verknüpften Time-IDs sammeln
+  // 1) verknüpfte Time-IDs holen (für Freigabe)
   $q = $pdo->prepare("
     SELECT t.id AS time_id
     FROM invoice_items ii
@@ -69,7 +70,8 @@ try {
         AND i.status IN ('in_vorbereitung','gestellt','gemahnt','bezahlt')
     )")->execute([$account_id]);
 
-  // 3) Zeiten nur dann auf 'offen', wenn jetzt nirgendwo mehr verlinkt
+
+  // 3) Zeiten ggf. auf 'offen'
   if ($timeIds) {
     $ph = implode(',', array_fill(0, count($timeIds), '?'));
     $sql = "
@@ -86,15 +88,22 @@ try {
   $pdo->prepare("DELETE FROM recurring_item_ledger WHERE account_id=? AND invoice_id=?")
       ->execute([$account_id, $invoice_id]);
 
-  // 5) Rechnung auf 'storniert' setzen
-  $pdo->prepare("UPDATE invoices SET status='storniert' WHERE account_id=? AND id=?")
+  // 5) Positionen löschen
+  $pdo->prepare("DELETE FROM invoice_items WHERE account_id=? AND invoice_id=?")
       ->execute([$account_id, $invoice_id]);
 
+  // 6) Rechnung löschen
+  $pdo->prepare("DELETE FROM invoices WHERE account_id=? AND id=?")
+      ->execute([$account_id, $invoice_id]);
+
+
+
+
   $pdo->commit();
-  flash('Rechnung wurde storniert. Verknüpfte Zeiten sind wieder offen.', 'success');
+  flash('Rechnung gelöscht. Verknüpfte Zeiten sind wieder offen.', 'success');
 } catch (Throwable $e) {
   $pdo->rollBack();
-  flash('Storno fehlgeschlagen: '.$e->getMessage(), 'danger');
+  flash('Löschen fehlgeschlagen: '.$e->getMessage(), 'danger');
 }
 
 redirect($return_to);

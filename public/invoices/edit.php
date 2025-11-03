@@ -7,6 +7,7 @@ require_once __DIR__ . '/../../src/utils.php';
 require_once __DIR__ . '/../../src/lib/flash.php';
 require_once __DIR__ . '/../../src/lib/recurring.php';
 require_once __DIR__ . '/../../src/lib/return_to.php';
+require_once __DIR__ . '/../../src/lib/invoices.php'; // für set_times_status_for_invoice() und delete_item_with_times()
 
 require_login();
 csrf_check();
@@ -104,19 +105,6 @@ function load_times_by_item(PDO $pdo, int $account_id, array $itemIds): array {
   return $out;
 }
 
-/** Status der Times für diese Rechnung gesammelt setzen */
-function set_times_status_for_invoice(PDO $pdo, int $account_id, int $invoice_id, string $target): void {
-  $upd = $pdo->prepare("
-    UPDATE times t
-    JOIN invoice_item_times iit
-      ON iit.time_id = t.id AND iit.account_id = t.account_id
-    JOIN invoice_items ii
-      ON ii.id = iit.invoice_item_id AND ii.account_id = iit.account_id
-    SET t.status = ?
-    WHERE t.account_id = ? AND ii.invoice_id = ?
-  ");
-  $upd->execute([$target, $account_id, $invoice_id]);
-}
 
 function free_times_if_unlinked(PDO $pdo, int $account_id, array $timeIds): void {
   $timeIds = array_values(array_filter(array_map('intval', $timeIds), fn($v)=>$v>0));
@@ -138,20 +126,6 @@ function free_times_if_unlinked(PDO $pdo, int $account_id, array $timeIds): void
   $pdo->prepare($sql)->execute(array_merge([$account_id], $timeIds));
 }
 
-/** Item inkl. Time-Links löschen + Times ggf. zurücksetzen */
-function delete_item_with_times(PDO $pdo, int $account_id, int $invoice_id, int $item_id): void {
-  $ts = $pdo->prepare("SELECT time_id FROM invoice_item_times WHERE account_id = ? AND invoice_item_id = ?");
-  $ts->execute([$account_id, $item_id]);
-  $timeIds = array_map(fn($r)=>(int)$r['time_id'], $ts->fetchAll());
-
-  $pdo->prepare("DELETE FROM invoice_item_times WHERE account_id = ? AND invoice_item_id = ?")
-      ->execute([$account_id, $item_id]);
-  $pdo->prepare("DELETE FROM invoice_items WHERE account_id = ? AND id = ? AND invoice_id = ?")
-      ->execute([$account_id, $item_id, $invoice_id]);
-
-  // Zeiten nur dann freigeben, wenn wirklich nirgends mehr verlinkt
-  if ($timeIds) free_times_if_unlinked($pdo, $account_id, $timeIds);
-}
 
 // ---------- POST ----------
 $err = null; $ok = null;
@@ -159,6 +133,28 @@ $canEditItems = (($invoice['status'] ?? '') === 'in_vorbereitung');
 
 if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '')==='save') {
 
+  if ($post_action === 'cancel') {
+    // weiches Storno
+    $new_status = 'storniert';
+
+    $pdo->beginTransaction();
+    try {
+      // Status setzen
+      $pdo->prepare("UPDATE invoices SET status='storniert' WHERE id=? AND account_id=?")
+          ->execute([(int)$invoice['id'], $account_id]);
+
+      // Times zurück auf 'offen'
+      set_times_status_for_invoice($pdo, $account_id, (int)$invoice['id'], 'offen');
+
+      $pdo->commit();
+      $ok = 'Rechnung storniert.';
+      redirect(url('/invoices/edit.php').'?id='.(int)$invoice['id']);
+      exit;
+    } catch (Throwable $e) {
+      $pdo->rollBack();
+      $err = 'Storno fehlgeschlagen: '.$e->getMessage();
+    }
+  }
   // Basisfelder
   $allowed_status = ['in_vorbereitung','gestellt','gemahnt','bezahlt','storniert'];
   $new_status = $_POST['status'] ?? ($invoice['status'] ?? 'in_vorbereitung');
@@ -599,13 +595,46 @@ require __DIR__ . '/../../src/layout/header.php';
                 rows="3"
                 placeholder="<?= h($eff_outro_edit) ?>"
               ><?= h((string)($invoice['invoice_outro_text'] ?? '')) ?></textarea>
-            </div>
+        </div>
 
-      <div class="col-12 text-end">
-        <a class="btn btn-outline-secondary" href="<?=h(url($return_to))?>">Abbrechen</a>
-        <button class="btn btn-primary">Speichern</button>
-      </div>
-    </form>
+        <div class="col-12 text-end">
+          <a class="btn btn-outline-secondary" href="<?=h(url($return_to))?>">Abbrechen</a>
+
+          <!-- Speichern -->
+          <button class="btn btn-primary" name="action" value="save">Speichern</button>
+
+          <?php
+            $st = $invoice['status'] ?? 'in_vorbereitung';
+            $has_no_number = empty($invoice['invoice_number']);
+            $can_delete = ($st === 'in_vorbereitung' && $has_no_number);
+            $can_cancel = in_array($st, ['gestellt','gemahnt','bezahlt'], true); // „storniert“ schon storniert → deaktivieren
+          ?>
+
+
+
+</form>
+
+             <!-- Stornieren -->
+              <form method="post" action="<?= url('/invoices/cancel.php') ?>" class="d-inline"
+                    onsubmit="return confirm('Rechnung wirklich stornieren?');">
+                <?= csrf_field() ?>
+                <input type="hidden" name="id" value="<?= (int)$invoice['id'] ?>">
+                <input type="hidden" name="return_to" value="<?= h($return_to) ?>">
+                <button class="btn btn-outline-danger" <?= $can_cancel ? '' : 'disabled' ?>>Stornieren</button>
+              </form>
+
+          <!-- Löschen (hart) -->
+          <form method="post" action="<?= url('/invoices/delete.php') ?>" class="d-inline">
+            <?= csrf_field() ?>
+            <?= return_to_hidden($return_to) ?>
+            <input type="hidden" name="id" value="<?= (int)$invoice['id'] ?>">
+            <button class="btn btn-outline-danger" <?= $can_delete ? '' : 'disabled' ?>>
+              <i class="bi bi-trash"></i>
+            </button>
+          </form>
+        </div>
+
+
   </div>
 </div>
 
@@ -954,5 +983,6 @@ require __DIR__ . '/../../src/layout/header.php';
   }
 })();
 </script>
+
 
 <?php require __DIR__ . '/../../src/layout/footer.php'; ?>

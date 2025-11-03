@@ -5,6 +5,9 @@ require_once __DIR__ . '/../../src/lib/settings.php';
 require_once __DIR__ . '/../../src/utils.php'; // dec(), parse_hours_to_decimal()
 require_once __DIR__ . '/../../src/lib/recurring.php';
 require_once __DIR__ . '/../../src/lib/return_to.php';
+require_once __DIR__ . '/../../src/lib/invoices.php';
+require_once __DIR__ . '/../../src/lib/invoice_number.php';
+
 require_login();
 csrf_check();
 
@@ -12,6 +15,7 @@ $user       = auth_user();
 $account_id = (int)$user['account_id'];
 
 $settings = get_account_settings($pdo, $account_id);
+
 
 function contact_greeting_line(array $c): string {
   $sal = strtolower(trim((string)($c['salutation'] ?? '')));
@@ -219,7 +223,7 @@ $prefill_intro = array_key_exists('invoice_intro_text', $_POST) ? (string)$_POST
 $prefill_outro = array_key_exists('invoice_outro_text', $_POST) ? (string)$_POST['invoice_outro_text'] : $eff_outro;
 
 // ---------- Speichern ----------
-if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['action']==='save') {
+if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && ($_POST['action']==='save' || $_POST["action"]==='save_and_issue')) {
   $company_id = (int)($_POST['company_id'] ?? 0);
   $issue_date = $_POST['issue_date'] ?? date('Y-m-d');
   $due_date   = $_POST['due_date']   ?? date('Y-m-d', strtotime('+14 days'));
@@ -400,8 +404,28 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['ac
       $updInv = $pdo->prepare("UPDATE invoices SET total_net=?, total_gross=? WHERE id=? AND account_id=?");
       $updInv->execute([$sum_net, $sum_gross, $invoice_id, $account_id]);
 
+      // ... nach erfolgreichem Insert aller Items und Summen-Aktualisierung:
       $pdo->commit();
 
+      if (($_POST['action'] ?? '') === 'save_and_issue') {
+        // 1) Rechnungsnummer vergeben
+        $number = assign_invoice_number_if_needed($pdo, $account_id, (int)$invoice_id, $issue_date);
+
+        // 2) Status auf "gestellt"
+        $updInv = $pdo->prepare("UPDATE invoices SET status='gestellt', invoice_number=? WHERE id=? AND account_id=?");
+        $updInv->execute([$number, (int)$invoice_id, $account_id]);
+
+        // 3) Times auf 'abgerechnet'
+        set_times_status_for_invoice($pdo, $account_id, (int)$invoice_id, 'abgerechnet');
+
+        // 4)  XML-Download triggern
+        redirect(url('/invoices/export_xml.php?id='.(int)$invoice_id));
+        // redirect(url('/companies/show.php').'?id='.$company_id.'&invoice_id='.(int)$invoice_id.'&dl=xml');
+
+        exit;
+      }
+
+      // Standard-Fall (nur speichern → in_vorbereitung)
       redirect_to_return_to(url('/companies/show.php').'?id='.$company_id);
     } catch (Throwable $e) {
       $pdo->rollBack();
@@ -617,8 +641,10 @@ $tax_reason_value = isset($_POST['tax_exemption_reason']) ? (string)$_POST['tax_
 
   <div class="d-flex justify-content-end gap-2">
     <a class="btn btn-outline-secondary" href="<?php echo h(url($return_to)) ?>">Abbrechen</a>
-    <button class="btn btn-primary" name="action" value="save">Rechnung anlegen</button>
+    <button class="btn btn-outline-primary" name="action" value="save">Speichern</button>
+    <button class="btn btn-primary" name="action" value="save_and_issue">Speichern & Rechnung generieren</button>
   </div>
+
 </form>
 
 <script>
