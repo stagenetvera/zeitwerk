@@ -114,7 +114,7 @@ if (!isset($return_to) || $return_to === null || $return_to === '') {
                 <span class="visually-hidden">Ansehen</span>
               </form>
 
-              <!-- <a class="btn btn-sm btn-outline-secondary" href="<?= url('/invoices/export_xml.php') ?>?id=<?= (int)$inv['id'] ?>">XML</a> -->
+              <a class="btn btn-sm btn-outline-secondary" href="<?= url('/invoices/export_xml.php') ?>?id=<?= (int)$inv['id'] ?>">XML</a>
             </td>
           </tr>
         <?php endforeach; ?>
