@@ -27,7 +27,7 @@ $NEW_DSN  = 'mysql:host=127.0.0.1;dbname=zeitwerk;charset=utf8mb4';
 $NEW_USER = 'vera';
 $NEW_PASS = 'secret';
 
-$TARGET_ACCOUNT_ID       = 4;          // <- Ziel-Account
+$TARGET_ACCOUNT_ID       = 1;          // <- Ziel-Account
 $DEFAULT_USER_ID         = null;       // <- optional fest vorgeben; null = automatisch (erster User des Accounts)
 $DRY_RUN                 = false;      // true = nur zählen/prüfen, nichts schreiben
 $IMPORT_DEFAULT_DUE_DAYS = 14;         // Fallback für due_date, wenn ALT.Zahlungsziel fehlt
