@@ -156,7 +156,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '')==='save') {
     }
   }
   // Basisfelder
-  $allowed_status = ['in_vorbereitung','gestellt','gemahnt','bezahlt','storniert'];
+  $allowed_status = ['in_vorbereitung','gestellt','gemahnt','bezahlt','storniert', 'ausgebucht'];
   $new_status = $_POST['status'] ?? ($invoice['status'] ?? 'in_vorbereitung');
   if (!in_array($new_status, $allowed_status, true)) $new_status = $invoice['status'] ?? 'in_vorbereitung';
 
@@ -341,6 +341,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '')==='save') {
           'gemahnt'         => 'abgerechnet',
           'bezahlt'         => 'abgerechnet',
           'storniert'       => 'offen',
+          'ausgebucht'      => 'abgerechnet'
         ];
         if (isset($map[$new_status])) {
           set_times_status_for_invoice($pdo, $account_id, (int)$invoice['id'], $map[$new_status]);
@@ -509,6 +510,7 @@ require __DIR__ . '/../../src/layout/header.php';
           <option value="gemahnt" <?=$st==='gemahnt'?'selected':''?>>gemahnt</option>
           <option value="bezahlt" <?=$st==='bezahlt'?'selected':''?>>bezahlt</option>
           <option value="storniert" <?=$st==='storniert'?'selected':''?>>storniert</option>
+          <option value="ausgebucht" <?=$st==='ausgebucht'?'selected':''?>>ausgebucht</option>
         </select>
       </div>
 
@@ -607,7 +609,7 @@ require __DIR__ . '/../../src/layout/header.php';
             $st = $invoice['status'] ?? 'in_vorbereitung';
             $has_no_number = empty($invoice['invoice_number']);
             $can_delete = ($st === 'in_vorbereitung' && $has_no_number);
-            $can_cancel = in_array($st, ['gestellt','gemahnt','bezahlt'], true); // „storniert“ schon storniert → deaktivieren
+            $can_cancel = in_array($st, ['gestellt','gemahnt','bezahlt','ausgebucht'], true); // „storniert“ schon storniert → deaktivieren
           ?>
 
 

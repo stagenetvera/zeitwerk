@@ -110,7 +110,7 @@ if (!isset($return_to) || $return_to === null || $return_to === '') {
                 $st = $inv['status'] ?? 'in_vorbereitung';
                 $has_no_number = empty($inv['invoice_number']);
                 $can_delete = ($st === 'in_vorbereitung' && $has_no_number);
-                $can_cancel = in_array($st, ['gestellt','gemahnt','bezahlt'], true); // „storniert“ schon storniert → deaktivieren
+                $can_cancel = in_array($st, ['gestellt','gemahnt','bezahlt', 'ausgebucht'], true); // „storniert“ schon storniert → deaktivieren
 
               ?>
               <form method="post" action="<?= url('/invoices/cancel.php') ?>" class="d-inline"

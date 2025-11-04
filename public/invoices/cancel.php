@@ -66,7 +66,7 @@ try {
         JOIN invoices i       ON i.account_id  = ii.account_id  AND i.id  = ii.invoice_id
         WHERE iit.account_id = t.account_id
         AND iit.time_id    = t.id
-        AND i.status IN ('in_vorbereitung','gestellt','gemahnt','bezahlt')
+        AND i.status IN ('in_vorbereitung','gestellt','gemahnt','bezahlt', 'ausgebucht')
     )")->execute([$account_id]);
 
   // 3) Zeiten nur dann auf 'offen', wenn jetzt nirgendwo mehr verlinkt
