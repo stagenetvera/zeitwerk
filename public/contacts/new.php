@@ -142,26 +142,79 @@ require __DIR__ . '/../../src/layout/header.php';
   const greet = document.querySelector('input[name="greeting_line"]');
   if (!sal || !first || !last || !greet) return;
 
-  function generate(){
-    if (greet.value.trim() !== '') return; // User hat bereits etwas geschrieben
+  function withComma(s){
+    if (!s) return '';
+    return s.trim().replace(/\s*,+\s*$/, '') + ','; // genau ein Komma
+  }
+
+  function buildGreeting(){
     const s = (sal.value||'').toLowerCase();
     const f = (first.value||'').trim();
     const l = (last.value||'').trim();
 
     let text = 'Guten Tag';
-    if (s === 'frau' && l) text = 'Sehr geehrte Frau ' + l;
+    if (s === 'frau' && l)      text = 'Sehr geehrte Frau ' + l;
     else if (s === 'herr' && l) text = 'Sehr geehrter Herr ' + l;
-    else if ((f||l)) text = 'Guten Tag ' + (f + ' ' + l).trim();
+    else if (f || l)            text = 'Guten Tag ' + (f + ' ' + l).trim();
 
-    greet.placeholder = text;
+    return withComma(text);
   }
 
-  ['change','input'].forEach(evt=>{
-    sal.addEventListener(evt, generate);
-    first.addEventListener(evt, generate);
-    last.addEventListener(evt, generate);
+  // Zustand: wurde das Feld manuell geändert?
+  let lastAuto = '';   // letzter automatisch berechneter Wert
+  let isManual = false;
+
+  function maybeAutofill(force){
+    const autoText = buildGreeting();
+
+    if (
+      force ||
+      !isManual ||
+      greet.value.trim() === '' ||
+      greet.value === lastAuto
+    ) {
+      greet.value = autoText;
+      lastAuto = autoText;
+    } else {
+      // selbst wenn nicht gesetzt wird, den aktuellen Auto-Wert merken
+      lastAuto = autoText;
+    }
+  }
+
+  // Nutzer-Eingaben tracken
+  greet.addEventListener('input', function(){
+    if (greet.value.trim() === '') {
+      // Leeren reaktiviert die Auto-Generierung
+      isManual = false;
+      lastAuto = '';
+      maybeAutofill(false); // sofort sinnvoll befüllen
+    } else {
+      isManual = (greet.value !== lastAuto);
+    }
   });
-  generate();
+
+  // Änderungen an Salutation / Namen aktualisieren live (solange nicht manuell überschrieben)
+  ['input','change'].forEach(evt=>{
+    sal.addEventListener(evt, ()=> maybeAutofill(false));
+  });
+  first.addEventListener('input', ()=> maybeAutofill(false));
+  last .addEventListener('input', ()=> maybeAutofill(false));
+
+  // ── WICHTIG: Initialen Zustand korrekt setzen ────────────────────────────────
+  const prefilled = greet.value;       // vom Server geladener Wert (falls vorhanden)
+  const autoInit  = buildGreeting();   // wie es automatisch wäre
+  lastAuto = autoInit;
+
+  if (prefilled.trim() === '') {
+    // Feld war leer → einmalig automatisch setzen
+    greet.value = autoInit;
+    isManual = false;
+  } else {
+    // Feld war befüllt → NICHT überschreiben
+    // Falls exakt gleich dem Auto-Text, als "nicht manuell" behandeln,
+    // sonst dauerhaft manuell lassen.
+    isManual = (prefilled !== autoInit);
+  }
 })();
 </script>
 

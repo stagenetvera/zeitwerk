@@ -35,6 +35,7 @@ function contacts_normalize_input(array $in): array {
   $first_name = trim((string)($in['first_name'] ?? ''));
   $last_name  = trim((string)($in['last_name'] ?? ''));
   $greeting   = trim((string)($in['greeting_line'] ?? ''));
+
   if ($greeting === '') {
     $greeting = contacts_greeting_line($salutation, $first_name, $last_name);
   }

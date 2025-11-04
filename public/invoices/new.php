@@ -22,13 +22,21 @@ function contact_greeting_line(array $c): string {
   $fn  = trim((string)($c['first_name'] ?? ''));
   $ln  = trim((string)($c['last_name'] ?? ''));
   $gl  = trim((string)($c['greeting_line'] ?? ''));
-  if ($gl !== '') return $gl;
 
-  if ($sal === 'frau' && $ln !== '') return "Sehr geehrte Frau $ln";
-  if ($sal === 'herr' && $ln !== '') return "Sehr geehrter Herr $ln";
+  $withComma = function(string $s): string {
+    $s = rtrim($s);
+    // vorhandene End-Kommas/Leerzeichen entfernen, genau ein Komma anhängen
+    $s = preg_replace('/\s*,+\s*$/', '', $s);
+    return $s === '' ? '' : $s . ',';
+  };
+
+  if ($gl !== '') return $withComma($gl);
+
+  if ($sal === 'frau' && $ln !== '') return $withComma("Sehr geehrte Frau $ln");
+  if ($sal === 'herr' && $ln !== '') return $withComma("Sehr geehrter Herr $ln");
 
   $full = trim($fn.' '.$ln);
-  return $full !== '' ? "Guten Tag $full" : "Guten Tag";
+  return $withComma($full !== '' ? "Guten Tag $full" : "Guten Tag");
 }
 
 // Defaults
