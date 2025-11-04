@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: localhost
--- Erstellungszeit: 22. Okt 2025 um 15:24
+-- Erstellungszeit: 04. Nov 2025 um 08:55
 -- Server-Version: 9.0.1
 -- PHP-Version: 8.3.14
 
@@ -42,11 +42,14 @@ CREATE TABLE `accounts` (
 CREATE TABLE `account_settings` (
   `account_id` int NOT NULL,
   `invoice_number_pattern` varchar(255) NOT NULL DEFAULT '{YYYY}-{SEQ}',
+  `invoice_seq_pad` tinyint UNSIGNED NOT NULL DEFAULT '5',
   `invoice_next_seq` int NOT NULL DEFAULT '1',
   `default_vat_rate` decimal(5,2) DEFAULT '19.00',
   `default_tax_scheme` enum('standard','tax_exempt','reverse_charge') DEFAULT 'standard',
   `default_due_days` int DEFAULT '14',
+  `invoice_round_minutes` tinyint UNSIGNED NOT NULL DEFAULT '0',
   `invoice_intro_text` text,
+  `invoice_outro_text` text,
   `bank_iban` varchar(34) DEFAULT NULL,
   `bank_bic` varchar(11) DEFAULT NULL,
   `sender_address` text
@@ -63,6 +66,8 @@ CREATE TABLE `companies` (
   `account_id` bigint UNSIGNED NOT NULL,
   `name` varchar(190) NOT NULL,
   `address` text,
+  `invoice_intro_text` text,
+  `invoice_outro_text` text,
   `hourly_rate` decimal(10,2) DEFAULT NULL,
   `default_tax_scheme` enum('standard','tax_exempt','reverse_charge') DEFAULT NULL,
   `default_vat_rate` decimal(5,2) DEFAULT NULL,
@@ -81,9 +86,15 @@ CREATE TABLE `contacts` (
   `id` bigint UNSIGNED NOT NULL,
   `account_id` bigint UNSIGNED NOT NULL,
   `company_id` bigint UNSIGNED NOT NULL,
-  `name` varchar(190) NOT NULL,
   `email` varchar(190) DEFAULT NULL,
+  `salutation` enum('frau','herr','div') DEFAULT NULL,
+  `first_name` varchar(150) NOT NULL DEFAULT '',
+  `last_name` varchar(150) NOT NULL DEFAULT '',
+  `department` varchar(120) DEFAULT NULL,
+  `greeting_line` varchar(255) DEFAULT NULL,
+  `is_invoice_addressee` tinyint(1) NOT NULL DEFAULT '0',
   `phone` varchar(64) DEFAULT NULL,
+  `phone_alt` varchar(64) DEFAULT NULL,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
@@ -98,10 +109,12 @@ CREATE TABLE `invoices` (
   `account_id` bigint UNSIGNED NOT NULL,
   `company_id` bigint UNSIGNED NOT NULL,
   `invoice_number` varchar(190) DEFAULT NULL,
-  `status` enum('in_vorbereitung','gestellt','gemahnt','bezahlt','storniert') NOT NULL DEFAULT 'in_vorbereitung',
+  `status` enum('in_vorbereitung','gestellt','gemahnt','bezahlt','storniert','ausgebucht') CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL DEFAULT 'in_vorbereitung',
   `issue_date` date NOT NULL,
   `due_date` date NOT NULL,
   `tax_exemption_reason` text,
+  `invoice_intro_text` text,
+  `invoice_outro_text` text,
   `total_net` decimal(12,2) NOT NULL DEFAULT '0.00',
   `total_gross` decimal(12,2) NOT NULL DEFAULT '0.00',
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP
@@ -159,6 +172,48 @@ CREATE TABLE `projects` (
   `status` enum('offen','abgeschlossen','angeboten') NOT NULL DEFAULT 'offen',
   `hourly_rate` decimal(10,2) DEFAULT NULL,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Tabellenstruktur für Tabelle `recurring_items`
+--
+
+CREATE TABLE `recurring_items` (
+  `id` int NOT NULL,
+  `account_id` int NOT NULL,
+  `company_id` int NOT NULL,
+  `description_tpl` varchar(255) NOT NULL,
+  `quantity` decimal(10,3) NOT NULL DEFAULT '1.000',
+  `unit_price` decimal(10,2) NOT NULL DEFAULT '0.00',
+  `tax_scheme` enum('standard','tax_exempt','reverse_charge') NOT NULL DEFAULT 'standard',
+  `vat_rate` decimal(5,2) NOT NULL DEFAULT '0.00',
+  `interval_unit` enum('day','week','month','quarter','year') NOT NULL DEFAULT 'month',
+  `interval_count` int NOT NULL DEFAULT '1',
+  `start_date` date NOT NULL,
+  `end_date` date DEFAULT NULL,
+  `last_invoiced_until` date DEFAULT NULL,
+  `active` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Tabellenstruktur für Tabelle `recurring_item_ledger`
+--
+
+CREATE TABLE `recurring_item_ledger` (
+  `id` int NOT NULL,
+  `account_id` int NOT NULL,
+  `company_id` int NOT NULL,
+  `recurring_item_id` int NOT NULL,
+  `period_from` date NOT NULL,
+  `period_to` date NOT NULL,
+  `invoice_id` bigint UNSIGNED DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- --------------------------------------------------------
@@ -329,7 +384,8 @@ ALTER TABLE `contacts`
   ADD UNIQUE KEY `uq_contacts_account_id_id` (`account_id`,`id`),
   ADD KEY `company_id` (`company_id`),
   ADD KEY `account_id` (`account_id`,`company_id`),
-  ADD KEY `idx_contacts_acc_company_name` (`account_id`,`company_id`,`name`);
+  ADD KEY `idx_contacts_acc_company_name` (`account_id`,`company_id`),
+  ADD KEY `idx_contacts_invoice_addressee` (`is_invoice_addressee`);
 
 --
 -- Indizes für die Tabelle `invoices`
@@ -379,6 +435,21 @@ ALTER TABLE `projects`
   ADD KEY `contact_id` (`contact_id`),
   ADD KEY `account_id` (`account_id`,`company_id`,`status`),
   ADD KEY `idx_projects_acc_comp_stat_title` (`account_id`,`company_id`,`status`,`title`);
+
+--
+-- Indizes für die Tabelle `recurring_items`
+--
+ALTER TABLE `recurring_items`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `acc_company` (`account_id`,`company_id`);
+
+--
+-- Indizes für die Tabelle `recurring_item_ledger`
+--
+ALTER TABLE `recurring_item_ledger`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uniq_run` (`account_id`,`recurring_item_id`,`period_from`,`period_to`),
+  ADD KEY `k_invoice` (`account_id`,`invoice_id`);
 
 --
 -- Indizes für die Tabelle `tasks`
@@ -456,6 +527,18 @@ ALTER TABLE `invoice_items`
 --
 ALTER TABLE `projects`
   MODIFY `id` bigint UNSIGNED NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT für Tabelle `recurring_items`
+--
+ALTER TABLE `recurring_items`
+  MODIFY `id` int NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT für Tabelle `recurring_item_ledger`
+--
+ALTER TABLE `recurring_item_ledger`
+  MODIFY `id` int NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT für Tabelle `tasks`
