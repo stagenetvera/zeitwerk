@@ -30,6 +30,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
       UPDATE contacts
         SET email = ?,
             phone = ?,
+            phone_alt = ?,
+            department = ?,
             salutation = ?,
             first_name = ?,
             last_name  = ?,
@@ -38,8 +40,10 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
       WHERE id = ? AND account_id = ?
     ");
     $upd->execute([
-      trim((string)($_POST['email'] ?? '')),
-      trim((string)($_POST['phone'] ?? '')),
+      $norm['email'],
+      $norm['phone'],
+      $norm['phone_alt'],
+      $norm['department'],
       $norm['salutation'],
       $norm['first_name'],
       $norm['last_name'],
@@ -96,6 +100,13 @@ require __DIR__ . '/../../src/layout/header.php';
         </div>
 
         <div class="col-12 mb-3">
+          <label class="form-label">Abteilung</label>
+          <input type="text"
+                class="form-control"
+                name="department"
+                value="<?= h($contact['department'] ?? '') ?>">
+        </div>
+        <div class="col-12 mb-3">
           <label class="form-label">Begrüßungszeile</label>
           <input type="text" name="greeting_line" class="form-control"
                 placeholder="z. B. Sehr geehrte Frau Müller"
@@ -117,6 +128,13 @@ require __DIR__ . '/../../src/layout/header.php';
       <div class="mb-3">
         <label class="form-label">Telefon</label>
         <input type="text" name="phone" class="form-control" value="<?=h($contact['phone'] ?? '')?>">
+      </div>
+       <div class="mb-3">
+        <label class="form-label">Telefon 2</label>
+        <input type="text"
+              class="form-control"
+              name="phone_alt"
+              value="<?= h($contact['phone_alt'] ?? '') ?>">
       </div>
       <button class="btn btn-primary">Speichern</button>
       <a class="btn btn-outline-secondary" href="<?= h(url($return_to)) ?>">Abbrechen</a>

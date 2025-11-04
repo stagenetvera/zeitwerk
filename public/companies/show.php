@@ -264,7 +264,9 @@ require __DIR__ . '/../../src/layout/header.php';
                   <tr>
                     <td><?= h(trim($k['first_name']." ".$k['last_name'])) ?></td>
                     <td><?= h($k['email'] ?? '') ?></td>
-                    <td><?= h($k['phone'] ?? '') ?></td>
+                    <td><?= h($k['phone'] ?? '') ?><br />
+                        <?= h($k['phone_alt'] ?? '') ?>
+                    </td>
                     <td class="text-end">
                       <a class="btn btn-sm btn-outline-secondary" href="<?= url('/contacts/edit.php') ?>?id=<?= $k['id'] ?>"><i class="bi bi-pencil"></i>
               <span class="visually-hidden">Bearbeiten</span>
