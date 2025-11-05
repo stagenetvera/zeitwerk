@@ -64,6 +64,34 @@ if ($company_id) {
 $err = null;
 
 // --------------------------------------------------
+// Festpreis (Tasks-only) Helpers & aktuelle Werte
+// --------------------------------------------------
+function _price_to_cents($value) {
+  if ($value === '' || $value === null) return null;
+  $s = trim((string)$value);
+  // "1.234,56" -> "1234.56", "1234,56" -> "1234.56"
+  if (strpos($s, ',') !== false && strpos($s, '.') === false) {
+    $s = str_replace(',', '.', $s);
+  } else {
+    $s = str_replace([' ', ','], ['', ''], $s);
+  }
+  return (int)round(((float)$s) * 100);
+}
+
+$current_bm = $task['billing_mode'] ?? 'time';
+$__billing_mode = $_POST['billing_mode'] ?? $current_bm;
+if ($__billing_mode !== 'fixed') $__billing_mode = 'time';
+
+$__fixed_price_cents = null;
+if ($__billing_mode === 'fixed') {
+  if (isset($_POST['fixed_price'])) {
+    $__fixed_price_cents = _price_to_cents($_POST['fixed_price']);
+  } else {
+    $__fixed_price_cents = isset($task['fixed_price_cents']) ? (int)$task['fixed_price_cents'] : null;
+  }
+}
+
+// --------------------------------------------------
 // POST: Update
 // --------------------------------------------------
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -90,12 +118,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       $ok = false; $err = 'Ungültige Projekt-/Firmenkombination.';
     }
   }
-var_dump($return_to);
+
   if ($ok) {
+    // Billing-Mode/Festpreis übernehmen
+    $billing_mode = ($__billing_mode === 'fixed') ? 'fixed' : 'time';
+    $fixed_price_cents = ($billing_mode === 'fixed') ? $__fixed_price_cents : null;
+
     $upd = $pdo->prepare('UPDATE tasks
-                          SET project_id = ?, description = ?, planned_minutes = ?, priority = ?, deadline = ?, status = ?, billable = ?
+                          SET project_id = ?, description = ?, planned_minutes = ?, priority = ?, deadline = ?, status = ?, billable = ?,
+                              billing_mode = ?, fixed_price_cents = ?
                           WHERE id = ? AND account_id = ?');
-    $upd->execute([$project_id, $description, $planned, $priority, $deadline, $status, $billable, $id, $account_id]);
+    $upd->execute([
+      $project_id, $description, $planned, $priority, $deadline, $status, $billable,
+      $billing_mode, $fixed_price_cents,
+      $id, $account_id
+    ]);
     flash('Aufgabe gespeichert.', 'success');
 
     redirect($return_to);
@@ -195,6 +232,43 @@ require __DIR__ . '/../../src/layout/header.php';
         </div>
       </div>
 
+      <fieldset class="border rounded p-3 mb-3">
+        <legend class="float-none w-auto px-2 fs-6 text-muted mb-0">Abrechnung</legend>
+
+        <div class="mb-2">
+          <div class="form-check form-check-inline">
+            <input class="form-check-input" type="radio" id="bm_time" name="billing_mode" value="time"
+                   <?php echo ($__billing_mode === 'time') ? 'checked' : ''; ?>>
+            <label class="form-check-label" for="bm_time">Zeitbasiert</label>
+          </div>
+          <div class="form-check form-check-inline">
+            <input class="form-check-input" type="radio" id="bm_fixed" name="billing_mode" value="fixed"
+                   <?php echo ($__billing_mode === 'fixed') ? 'checked' : ''; ?>>
+            <label class="form-check-label" for="bm_fixed">Festpreis</label>
+          </div>
+        </div>
+
+        <div class="row g-2 align-items-end" data-fixed-price-row style="display:none">
+          <div class="col-sm-6">
+            <label class="form-label">Festpreis (netto)</label>
+            <div class="input-group">
+              <span class="input-group-text">€</span>
+              <input type="number" step="0.01" min="0" class="form-control" name="fixed_price"
+                     value="<?php
+                       if (isset($_POST['fixed_price'])) {
+                         echo htmlspecialchars($_POST['fixed_price']);
+                       } else {
+                         echo isset($task['fixed_price_cents'])
+                           ? number_format(((int)$task['fixed_price_cents'])/100, 2, ',', '')
+                           : '';
+                       }
+                     ?>">
+            </div>
+            <div class="form-text">Zeiten werden weiterhin getrackt, aber nicht abgerechnet.</div>
+          </div>
+        </div>
+      </fieldset>
+
       <div class="d-flex gap-2">
         <button class="btn btn-primary">Speichern</button>
         <a class="btn btn-outline-secondary" href="<?= h(url($return_to)) ?>">Abbrechen</a>
@@ -219,6 +293,20 @@ require __DIR__ . '/../../src/layout/header.php';
           window.location.href = url;
         });
       })();
+    </script>
+    <script>
+      document.addEventListener('DOMContentLoaded', function(){
+        const form = document.getElementById('taskEditForm');
+        if (!form) return;
+        const radios = form.querySelectorAll('input[name="billing_mode"]');
+        const fpRow  = form.querySelector('[data-fixed-price-row]');
+        function toggle(){
+          const mode = form.querySelector('input[name="billing_mode"]:checked')?.value || 'time';
+          if (fpRow) fpRow.style.display = (mode === 'fixed') ? '' : 'none';
+        }
+        radios.forEach(r => r.addEventListener('change', toggle));
+        toggle();
+      });
     </script>
   </div>
 </div>

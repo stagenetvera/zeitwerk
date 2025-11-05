@@ -47,6 +47,28 @@ $project_id = isset($_POST['project_id']) ? (int)$_POST['project_id']
             : (isset($_GET['project_id']) ? (int)$_GET['project_id'] : 0);
 $err = null;
 
+// --- Festpreis (Tasks-only) Helpers -----------------------------------------
+function _price_to_cents($value) {
+  if ($value === '' || $value === null) return null;
+  $s = trim((string)$value);
+  // "1.234,56" -> "1234.56", "1234,56" -> "1234.56"
+  if (strpos($s, ',') !== false && strpos($s, '.') === false) {
+    $s = str_replace(',', '.', $s);
+  } else {
+    $s = str_replace([' ', ','], ['', ''], $s);
+  }
+  return (int)round(((float)$s) * 100);
+}
+
+// Default: Zeit
+$__billing_mode = $_POST['billing_mode'] ?? 'time';
+if ($__billing_mode !== 'fixed') $__billing_mode = 'time';
+
+$__fixed_price_cents = null;
+if ($__billing_mode === 'fixed') {
+  $__fixed_price_cents = _price_to_cents($_POST['fixed_price'] ?? null);
+  if (!$__fixed_price_cents || $__fixed_price_cents < 0) $__fixed_price_cents = null;
+}
 
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST["action"]) && $_POST["action"] == "save") {
@@ -74,6 +96,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST["action"]) && $_POST["
     }
   }
 
+
   // $project_id kommt aus POST
   $chk = $pdo->prepare("
     SELECT COUNT(*)
@@ -90,8 +113,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST["action"]) && $_POST["
   }
 
   if ($ok) {
-    $ins = $pdo->prepare('INSERT INTO tasks(account_id, project_id, description, planned_minutes, priority, deadline, status, billable) VALUES (?,?,?,?,?,?,?,?)');
-    $ins->execute([$account_id, $project_id, $description, $planned, $priority, $deadline, $status, $billable]);
+
+    // Billing-Mode/Festpreis in DB übernehmen
+    $billing_mode = ($__billing_mode === 'fixed') ? 'fixed' : 'time';
+    $fixed_price_cents = ($billing_mode === 'fixed') ? $__fixed_price_cents : null;
+
+    $ins = $pdo->prepare('
+      INSERT INTO tasks(
+        account_id, project_id, description, planned_minutes,
+        priority, deadline, status, billable,
+        billing_mode, fixed_price_cents, fixed_billed_cents
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+    ');
+    $ins->execute([
+      $account_id, $project_id, $description, $planned,
+      $priority, $deadline, $status, $billable,
+      $billing_mode, $fixed_price_cents, 0
+    ]);
 
     $task_id = (int)$pdo->lastInsertId();
 
@@ -204,6 +242,35 @@ require __DIR__ . '/../../src/layout/header.php';
         </div>
       </div>
 
+      <fieldset class="border rounded p-3 mb-3">
+        <legend class="float-none w-auto px-2 fs-6 text-muted mb-0">Abrechnung</legend>
+
+        <div class="mb-2">
+          <div class="form-check form-check-inline">
+            <input class="form-check-input" type="radio" id="bm_time" name="billing_mode" value="time"
+                  <?php echo ($__billing_mode === 'time') ? 'checked' : ''; ?>>
+            <label class="form-check-label" for="bm_time">Zeitbasiert</label>
+          </div>
+          <div class="form-check form-check-inline">
+            <input class="form-check-input" type="radio" id="bm_fixed" name="billing_mode" value="fixed"
+                  <?php echo ($__billing_mode === 'fixed') ? 'checked' : ''; ?>>
+            <label class="form-check-label" for="bm_fixed">Festpreis</label>
+          </div>
+        </div>
+
+        <div class="row g-2 align-items-end" data-fixed-price-row style="display:none">
+          <div class="col-sm-6">
+            <label class="form-label">Festpreis (netto)</label>
+            <div class="input-group">
+              <span class="input-group-text">€</span>
+              <input type="number" step="0.01" min="0" class="form-control" name="fixed_price"
+                    value="<?php echo isset($_POST['fixed_price']) ? htmlspecialchars($_POST['fixed_price']) : ''; ?>">
+            </div>
+            <div class="form-text">Zeiten werden weiterhin getrackt, aber nicht abgerechnet.</div>
+          </div>
+        </div>
+      </fieldset>
+
       <button class="btn btn-primary">Speichern</button>
       <a class="btn btn-outline-secondary" href="<?= h(url($return_to)) ?>">Abbrechen</a>
     </form>
@@ -229,6 +296,30 @@ require __DIR__ . '/../../src/layout/header.php';
         }
       })();
     </script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function(){
+          const form = document.getElementById('taskForm');
+          if (!form) return;
+
+          const radios = Array.from(form.querySelectorAll('input[name="billing_mode"]'));
+          const fpRow  = form.querySelector('[data-fixed-price-row]');
+
+          function toggle(){
+            const selected = radios.find(r => r.checked);
+            const mode = selected ? selected.value : 'time';
+            if (fpRow) fpRow.style.display = (mode === 'fixed') ? '' : 'none';
+          }
+
+          // robust: mehrere Events
+          radios.forEach(r => {
+            r.addEventListener('change', toggle);
+            r.addEventListener('input',  toggle);
+            r.addEventListener('click',  toggle);
+          });
+
+          toggle(); // Initialzustand
+        });
+        </script>
 
   </div>
 </div>

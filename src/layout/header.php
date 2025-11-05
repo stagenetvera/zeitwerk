@@ -115,6 +115,9 @@
     -moz-appearance: textfield;
     appearance: textfield;
   }
+
+  .no-pointer { pointer-events:none; opacity:.7; }
+
   </style>
 </head>
 <body class="bg-light">
