@@ -122,13 +122,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST["action"]) && $_POST["
       INSERT INTO tasks(
         account_id, project_id, description, planned_minutes,
         priority, deadline, status, billable,
-        billing_mode, fixed_price_cents, fixed_billed_cents
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+        billing_mode, fixed_price_cents
+      ) VALUES (?,?,?,?,?,?,?,?,?,?)
     ');
     $ins->execute([
       $account_id, $project_id, $description, $planned,
       $priority, $deadline, $status, $billable,
-      $billing_mode, $fixed_price_cents, 0
+      $billing_mode, $fixed_price_cents
     ]);
 
     $task_id = (int)$pdo->lastInsertId();

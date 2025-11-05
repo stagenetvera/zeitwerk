@@ -1,360 +1,467 @@
 <?php
-require_once __DIR__ . '/../../src/lib/recurring.php';
-
 /**
- * Flache Items-Tabelle (NEW & EDIT)
- * - NEW erwartet:  $groups   (tasks + times)  -> baut auto-Zeilen
- * - EDIT erwartet: $items    (inkl. time_entries[], entry_mode, total_* optional)
+ * Erwartet:
+ * - $mode        : 'new'|'edit'
+ * - $groups      : [ ['rows' => [ taskRows... ] ] ] (nur in new)
+ * - $items       : [ itemRows... ] (nur in edit)
+ * - $rowName     : Feldname der Items, z.B. 'items'
+ * - $timesName   : Feldname für time_ids, z.B. 'time_ids'
+ * - $ROUND_UNIT_MINS : int (Rundung)
+ * - $DEFAULT_SCHEME, $DEFAULT_TAX | (Fallback auf $DEFAULT_VAT)
+ * - optional $ri_key_by_desc[description] => key  (für Edit; Recurring-Ledger)
  *
- * Einheitliches Posting-Schema:
- *   items[idx][id]?            (nur EDIT, für bestehende Positionen)
- *   items[idx][task_id]?       (bei auto-Zeilen)
- *   items[idx][entry_mode]     ('auto' | 'time' | 'qty')
- *   items[idx][description]
- *   items[idx][hourly_rate]
- *   items[idx][tax_scheme]     ('standard'|'tax_exempt'|'reverse_charge')
- *   items[idx][vat_rate]
- *   items[idx][quantity]       (für 'time' (dezimalstunden) & 'qty')
- *   items[idx][hours]          (optional HH:MM Eingabe bei 'time', Server wandelt um)
- *   items[idx][time_ids][]     (bei 'auto')
+ * Struktur eines taskRows (new):
+ * [
+ *   'task_id'              => int,
+ *   'task_desc'            => string,
+ *   'hourly_rate'          => float,
+ *   'tax_rate'             => float,
+ *   'billing_mode'         => 'time'|'fixed',
+ *   'fixed_price_cents'    => int,
+ *   'billed_in_invoice_id' => int|null,
+ *   'billed_invoice_status'=> 'in_vorbereitung'|'gestellt'|'bezahlt'|'storniert'|null,
+ *   'times'                => [ ['id'=>int,'minutes'=>int,'started_at'=>..., 'ended_at'=>...], ... ],
+ *   'minutes_sum'          => int (bereits gerundet nach $ROUND_UNIT_MINS)
+ * ]
+ *
+ * Struktur eines itemRows (edit):
+ * [
+ *   'id'           => int,
+ *   'task_id'      => int|null,
+ *   'description'  => string,
+ *   'hourly_rate'  => float,
+ *   'vat_rate'     => float,
+ *   'tax_scheme'   => 'standard'|'tax_exempt'|'reverse_charge',
+ *   'quantity'     => float,
+ *   'entry_mode'   => 'fixed'|'auto'|'time'|'qty',
+ *   'total_net'    => float|null,
+ *   'total_gross'  => float|null,
+ *   'time_entries' => [ ['id'=>int,'minutes'=>int,'started_at'=>..., 'ended_at'=>..., 'selected'=>bool], ... ],
+ * ]
  */
 
-[$eff_scheme, $eff_vat] = get_effective_tax_defaults($settings, $company ?? null);
-$eff_scheme   = $eff_scheme   ?? 'standard';
-$eff_vat_js   = number_format((float)$eff_vat, 2, '.', '');
-$eff_vat_num  = (float)$eff_vat_js;
 
-$mode = $mode ?? 'new'; // 'new' oder 'edit'
+function _fmt_money($v){ return number_format((float)$v, 2, ',', '.'); } // Anzeige (Spans)
+function _fmt_money_input($v){ return number_format((float)$v, 2, '.',  ''); } // Inputs: KEINE Gruppierung
 
-function _fmt_hhmm($min){ $min=(int)$min; $h=intdiv($min,60); $r=$min%60; return sprintf('%02d:%02d',$h,$r); }
-function _fmt_hours_from_dec($d){ $d=(float)$d; $h=(int)floor($d); $m=(int)round(($d-$h)*60); return sprintf('%02d:%02d',$h,$m); }
 
-$ROUND_UNIT_MINS = max(0, (int)($settings['invoice_round_minutes'] ?? 0));
-if (!function_exists('_round_minutes_up')) {
-  function _round_minutes_up(int $minutes, int $unit): int {
-    if ($unit <= 0) return $minutes;
-    if ($minutes <= 0) return 0;
-    return (int)(ceil($minutes / $unit) * $unit);
+$__DEFAULT_SCHEME = isset($DEFAULT_SCHEME) ? (string)$DEFAULT_SCHEME : 'standard';
+$__DEFAULT_TAX    = isset($DEFAULT_TAX) ? (float)$DEFAULT_TAX : (isset($DEFAULT_VAT) ? (float)$DEFAULT_VAT : 19.0);
+$__ROUND_UNIT     = isset($ROUND_UNIT_MINS) ? (int)$ROUND_UNIT_MINS : 0;
+$allow_edit = isset($allow_edit) ? (bool)$allow_edit : true;
+
+$theadCols = [
+  '',            // toggler/drag-handle
+  'Bezeichnung',
+  'Zeit / Menge',
+  'Satz / Preis',
+  'Steuerart',
+  'MwSt %',
+  'Netto',
+  'Brutto',
+  '',            // Aktionen
+];
+
+// kleine Helfer
+function _minutes_to_hhmm($min){ $min=max(0,(int)$min); $h=floor($min/60); $m=$min%60; return sprintf('%02d:%02d',$h,$m); }
+function _sum_minutes_checked($timeEntries){
+  $sum=0;
+  foreach ((array)$timeEntries as $t) {
+    if (!isset($t['selected']) || $t['selected']) $sum += (int)($t['minutes'] ?? 0);
   }
+  return $sum;
+}
+function _render_time_row_generic($rowName, $rowIndex, $t, $checked=true){
+  global  $allow_edit;
+  $tid = (int)($t['id'] ?? 0);
+  $min = (int)($t['minutes'] ?? 0);
+  $st  = _fmt_dmy($t['started_at'] ?? null);
+  $en  = _fmt_dmy($t['ended_at']   ?? null);
+  ?>
+  <tr class="time-row" draggable="true" data-time-id="<?= $tid ?>">
+    <td>
+      <input class="form-check-input time-checkbox"
+             type="checkbox"
+             name="<?= $rowName.'['.$rowIndex.'][time_ids][]' ?>"
+             value="<?= $tid ?>" <?= $checked ? 'checked' : '' ?>
+             data-min="<?= (int)$min ?>"
+             <?= $allow_edit ? '' : 'disabled' ?>>
+    </td>
+    <td><?= htmlspecialchars($st) ?> – <?= htmlspecialchars($en) ?></td>
+    <td class="text-end"><?= (int)$min ?> min</td>
+  </tr>
+  <?php
 }
 
-
-$GRAND_NET = 0.0; $GRAND_GROSS = 0.0;
 ?>
-<style>
-  .inv-item-row td { vertical-align: middle; }
-  .inv-details { display:none; background:#fcfcfd; }
-  .inv-details td { border-top:0; }
-  .inv-grand-total td { background:#f7f7f9; font-weight:700; border-top:2px solid #dee2e6; }
-  .inv-grand-total .label { text-transform: none; }
-  .inv-toggle-btn{ border:0; background:transparent; width:28px; height:28px; display:grid; place-items:center; border-radius:50%; }
-  .inv-toggle-btn:hover{ background:#eef2f7; }
-  .chev{ width:16px; height:16px; transition:transform .2s ease; }
-  .inv-item-row[aria-expanded="true"] .chev{ transform: rotate(90deg); }
-
-  /* DnD */
-  .dnd-drop-target { outline:2px dashed #6c757d; outline-offset:-2px; }
-  .dnd-dragging    { opacity:.6; }
-
-  /* Griff & Reorder-Indikator */
-  .row-reorder-handle{ cursor:grab; display:inline-grid; place-items:center; width:22px; height:22px; border-radius:4px; }
-  .row-reorder-handle:hover{ background:#eef2f7; }
-  .row-reorder-handle:active{ cursor:grabbing; }
-  .reorder-indicator-before{ box-shadow: inset 0 3px 0 0 #0d6efd; }
-  .reorder-indicator-after { box-shadow: inset 0 -3px 0 0 #0d6efd; }
-
-  /* Sichtbarer Einfüge-Platzhalter beim Reorder */
-  .reorder-placeholder td { padding:0!important; height:0!important; border:0!important; }
-  .reorder-placeholder td::before{
-    content:"";
-    display:block;
-    height:0;
-    border-top:3px solid #0d6efd;
-  }
-
-  /* Ziel-Hervorhebung, wenn eine Zeit auf eine Aufgaben-Hauptzeile gezogen wird */
-  .inv-item-row.time-drop-accept {
-    outline: 2px dashed #0d6efd;
-    outline-offset: -2px;
-    background: rgba(13,110,253,.06);
-  }
-</style>
-
-
-<div id="invoice-hidden-trash"></div>
-<div id="invoice-order-tracker"></div>
-
-<div id="invoice-items" data-round-unit="<?= (int)$ROUND_UNIT_MINS ?>">
-  <table class="table align-middle">
+<div id="invoice-items" class="table-responsive" data-round-unit="<?= (int)$__ROUND_UNIT ?>" data-locked="<?= $allow_edit ? '0' : '1' ?>">
+  <table class="table table-sm align-middle mb-0">
     <thead>
       <tr>
         <th style="width:36px"></th>
-        <th>Aufgabe / Beschreibung</th>
-        <th class="text-end w-110">Zeit / Menge</th>
-        <th class="text-end w-110">Satz / Preis</th>
-        <th class="text-end w-120">Steuerart</th>
-        <th class="text-end w-90">MwSt %</th>
-        <th class="text-end w-110">Netto</th>
-        <th class="text-end w-110">Brutto</th>
-        <th class="text-end" style="width:120px">Aktionen</th>
+        <th>Bezeichnung</th>
+        <th class="text-end" style="width:160px">Zeit / Menge</th>
+        <th class="text-end" style="width:150px">Satz / Preis</th>
+        <th class="text-end" style="width:150px">Steuerart</th>
+        <th class="text-end" style="width:120px">MwSt %</th>
+        <th class="text-end" style="width:140px">Netto</th>
+        <th class="text-end" style="width:140px">Brutto</th>
+        <th class="text-end" style="width:120px"></th>
       </tr>
     </thead>
     <tbody>
 <?php
-$idx = 0;
+$rowIndex = 0;
 
-/* ---------- NEW: flach aus $groups ---------- */
-if (!empty($groups)) {
-  foreach ($groups as $g) {
-    foreach ($g['rows'] as $row) {
-      $idx++;
-      $desc    = $row['task_desc'];
-      $rateNum = (float)($row['hourly_rate'] ?? 0.0);
-      $rate    = number_format($rateNum, 2, '.', '');
-      $taxNum  = isset($row['tax_rate']) ? (float)$row['tax_rate'] : ($eff_scheme==='standard' ? $eff_vat_num : 0.0);
-      $tax     = number_format($taxNum, 2, '.', '');
-      $sumMinRaw  = array_sum(array_map(fn($t)=>(int)$t['minutes'], $row['times']));
-      $sumMin     = _round_minutes_up($sumMinRaw, $ROUND_UNIT_MINS);
-      $sumHHM     = _fmt_hhmm($sumMin);
-      $hoursPrec  = $sumMin / 60.0;            // aus GERUNDETEN Minuten
-      $net        = $hoursPrec * $rateNum;
-      $gross      = $net * (1 + $taxNum/100);
-      $GRAND_NET += $net; $GRAND_GROSS += $gross;
+/* =========================
+ * EDIT-MODUS: aus $items
+ * ========================= */
+if (($mode ?? 'new') === 'edit'):
 
+  foreach ((array)($items ?? []) as $it):
+    $rowIndex++;
 
-      ?>
-      <tr class="inv-item-row"
-          data-row="<?=$idx?>"
-          data-mode="auto"
-          data-task-id="<?= (int)$row['task_id'] ?>"
-          aria-expanded="false">
-        <td class="text-center">
-          <div class="d-flex justify-content-center gap-1">
-            <button type="button" class="inv-toggle-btn" aria-label="Details ein-/ausklappen">
-              <svg class="chev" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <path d="M6 12l4-4-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-            </button>
-            <span class="row-reorder-handle" draggable="true" aria-label="Position verschieben" title="Ziehen zum Sortieren">
-              <svg class="grip" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
-                <path d="M5 4h2v2H5V4Zm4 0h2v2H9V4ZM5 8h2v2H5V8Zm4 0h2v2H9V8ZM5 12h2v2H5v-2Zm4 0h2v2H9v-2Z" fill="currentColor"/>
-              </svg>
-            </span>
-          </div>
-        </td>
-        <td>
-          <input type="hidden" name="items[<?=$idx?>][task_id]" value="<?= (int)$row['task_id'] ?>">
-          <input type="hidden" name="items[<?=$idx?>][entry_mode]" value="auto">
-          <input type="text" class="form-control" name="items[<?=$idx?>][description]" value="<?=h($desc)?>">
-        </td>
-        <td class="text-end">
-          <span class="sum-hhmm"><?=$sumHHM?></span>
-          <input type="hidden" name="items[<?=$idx?>][sum_minutes]" value="<?=$sumMin?>" class="sum-minutes">
-        </td>
-        <td class="text-end">
-          <input type="number" class="form-control text-end rate no-spin" name="items[<?=$idx?>][hourly_rate]" value="<?=$rate?>">
-        </td>
-        <td class="text-end">
-          <select name="items[<?=$idx?>][tax_scheme]" class="form-select inv-tax-sel"
-                  data-rate-standard="<?=$eff_vat_js?>" data-rate-tax-exempt="0.00" data-rate-reverse-charge="0.00">
-            <option value="standard"       <?= $eff_scheme==='standard'?'selected':'' ?>>standard (mit MwSt)</option>
-            <option value="tax_exempt"     <?= $eff_scheme==='tax_exempt'?'selected':'' ?>>steuerfrei</option>
-            <option value="reverse_charge" <?= $eff_scheme==='reverse_charge'?'selected':'' ?>>Reverse-Charge</option>
-          </select>
-        </td>
-        <td class="text-end">
-          <input type="number" min="0" max="100" class="form-control text-end inv-vat-input no-spin"
-                 name="items[<?=$idx?>][vat_rate]" value="<?= h(number_format($taxNum,2,'.','')) ?>">
-        </td>
-        <td class="text-end"><span class="net"><?=number_format($net,2,',','.')?></span></td>
-        <td class="text-end"><span class="gross"><?=number_format($gross,2,',','.')?></span></td>
-        <td class="text-end">
-          <button type="button" class="btn btn-sm btn-outline-danger btn-remove-item">Entfernen</button>
-        </td>
-      </tr>
-      <tr class="inv-details" data-row="<?=$idx?>">
-        <td></td>
-        <td colspan="8">
-          <div class="table-responsive">
-            <table class="table table-sm mb-0">
-              <thead><tr><th style="width:42px"></th><th>Zeitraum</th><th class="text-end">HH:MM</th></tr></thead>
-              <tbody>
-                <?php foreach ($row['times'] as $t): $tid=(int)$t['id']; $m=(int)$t['minutes']; ?>
-                  <tr class="time-row" draggable="true" data-time-id="<?=$tid?>">
-                    <td><input type="checkbox" class="form-check-input time-checkbox"
-                               name="items[<?=$idx?>][time_ids][]" value="<?=$tid?>"
-                               data-min="<?=$m?>" checked></td>
-                    <td><?=h($t['started_at'])?> – <?=h($t['ended_at'])?></td>
-                    <td class="text-end"><?=_fmt_hhmm($m)?></td>
-                  </tr>
-                <?php endforeach; ?>
-              </tbody>
-            </table>
-          </div>
-        </td>
-      </tr>
-      <?php
+    $itemId   = (int)($it['id'] ?? 0);
+    $desc     = (string)($it['description'] ?? '');
+    $modeVal  = strtolower((string)($it['entry_mode'] ?? 'qty'));
+    if (!in_array($modeVal, ['fixed','auto','time','qty'], true)) $modeVal = 'qty';
+
+    $rate     = (float)($it['hourly_rate'] ?? 0.0);
+    $scheme   = (string)($it['tax_scheme'] ?? $__DEFAULT_SCHEME);
+    $vat      = ($scheme === 'standard') ? (float)($it['vat_rate'] ?? $__DEFAULT_TAX) : 0.0;
+    $qtyIn    = (float)($it['quantity'] ?? 0.0);
+
+    // Zeiten für auto/fixed
+    $timeEntries = (array)($it['time_entries'] ?? []);
+    $minutesSum  = _sum_minutes_checked($timeEntries);
+    if ($modeVal === 'auto' && $__ROUND_UNIT > 0 && $minutesSum > 0) {
+      $minutesSum = (int)(ceil($minutesSum / $__ROUND_UNIT) * $__ROUND_UNIT);
     }
-  }
-}
+    $hhmm = _minutes_to_hhmm($minutesSum);
 
-/* ---------- EDIT: flach aus $items ---------- */
-if (empty($groups) && !empty($items)) {
-  foreach ($items as $it) {
-    $idx++;
-    $desc      = $it['description'] ?? '';
-    $rateNum   = (float)($it['hourly_rate'] ?? 0.0);
-    $rate      = number_format($rateNum, 2, '.', '');
-    $taxNum    = (float)($it['vat_rate'] ?? $it['tax_rate'] ?? 0.0);
-    $it_scheme = $it['tax_scheme'] ?? ($taxNum > 0 ? 'standard' : 'tax_exempt');
-    $it_vat    = number_format($taxNum, 2, '.', '');
-
-    $times     = $it['time_entries'] ?? [];
-    $hasTimes  = !empty($times);
-    $entryMode = $it['entry_mode'] ?? ($hasTimes ? 'auto' : 'qty');
-    $quantity  = (float)($it['quantity'] ?? 0.0);
-
-    $sumMin=0; $sumHHM='00:00';
-    if ($hasTimes) {
-      foreach ($times as $te) if (!empty($te['selected'])) $sumMin+=(int)$te['minutes'];
-      // nur AUTO-Positionen werden nach Summenbildung gerundet
-      $sumMin = ($entryMode==='auto') ? _round_minutes_up($sumMin, $ROUND_UNIT_MINS) : $sumMin;
-      $sumHHM=_fmt_hhmm($sumMin);
+    // Menge/Netto/Brutto Anzeige
+    if ($modeVal === 'fixed') {
+      $qty = 1.0;
+      $net = round($rate * $qty, 2);
+    } elseif ($modeVal === 'auto') {
+      $qty = round($minutesSum / 60.0, 3);
+      $net = round(($minutesSum / 60.0) * $rate, 2);
+    } elseif ($modeVal === 'time') {
+      $qty = round($qtyIn, 3);
+      $net = round($qtyIn * $rate, 2);
+    } else { // qty
+      $qty = round($qtyIn, 3);
+      $net = round($qtyIn * $rate, 2);
     }
+    $gross = round($net * (1 + $vat/100), 2);
 
-    if (array_key_exists('total_net',$it) && array_key_exists('total_gross',$it)) {
-      $netVal=(float)$it['total_net']; $grossVal=(float)$it['total_gross'];
-    } else {
-      if ($entryMode==='auto'){ $netVal = ($sumMin/60.0)*$rateNum; }
-      else { $netVal = $quantity * $rateNum; }
-      $grossVal = $netVal * (1 + $taxNum/100);
-    }
-    $GRAND_NET += $netVal; $GRAND_GROSS += $grossVal;
+    // Recurring-Key (falls übergeben)
+    $ri_key = isset($ri_key_by_desc[$desc]) ? (string)$ri_key_by_desc[$desc] : '';
 
-    $dis    = !empty($canEditItems) ? '' : ' readonly ';
-    $selDis = !empty($canEditItems) ? '' : ' disabled ';
     ?>
-    <tr class="inv-item-row" data-row="<?=$idx?>" data-mode="<?=$entryMode?>" aria-expanded="false">
+    <tr class="inv-item-row"
+        data-row="<?= $rowIndex ?>"
+        data-mode="<?= htmlspecialchars($modeVal) ?>"
+        aria-expanded="false">
       <td class="text-center">
         <div class="d-flex justify-content-center gap-1">
-          <?php if ($entryMode==='auto'): ?>
-            <button type="button" class="inv-toggle-btn" aria-label="Details ein-/ausklappen">
-              <svg class="chev" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <path d="M6 12l4-4-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-            </button>
-          <?php endif; ?>
-          <span class="row-reorder-handle" draggable="true" aria-label="Position verschieben" title="Ziehen zum Sortieren">
+          <button type="button" class="btn btn-sm btn-outline-secondary inv-toggle-btn" title="Details ein/aus">
+            <i class="bi bi-chevron-down" aria-hidden="true"></i>
+            <span class="visually-hidden">Details umschalten</span>
+          </button>
+          <span class="row-reorder-handle" <?= $allow_edit ? 'draggable="true"' : '' ?> aria-label="Position verschieben" title="Ziehen zum Sortieren">
             <svg class="grip" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
-              <path d="M5 4h2v2H5V4Zm4 0h2v2H9V4ZM5 8h2v2H5V8Zm4 0h2v2H9V8ZM5 12h2v2H5v-2Zm4 0h2v2H9v-2Z" fill="currentColor"/>
+              <path d="M5 4h2v2H5V4Zm4 0h2v2H9V4ZM5 8h2v2H5V8ZM9 8h2v2H9V8ZM5 12h2v2H5v-2ZM9 12h2v2H9v-2Z" fill="currentColor"/>
             </svg>
           </span>
         </div>
+        <input type="hidden" name="<?= $rowName.'['.$rowIndex.'][id]' ?>" value="<?= (int)$itemId ?>">
+        <input type="hidden" class="entry-mode" name="<?= $rowName.'['.$rowIndex.'][entry_mode]' ?>" value="<?= htmlspecialchars($modeVal) ?>">
+        <?php if ($ri_key !== ''): ?>
+          <input type="hidden" name="<?= $rowName.'['.$rowIndex.'][ri_key]' ?>" value="<?= h($ri_key) ?>">
+        <?php endif; ?>
+        <?php if (in_array($modeVal, ['auto','fixed'], true)): ?>
+          <input type="hidden" class="sum-minutes" name="<?= $rowName.'['.$rowIndex.'][sum_minutes]' ?>" value="<?= (int)$minutesSum ?>">
+        <?php endif; ?>
       </td>
+
       <td>
-        <?php if (!empty($ri_key_by_desc[$it['description']])): ?>
-          <input type="hidden" name="items[<?= (int)$idx ?>][ri_key]" value="<?= h($ri_key_by_desc[$it['description']]) ?>">
-        <?php endif; ?>
-        <input type="hidden" name="items[<?=$idx?>][id]" value="<?= (int)($it['id'] ?? 0) ?>">
-        <input type="hidden" class="entry-mode" name="items[<?=$idx?>][entry_mode]" value="<?=$entryMode?>">
-        <?php if (!empty($it['task_id'])): ?>
-          <input type="hidden" name="items[<?=$idx?>][task_id]" value="<?= (int)$it['task_id'] ?>">
-        <?php endif; ?>
-        <input type="text" class="form-control" name="items[<?=$idx?>][description]" value="<?=h($desc)?>" <?=$dis?>>
+        <input type="text" class="form-control form-control-sm"
+               name="<?= $rowName.'['.$rowIndex.'][description]' ?>"
+               value="<?= htmlspecialchars($desc) ?>"
+               <?php if (!$allow_edit): ?>disabled<?php endif;?>>
       </td>
 
       <td class="text-end">
-        <?php if ($entryMode==='auto'): ?>
-          <span class="sum-hhmm"><?=$sumHHM?></span>
-          <input type="hidden" name="items[<?=$idx?>][sum_minutes]" value="<?=$sumMin?>" class="sum-minutes">
-        <?php elseif ($entryMode==='time'): ?>
-          <div class="d-flex gap-1 align-items-center justify-content-end">
-            <input type="text" class="form-control text-end hours-input"
-                   name="items[<?=$idx?>][hours]" value="<?= _fmt_hours_from_dec($quantity) ?>" <?=$dis?>>
+        <?php if ($modeVal === 'fixed'): ?>
+          <div class="form-control-plaintext text-end">
+            1 <span class="text-muted">(<?= $hhmm ?>)</span>
           </div>
-          <input type="hidden" class="quantity-dec" name="items[<?=$idx?>][quantity]" value="<?= number_format($quantity,3,'.','') ?>">
-        <?php else: ?>
-          <input type="number" class="form-control text-end quantity no-spin"
-                 name="items[<?=$idx?>][quantity]" value="<?= _fmt_qty($quantity,3,'.','') ?>" <?=$dis?>>
+          <input type="hidden" name="<?= $rowName.'['.$rowIndex.'][quantity]' ?>" value="1">
+        <?php elseif ($modeVal === 'auto'): ?>
+          <div class="form-control-plaintext text-end">
+            <span class="sum-hhmm"><?= $hhmm ?></span>
+          </div>
+          <input type="hidden" name="<?= $rowName.'['.$rowIndex.'][quantity]' ?>" value="<?= _fmt_qty($qty) ?>">
+        <?php elseif ($modeVal === 'time'): ?>
+          <!-- Für Zeit-Modus zeigen wir (vorerst) nur ein Dezimalfeld; das Edit-Skript in edit.php ergänzt den Icon-Toggle und HH:MM -->
+          <input type="number" class="form-control form-control-sm text-end quantity no-spin"
+                 name="<?= $rowName.'['.$rowIndex.'][quantity]' ?>"
+                 value="<?= _fmt_qty($qty) ?>" min="0" <?php if (!$allow_edit): ?>disabled<?php endif;?>>
+        <?php else: /* qty */ ?>
+          <input type="number" class="form-control form-control-sm text-end quantity no-spin"
+                 name="<?= $rowName.'['.$rowIndex.'][quantity]' ?>"
+                 value="<?= _fmt_qty($qty) ?>" min="0" <?php if (!$allow_edit): ?>disabled<?php endif;?>>
         <?php endif; ?>
       </td>
 
       <td class="text-end">
-        <input type="number"  class="form-control text-end rate no-spin"
-               name="items[<?=$idx?>][hourly_rate]" value="<?=$rate?>" <?=$dis?>>
+        <input type="number" class="form-control form-control-sm text-end rate no-spin"
+               name="<?= $rowName.'['.$rowIndex.'][hourly_rate]' ?>"
+               value="<?= _fmt_money_input($rate) ?>" min="0" <?php if (!$allow_edit): ?>disabled<?php endif;?>>
       </td>
 
       <td class="text-end">
-        <select name="items[<?=$idx?>][tax_scheme]" class="form-select inv-tax-sel"
-                data-rate-standard="<?=$eff_vat_js?>" data-rate-tax-exempt="0.00" data-rate-reverse-charge="0.00" <?=$selDis?>>
-          <option value="standard"       <?= $it_scheme==='standard'?'selected':'' ?>>standard (mit MwSt)</option>
-          <option value="tax_exempt"     <?= $it_scheme==='tax_exempt'?'selected':'' ?>>steuerfrei</option>
-          <option value="reverse_charge" <?= $it_scheme==='reverse_charge'?'selected':'' ?>>Reverse-Charge</option>
+        <select name="<?= $rowName.'['.$rowIndex.'][tax_scheme]' ?>" class="form-select form-select-sm inv-tax-sel"
+                data-rate-standard="<?= number_format($__DEFAULT_TAX,2,'.','') ?>"
+                data-rate-tax-exempt="0.00"
+                data-rate-reverse-charge="0.00"
+                <?php if (!$allow_edit): ?>disabled<?php endif;?>>
+          <option value="standard" <?= $scheme==='standard'?'selected':'' ?>>standard (mit MwSt)</option>
+          <option value="tax_exempt" <?= $scheme==='tax_exempt'?'selected':'' ?>>steuerfrei</option>
+          <option value="reverse_charge" <?= $scheme==='reverse_charge'?'selected':'' ?>>Reverse-Charge</option>
         </select>
       </td>
+
       <td class="text-end">
-        <input type="number" min="0" max="100"
-               class="form-control text-end inv-vat-input no-spin"
-               name="items[<?=$idx?>][vat_rate]"
-               value="<?= h($it_vat) ?>" <?=$dis?>>
+        <input type="number" min="0" max="100" step="0.01"
+               class="form-control form-control-sm text-end inv-vat-input no-spin"
+               name="<?= $rowName.'['.$rowIndex.'][vat_rate]' ?>"
+               value="<?= number_format($vat,2,'.','') ?>"
+               <?php if (!$allow_edit): ?>disabled<?php endif;?>>
       </td>
 
-      <td class="text-end"><span class="net"><?= number_format($netVal,   2, ',', '.') ?></span></td>
-      <td class="text-end"><span class="gross"><?= number_format($grossVal, 2, ',', '.') ?></span></td>
+      <td class="text-end">
+        <span class="net"><?= _fmt_money($net) ?></span>
+      </td>
+      <td class="text-end">
+        <span class="gross"><?= _fmt_money($gross) ?></span>
+      </td>
 
       <td class="text-end text-nowrap">
-        <button <?php if (empty($canEditItems)) echo " disabled ";?> type="button" class="btn btn-sm btn-outline-danger btn-remove-item">Entfernen</button>
+        <?php if ($allow_edit): ?>
+          <button type="button" class="btn btn-sm btn-outline-danger btn-remove-item">
+            Entfernen
+          </button>
+        <?php endif; ?>
       </td>
     </tr>
 
-    <?php if ($entryMode==='auto'): ?>
-    <tr class="inv-details" data-row="<?=$idx?>">
+    <tr class="inv-details" data-row="<?= $rowIndex ?>" style="display:none">
       <td></td>
-      <td colspan="8">
+      <td colspan="7">
         <div class="table-responsive">
-          <table class="table table-sm mb-0">
-            <thead><tr><th style="width:42px"></th><th>Zeitraum</th><th class="text-end">HH:MM</th></tr></thead>
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr>
+                <th style="width:40px"></th>
+                <th>Zeiteintrag</th>
+                <th class="text-end" style="width:120px">Minuten</th>
+              </tr>
+            </thead>
             <tbody>
-              <?php foreach ($times as $te): $tid=(int)$te['id']; $m=(int)$te['minutes']; ?>
-                <tr class="time-row" draggable="true" data-time-id="<?=$tid?>">
-                  <td><input class="form-check-input time-checkbox" type="checkbox"
-                             name="items[<?=$idx?>][time_ids][]"
-                             value="<?=$tid?>" <?=!empty($te['selected'])?'checked':''?> data-min="<?=$m?>" <?=$selDis?>></td>
-                  <td><?=h($te['started_at'] ?? '')?> <?= isset($te['ended_at']) ? '– '.h($te['ended_at']) : '' ?></td>
-                  <td class="text-end"><?=_fmt_hhmm($m)?></td>
-                </tr>
-              <?php endforeach; ?>
+              <?php foreach ($timeEntries as $t) { _render_time_row_generic($rowName, $rowIndex, $t, (!isset($t['selected']) || $t['selected'])); } ?>
             </tbody>
           </table>
         </div>
       </td>
     </tr>
-    <?php endif; ?>
-
   <?php
+  endforeach;
+
+/* =========================
+ * NEW-MODUS: aus $groups
+ * ========================= */
+else:
+
+  function render_time_row_new($rowName, $rowIndex, $t){
+    _render_time_row_generic($rowName, $rowIndex, $t, true);
   }
-}
+
+  foreach ((array)($groups[0]['rows'] ?? []) as $taskRow):
+    $rowIndex++;
+
+    $isFixed    = (($taskRow['billing_mode'] ?? '') === 'fixed');
+    $taskId     = (int)$taskRow['task_id'];
+    $minutesSum = (int)$taskRow['minutes_sum'];
+    $qtyHours   = max(0, $minutesSum) / 60.0; // nur Anzeige / auto
+
+    $scheme = $__DEFAULT_SCHEME;
+    $vat    = ($scheme === 'standard') ? (float)$__DEFAULT_TAX : 0.0;
+
+    // Soft-Lock / Already billed UI (Info)
+    $anchorId         = (int)($taskRow['billed_in_invoice_id'] ?? 0);
+    $anchorStatus     = $taskRow['billed_invoice_status'] ?? null;
+    $isLockedToDraft  = $isFixed && $anchorId && ($anchorStatus === 'in_vorbereitung');
+    $isAlreadyBilled  = $isFixed && $anchorId && in_array($anchorStatus, ['gestellt','bezahlt'], true);
+
+    $rowMode = $isFixed ? 'fixed' : 'auto';
+
+    // Fixpreis in Dezimal
+    $fixedPriceDec = ((int)($taskRow['fixed_price_cents'] ?? 0)) / 100.0;
+
+    // Wenn bereits an ENTWURF gekoppelt → Preis in dieser neuen Rechnung = 0.00
+    $rate = $isFixed
+      ? ($isLockedToDraft ? 0.00 : $fixedPriceDec)
+      : (float)($taskRow['hourly_rate'] ?? 0.0);
+
+    // Netto/Brutto (fixed: Menge = 1, Preis = $rate)
+    if ($isFixed) $net = $rate; else $net = $qtyHours * $rate;
+    $gross = $net * (1 + $vat/100);
+
+    $hh = _minutes_to_hhmm($minutesSum);
+    ?>
+    <tr class="inv-item-row"
+        data-row="<?= $rowIndex ?>"
+        data-mode="<?= $rowMode ?>"
+        data-fixed="<?= $isFixed ? '1' : '0' ?>"
+        aria-expanded="false">
+      <td class="text-center">
+        <div class="d-flex justify-content-center gap-1">
+          <button type="button" class="btn btn-sm btn-outline-secondary inv-toggle-btn" title="Details ein/aus">
+            <i class="bi bi-chevron-down" aria-hidden="true"></i>
+            <span class="visually-hidden">Details umschalten</span>
+          </button>
+          <span class="row-reorder-handle" draggable="true" aria-label="Position verschieben" title="Ziehen zum Sortieren">
+            <svg class="grip" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+              <path d="M5 4h2v2H5V4Zm4 0h2v2H9V4ZM5 8h2v2H5V8ZM9 8h2v2H9V8ZM5 12h2v2H5v-2ZM9 12h2v2H9v-2Z" fill="currentColor"/>
+            </svg>
+          </span>
+        </div>
+        <input type="hidden" class="entry-mode" name="<?= $rowName.'['.$rowIndex.'][entry_mode]' ?>" value="<?= $rowMode ?>">
+        <input type="hidden" name="<?= $rowName.'['.$rowIndex.'][task_id]' ?>" value="<?= $taskId ?>">
+        <input type="hidden" class="sum-minutes" name="<?= $rowName.'['.$rowIndex.'][sum_minutes]' ?>" value="<?= (int)$minutesSum ?>">
+      </td>
+
+      <td>
+        <input type="text" class="form-control form-control-sm"
+               name="<?= $rowName.'['.$rowIndex.'][description]' ?>"
+               value="<?= htmlspecialchars($taskRow['task_desc'] ?? '') ?>">
+        <?php if ($isFixed && $isAlreadyBilled): ?>
+          <div class="text-muted small mt-1">
+            Bereits abgerechnet in Rechnung #<?= (int)$anchorId ?> — Betrag 0,00&nbsp;€
+          </div>
+        <?php elseif ($isFixed && !$anchorId): ?>
+          <div class="text-muted small mt-1">
+            Fixpreis (<?= _fmt_money($rate) ?> €)
+          </div>
+        <?php elseif ($isFixed && $isLockedToDraft): ?>
+          <div class="text-warning small mt-1">
+            Bereits in Entwurf #<?= (int)$anchorId ?> — dieser Task ist vorläufig gesperrt
+          </div>
+        <?php endif; ?>
+      </td>
+
+      <td class="text-end">
+        <?php if ($isFixed): ?>
+          <div class="form-control-plaintext text-end">
+            1 <span class="text-muted">(<?= $hh ?>)</span>
+          </div>
+          <input type="hidden" name="<?= $rowName.'['.$rowIndex.'][quantity]' ?>" value="1.000">
+        <?php else: ?>
+          <div class="form-control-plaintext text-end">
+            <span class="sum-hhmm"><?= $hh ?></span>
+          <?php endif; ?>
+      </td>
+
+      <td class="text-end">
+        <input type="number" class="form-control form-control-sm text-end rate no-spin"
+               name="<?= $rowName.'['.$rowIndex.'][hourly_rate]' ?>"
+               value="<?= _fmt_money_input($rate) ?>" min="0" <?= ($isFixed && $isAlreadyBilled)?'disabled':'' ?>>
+      </td>
+
+      <td class="text-end">
+        <select name="<?= $rowName.'['.$rowIndex.'][tax_scheme]' ?>" class="form-select form-select-sm inv-tax-sel"
+                data-rate-standard="<?= number_format($__DEFAULT_TAX,2,'.','') ?>"
+                data-rate-tax-exempt="0.00"
+                data-rate-reverse-charge="0.00">
+          <option value="standard" selected>standard (mit MwSt)</option>
+          <option value="tax_exempt">steuerfrei</option>
+          <option value="reverse_charge">Reverse-Charge</option>
+        </select>
+      </td>
+
+      <td class="text-end">
+        <input type="number" min="0" max="100" step="0.01"
+               class="form-control form-control-sm text-end inv-vat-input no-spin"
+               name="<?= $rowName.'['.$rowIndex.'][vat_rate]' ?>"
+               value="<?= number_format((float)$vat,2,'.','') ?>">
+      </td>
+
+      <td class="text-end"><span class="net"><?= _fmt_money($net) ?></span></td>
+      <td class="text-end"><span class="gross"><?= _fmt_money($gross) ?></span></td>
+
+      <td class="text-end text-nowrap">
+        <button type="button" class="btn btn-sm btn-outline-danger btn-remove-item">
+          Entfernen
+        </button>
+      </td>
+    </tr>
+
+    <tr class="inv-details" data-row="<?= $rowIndex ?>" style="display:none">
+      <td></td>
+      <td colspan="7">
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr>
+                <th style="width:40px"></th>
+                <th>Zeiteintrag</th>
+                <th class="text-end" style="width:120px">Minuten</th>
+              </tr>
+            </thead>
+            <tbody>
+              <?php foreach ((array)($taskRow['times'] ?? []) as $t) { render_time_row_new($rowName, $rowIndex, $t); } ?>
+            </tbody>
+          </table>
+        </div>
+      </td>
+    </tr>
+  <?php
+  endforeach;
+
+endif; // end edit/new
 ?>
+
+      <!-- Grand total -->
       <tr class="inv-grand-total">
         <td></td>
-        <td colspan="5" class="text-end label">Gesamtsumme</td>
-        <td class="text-end"><span id="grand-net"><?= number_format($GRAND_NET, 2, ',', '.') ?></span></td>
-        <td class="text-end"><span id="grand-gross"><?= number_format($GRAND_GROSS, 2, ',', '.') ?></span></td>
+        <td class="text-end fw-bold" colspan="5">Gesamt</td>
+        <td class="text-end fw-bold"><span id="grand-net">0,00</span></td>
+        <td class="text-end fw-bold"><span id="grand-gross">0,00</span></td>
         <td></td>
       </tr>
     </tbody>
   </table>
+
+  <!-- Hidden containers for reindex + deletions + order -->
+  <div id="invoice-hidden-trash" class="d-none"></div>
+  <div id="invoice-order-tracker" class="d-none"></div>
 </div>
 
+<!-- --- JS: Toggle, Recalc, DnD, "+ Position" (manuell) --- -->
 <script>
 (function(){
   var root = document.getElementById('invoice-items'); if (!root) return;
+
   var roundUnit = parseInt(root.getAttribute('data-round-unit') || '0', 10) || 0;
-  /* ---------- Helpers ---------- */
+  var locked    = (root.getAttribute('data-locked') === '1');
+
+  /* ===== Helpers ===== */
   function getDetailsRowByMain(mainTr){
     if (!mainTr) return null;
     var det = mainTr.nextElementSibling;
-    if (!det || !det.classList.contains('inv-details')) {
+    if (!det || !det.classList.contains('inv-details') || det.getAttribute('data-row') !== mainTr.getAttribute('data-row')) {
       var rowId = mainTr.getAttribute('data-row');
       det = root.querySelector('.inv-details[data-row="'+rowId+'"]');
     }
@@ -365,7 +472,7 @@ if (empty($groups) && !empty($items)) {
   }
   function getDetailsTbodyById(rowId){
     var det = getDetailsRowById(rowId);
-    return det ? det.querySelector('tbody') : null;
+    return det ? (det.querySelector('tbody') || det) : null;
   }
   function getAfterPairNode(refMain){
     var next = refMain.nextElementSibling;
@@ -374,12 +481,6 @@ if (empty($groups) && !empty($items)) {
     }
     return next;
   }
-  function clearTimeDropAccept(){
-    root.querySelectorAll('tr.inv-item-row.time-drop-accept').forEach(function(r){
-      r.classList.remove('time-drop-accept');
-    });
-  }
-
   function toNumber(str){
     if (typeof str !== 'string') str = String(str ?? '');
     str = str.trim(); if (!str) return 0;
@@ -388,10 +489,21 @@ if (empty($groups) && !empty($items)) {
     var n = parseFloat(str); return isFinite(n) ? n : 0;
   }
   function fmt2(n){ return (n||0).toFixed(2).replace('.',','); }
-  function hhmm(min){ min = Math.max(0, parseInt(min||0,10)); var h = Math.floor(min/60), m = min%60; return (h<10?'0':'')+h+':' + (m<10?'0':'')+m; }
-  function parseHours(v){ v=String(v||'').trim(); if(v.includes(':')){ var sp=v.split(':'); var h=parseInt(sp[0]||'0',10)||0; var m=parseInt(sp[1]||'0',10)||0; return h + m/60; } return toNumber(v); }
+  function hhmm(min){
+    min = Math.max(0, parseInt(min||0,10));
+    var h = Math.floor(min/60), m = min%60;
+    return (h<10?'0':'')+h+':' + (m<10?'0':'')+m;
+  }
+  function parseHoursToDecimal(v){
+    v = String(v||'').trim();
+    if (v.includes(':')) {
+      var p=v.split(':'), h=parseInt(p[0]||'0',10)||0, m=parseInt(p[1]||'0',10)||0;
+      return h + (m/60);
+    }
+    var n = parseFloat(v.replace(',','.')); return isFinite(n) ? n : 0;
+  }
 
-  /* ---------- Summen ---------- */
+  /* ===== Recalc ===== */
   function recalcTotals(){
     var gnet=0, ggross=0;
     root.querySelectorAll('tr.inv-item-row').forEach(function(tr){
@@ -399,13 +511,16 @@ if (empty($groups) && !empty($items)) {
       ggross+= toNumber(tr.querySelector('.gross')?.textContent || '0');
     });
     var gN = document.getElementById('grand-net'); var gG = document.getElementById('grand-gross');
-    if (gN) gN.textContent = fmt2(gnet); if (gG) gG.textContent = fmt2(ggross);
+    if (gN) gN.textContent = fmt2(gnet);
+    if (gG) gG.textContent = fmt2(ggross);
   }
 
   function recalcRow(tr){
-    var mode = tr.getAttribute('data-mode') || tr.querySelector('.entry-mode')?.value || 'auto';
+    var mode = (tr.getAttribute('data-mode') || tr.querySelector('.entry-mode')?.value || 'auto').toLowerCase();
+    var rate = toNumber(tr.querySelector('.rate')?.value||'0');
+    var vat  = toNumber(tr.querySelector('.inv-vat-input')?.value||'0');
 
-    if (mode === 'auto') {
+    if (mode === 'auto' || mode === 'fixed') {
       var minutes = 0;
       var rowId   = tr.getAttribute('data-row');
       var details = getDetailsRowById(rowId);
@@ -417,39 +532,43 @@ if (empty($groups) && !empty($items)) {
         var sm = tr.querySelector('.sum-minutes');
         minutes = sm ? parseInt(sm.value||'0',10) : 0;
       }
-       // Clientseitige Vorschau: Minuten nach Summenbildung runden (nur Anzeige)
-      if (roundUnit > 0 && minutes > 0) {
+      if (roundUnit > 0 && minutes > 0 && mode === 'auto') {
         minutes = Math.ceil(minutes / roundUnit) * roundUnit;
       }
 
-      var rate = toNumber(tr.querySelector('.rate')?.value||'0');
-      var vat  = toNumber(tr.querySelector('.inv-vat-input')?.value||'0');
-      var net   = (minutes/60.0) * rate;
-      var gross = net * (1 + vat/100);
-      var hh = tr.querySelector('.sum-hhmm'); if (hh) hh.textContent = hhmm(minutes);
-      var smi= tr.querySelector('.sum-minutes'); if (smi) smi.value = String(minutes);
-      var nspan = tr.querySelector('.net'); if (nspan) nspan.textContent = fmt2(net);
-      var gspan = tr.querySelector('.gross'); if (gspan) gspan.textContent = fmt2(gross);
+      if (mode === 'auto') {
+        var net   = (minutes/60.0) * rate;
+        var gross = net * (1 + vat/100);
+        var hh    = tr.querySelector('.sum-hhmm');  if (hh)  hh.textContent = hhmm(minutes);
+        var smi   = tr.querySelector('.sum-minutes'); if (smi) smi.value = String(minutes);
+        var nspan = tr.querySelector('.net');      if (nspan) nspan.textContent = fmt2(net);
+        var gspan = tr.querySelector('.gross');    if (gspan) gspan.textContent = fmt2(gross);
+      } else { // fixed
+        var hhInfo = tr.querySelector('.form-control-plaintext .text-muted');
+        if (hhInfo) hhInfo.textContent = '('+hhmm(minutes)+')';
+        var smi   = tr.querySelector('.sum-minutes'); if (smi) smi.value = String(minutes);
+        var net   = rate * 1.0;
+        var gross = net * (1 + vat/100);
+        var nspan = tr.querySelector('.net');      if (nspan) nspan.textContent = fmt2(net);
+        var gspan = tr.querySelector('.gross');    if (gspan) gspan.textContent = fmt2(gross);
+      }
       recalcTotals();
       return;
     }
 
-    var rate = toNumber(tr.querySelector('.rate')?.value||'0');
-    var vat  = toNumber(tr.querySelector('.inv-vat-input')?.value||'0');
+    // Manuell
     var qtyDec = 0;
-
     if (mode === 'time') {
-      var hinp = tr.querySelector('.hours-input');
-      qtyDec = parseHours(hinp ? hinp.value : '0');
+      var hin = tr.querySelector('.hours-input');
+      qtyDec = parseHoursToDecimal(hin ? hin.value : '0');
       var qHidden = tr.querySelector('.quantity-dec');
-      if (qHidden) qHidden.value = String(qtyDec.toFixed(3));
+      if (qHidden) qHidden.value = (qtyDec||0).toFixed(3);
     } else {
       qtyDec = toNumber(tr.querySelector('.quantity')?.value||'0');
     }
-
     var net   = qtyDec * rate;
     var gross = net * (1 + vat/100);
-    var nspan = tr.querySelector('.net'); if (nspan) nspan.textContent = fmt2(net);
+    var nspan = tr.querySelector('.net');   if (nspan) nspan.textContent = fmt2(net);
     var gspan = tr.querySelector('.gross'); if (gspan) gspan.textContent = fmt2(gross);
     recalcTotals();
   }
@@ -466,58 +585,33 @@ if (empty($groups) && !empty($items)) {
     recalcRow(tr);
   }
 
+  /* ===== Steuer-Begründung UI ===== */
+  function needsTaxReason(){
+    var need = false;
+    root.querySelectorAll('tr.inv-item-row').forEach(function(tr){
+      var scheme = (tr.querySelector('.inv-tax-sel')?.value || 'standard').toLowerCase();
+      var vat    = toNumber(tr.querySelector('.inv-vat-input')?.value || '0');
+      if (scheme !== 'standard' || vat <= 0) need = true;
+    });
+    return need;
+  }
   function toggleTaxReason(){
     var wrap = document.getElementById('tax-exemption-reason-wrap');
     if (!wrap) return;
-    var any = false;
-    root.querySelectorAll('.inv-tax-sel').forEach(function(sel){ if (sel.value !== 'standard') any = true; });
-    wrap.style.display = any ? '' : 'none';
-    var ta = document.getElementById('tax-exemption-reason'); if (!any && ta) ta.value = '';
-  }
-
-  // Mode-Switch (nur manuelle Zeilen)
-  function switchMode(tr, newMode){
-    if (!tr) return;
-    var cur = tr.getAttribute('data-mode') || 'auto';
-    if (cur === 'auto') return;
-    tr.setAttribute('data-mode', newMode);
-    var hidden = tr.querySelector('.entry-mode'); if (hidden) hidden.value = newMode;
-
-    var qty = tr.querySelector('.quantity');
-    var hrs = tr.querySelector('.hours-input');
-    var qhid= tr.querySelector('.quantity-dec');
-    if (newMode === 'time') {
-      if (!hrs) {
-        var td = qty.closest('td');
-        qty.remove();
-        var html = '<div class="d-flex gap-1 align-items-center justify-content-end">'
-                 + '<input type="text" class="form-control text-end hours-input"  name="" value="00:00"></div>';
-        td.insertAdjacentHTML('afterbegin', html);
-        if (!qhid) { var h = document.createElement('input'); h.type='hidden'; h.className='quantity-dec'; td.appendChild(h); }
-      }
-    } else {
-      if (!qty) {
-        var td = hrs.closest('td');
-        hrs.closest('div').remove();
-        if (qhid) qhid.remove();
-        var html = '<input type="number" class="form-control text-end quantity no-spin" value="1">';
-        td.insertAdjacentHTML('afterbegin', html);
-      }
+    var need = needsTaxReason();
+    wrap.style.display = need ? '' : 'none';
+    if (!need) {
+      var ta = document.getElementById('tax-exemption-reason');
+      if (ta) ta.value = '';
     }
-
-    var bt = tr.querySelector('.switch-time'); var bq = tr.querySelector('.switch-qty');
-    if (bt) bt.classList.toggle('active', newMode==='time');
-    if (bq) bq.classList.toggle('active', newMode==='qty');
-
-    recalcRow(tr);
   }
 
-  // Reindex: passt data-row & name="items[old]" → "items[new]" an
+  /* ===== Reihen neu indexieren (names) ===== */
   function reindexRows(){
     var pairs = [];
     root.querySelectorAll('tr.inv-item-row').forEach(function(main){
       var det = main.nextElementSibling;
-      if (!(det && det.classList.contains('inv-details'))) det = null;
+      if (!(det && det.classList.contains('inv-details') && det.getAttribute('data-row') === main.getAttribute('data-row'))) det = null;
       pairs.push({ main: main, det: det, oldIdx: String(main.getAttribute('data-row') || '') });
     });
 
@@ -540,7 +634,103 @@ if (empty($groups) && !empty($items)) {
       });
     });
   }
+  function updateOrderHidden(){
+    var box = document.getElementById('invoice-order-tracker'); if (!box) return;
+    box.innerHTML = '';
+    root.querySelectorAll('tr.inv-item-row').forEach(function(r){
+      var itemIdInput = r.querySelector('input[name^="items["][name$="[id]"]');
+      if (itemIdInput && itemIdInput.value) {
+        var i = document.createElement('input');
+        i.type='hidden'; i.name='item_order[]'; i.value=String(itemIdInput.value);
+        box.appendChild(i);
+      }
+    });
+  }
 
+  /* ===== Immer: Chevron-Toggle (auch im Locked-Zustand erlaubt) ===== */
+  root.addEventListener('click', function(e){
+    var btn = e.target.closest && e.target.closest('.inv-toggle-btn');
+    if (!btn || !root.contains(btn)) return;
+    var tr  = btn.closest('tr.inv-item-row'); if (!tr) return;
+    var det = getDetailsRowByMain(tr); if (!det) return;
+    var open = (det.style.display === 'table-row');
+    det.style.display = open ? 'none' : 'table-row';
+    tr.setAttribute('aria-expanded', String(!open));
+  });
+
+  /* ===== Initial (immer) ===== */
+  root.querySelectorAll('tr.inv-item-row').forEach(function(tr){
+    var sel = tr.querySelector('.inv-tax-sel');
+    var vat = tr.querySelector('.inv-vat-input');
+    if (sel && vat && (vat.value === '' || vat.value === null)) updateVatFromScheme(sel);
+    recalcRow(tr);
+  });
+  toggleTaxReason();
+  recalcTotals();
+
+  /* ===== Lock-Guard: Alles bearbeiten sperren (außer Details auf/zu) ===== */
+  if (locked) {
+    // Inputs sperren, Entfernen/Reorder/Drag&Drop ausblenden, Zeit-Checkboxen sperren
+    root.querySelectorAll('input, select, textarea, button').forEach(function(el){
+      if (el.classList.contains('inv-toggle-btn')) return; // Details-Toggler erlauben
+      el.disabled = true;
+    });
+    root.querySelectorAll('#addManualItem, .btn-remove-item, .row-reorder-handle, .time-row').forEach(function(el){
+      el.removeAttribute('draggable');
+      if (!el.classList.contains('time-row')) el.style.display = 'none';
+    });
+    root.querySelectorAll('.time-checkbox').forEach(function(cb){ cb.disabled = true; });
+    return; // keine Edit-Listener initialisieren
+  }
+
+  /* ===== Editierbarer Zustand: Listener, DnD, Remove, Reorder ===== */
+
+  // Steuer-Änderungen + Beträge
+  root.addEventListener('change', function(e){
+    var sel = e.target.closest && e.target.closest('.inv-tax-sel');
+    if (sel && root.contains(sel)) { updateVatFromScheme(sel); toggleTaxReason(); return; }
+    if (e.target.closest && e.target.closest('.time-checkbox')) {
+      var rowTr = e.target.closest('tr.inv-details')?.previousElementSibling;
+      if (rowTr && rowTr.classList.contains('inv-item-row')) recalcRow(rowTr);
+      return;
+    }
+  });
+  root.addEventListener('input', function(e){
+    if (!e.target.matches) return;
+    if (e.target.matches('.rate') || e.target.matches('.inv-vat-input') || e.target.matches('.quantity') || e.target.matches('.hours-input')) {
+      var tr = e.target.closest('tr.inv-item-row'); if (tr) recalcRow(tr);
+      toggleTaxReason();
+    }
+  });
+
+  // Entfernen
+  root.addEventListener('click', function(e){
+    var del = e.target.closest && e.target.closest('.btn-remove-item');
+    if (!del || !root.contains(del)) return;
+    if (!confirm('Diese Position aus der Rechnung entfernen?')) return;
+    var tr = del.closest('tr.inv-item-row'); if (!tr) return;
+    var rowId = tr.getAttribute('data-row');
+    var det   = getDetailsRowById(rowId); if (det) det.remove();
+
+    // Wenn persistente Item-ID existiert → in items_deleted[] eintragen
+    var idInput = tr.querySelector('input[name^="items["][name$="[id]"]');
+    if (idInput && idInput.value) {
+      var trash = document.getElementById('invoice-hidden-trash');
+      if (trash) {
+        var hidden = document.createElement('input');
+        hidden.type='hidden';
+        hidden.name='items_deleted[]';
+        hidden.value=idInput.value;
+        trash.appendChild(hidden);
+      }
+    }
+
+    tr.remove();
+    reindexRows(); toggleTaxReason(); recalcTotals(); updateOrderHidden();
+  });
+
+  /* ----- Drag & Drop: Reihenfolge der Positionen (ganze Zeilen) ----- */
+  var dragData = null; // {kind:'reorder'|'time', fromRowId, timeId?}
   function ensurePlaceholder(){
     var ph = document.getElementById('invoice-reorder-placeholder');
     if (!ph) {
@@ -557,306 +747,54 @@ if (empty($groups) && !empty($items)) {
     var ph = document.getElementById('invoice-reorder-placeholder');
     if (ph && ph.parentNode) ph.parentNode.removeChild(ph);
   }
-
-  function updateOrderHidden(){
-    var box = document.getElementById('invoice-order-tracker'); if (!box) return;
-    box.innerHTML = '';
-    root.querySelectorAll('tr.inv-item-row').forEach(function(r){
-      var itemIdInput = r.querySelector('input[name^="items["][name$="[id]"]');
-      if (itemIdInput && itemIdInput.value) {
-        var i = document.createElement('input'); i.type='hidden'; i.name='item_order[]'; i.value=String(itemIdInput.value); box.appendChild(i);
-      }
-    });
-  }
-
   function clearReorderIndicators(){
     root.querySelectorAll('tr.inv-item-row').forEach(function(r){
       r.classList.remove('reorder-indicator-before','reorder-indicator-after');
     });
   }
 
-  function removeSourceItemIfEmpty(sourceRow){
-    if (!sourceRow || (sourceRow.getAttribute('data-mode') !== 'auto')) return;
-    var rowId = sourceRow.getAttribute('data-row');
-    var srcTbody = getDetailsTbodyById(rowId);
-    if (!srcTbody) return;
-    var anyLeft = srcTbody.querySelector('.time-checkbox:checked');
-    if (anyLeft) return;
-
-    var srcItemIdInput = sourceRow.querySelector('input[name^="items["][name$="[id]"]');
-
-    var det = getDetailsRowById(rowId);
-    if (det) det.remove();
-
-    if (srcItemIdInput && srcItemIdInput.value) {
-      var trash = document.getElementById('invoice-hidden-trash');
-      if (trash) {
-        var hidden = document.createElement('input');
-        hidden.type='hidden';
-        hidden.name='items_deleted[]';
-        hidden.value=srcItemIdInput.value;
-        trash.appendChild(hidden);
-      }
-    }
-    sourceRow.remove();
-    reindexRows();
-    updateOrderHidden();
-  }
-
-  /* ---------- DnD ---------- */
-  var dragData = null; // {kind:'time'|'task'|'reorder', fromRowId, timeId?}
-
-  function markDropTargets(on){
-    root.querySelectorAll('.inv-details tbody').forEach(function(tb){
-      tb.classList.toggle('dnd-drop-target', !!on);
-    });
-    root.querySelectorAll('tr.inv-item-row[data-mode="auto"]').forEach(function(r){
-      r.classList.toggle('dnd-drop-target', !!on);
-    });
-  }
-
-  // 1) Zeit-Zeilen als Draggable
-  root.querySelectorAll('.inv-details tbody tr.time-row[draggable="true"]').forEach(function(tr){
-    tr.addEventListener('dragstart', function(e){
-      var detailsTr = tr.closest('tr.inv-details');
-      var fromRowId = detailsTr ? detailsTr.getAttribute('data-row') : (tr.closest('tr.inv-item-row')?.getAttribute('data-row') || '');
-      var timeId = tr.getAttribute('data-time-id') || '';
-      dragData = { kind:'time', timeId:String(timeId), fromRowId:String(fromRowId) };
-      tr.classList.add('dnd-dragging');
-      markDropTargets(true);
-      try { e.dataTransfer.setData('text/plain','time:'+timeId); } catch(_) {}
-      if (e.dataTransfer) e.dataTransfer.effectAllowed='move';
-    });
-    tr.addEventListener('dragend', function(){
-      tr.classList.remove('dnd-dragging');
-      dragData = null; markDropTargets(false); clearTimeDropAccept();
-    });
-  });
-
-  // 2) Ganze Task-Zeile als Draggable
-  root.querySelectorAll('tr.inv-item-row[data-mode="auto"]').forEach(function(row){
-    row.setAttribute('draggable','true');
-    row.addEventListener('dragstart', function(e){
-      if (e.target && e.target.closest && e.target.closest('.row-reorder-handle')) return; // Griff → Reorder
+  // Start drag (reorder)
+  root.querySelectorAll('tr.inv-item-row .row-reorder-handle').forEach(function(handle){
+    handle.setAttribute('draggable','true');
+    handle.addEventListener('dragstart', function(e){
+      var row = handle.closest('tr.inv-item-row'); if (!row) return;
       var fromRowId = row.getAttribute('data-row') || '';
-      dragData = { kind:'task', fromRowId:String(fromRowId) };
+      dragData = { kind:'reorder', fromRowId:String(fromRowId) };
       row.classList.add('dnd-dragging');
-      markDropTargets(true);
-      try { e.dataTransfer.setData('text/plain','task:'+fromRowId); } catch(_) {}
-      if (e.dataTransfer) e.dataTransfer.effectAllowed='move';
-    });
-    row.addEventListener('dragend', function(){
-      row.classList.remove('dnd-dragging');
-      dragData = null; markDropTargets(false); clearTimeDropAccept();
-    });
-  });
-
-  // 3) Drop-Ziel: Detail-Tabellenkörper
-  root.querySelectorAll('.inv-details tbody').forEach(function(tb){
-    tb.addEventListener('dragover', function(e){
-      if (!dragData) return;
-      e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect='move';
-    });
-    tb.addEventListener('drop', function(e){
-      e.preventDefault();
-      // wichtig: nicht stoppen → Kopfzeilen-Handler dürfen parallel feuern, falls nötig
-      if (!dragData) return;
-
-      var targetDetails = tb.closest('tr.inv-details');
-      if (!targetDetails) return;
-      var targetRow = root.querySelector('tr.inv-item-row[data-row="'+targetDetails.getAttribute('data-row')+'"]');
-      if (!targetRow) return;
-
-      // sicher öffnen
-      targetRow.setAttribute('aria-expanded','true'); targetDetails.style.display='table-row';
-
-      if (dragData.kind === 'time') {
-        var fromRow = root.querySelector('tr.inv-item-row[data-row="'+dragData.fromRowId+'"]');
-        var timeTr = getDetailsRowById(dragData.fromRowId)?.querySelector('tbody tr.time-row[data-time-id="'+dragData.timeId+'"]');
-        if (!timeTr) return;
-
-        tb.appendChild(timeTr);
-        var cb = timeTr.querySelector('.time-checkbox');
-        if (cb) {
-          var targetRowId = targetRow.getAttribute('data-row') || '';
-          cb.name = 'items[' + targetRowId + '][time_ids][]';
-          cb.checked = true;
-        }
-
-        if (fromRow) recalcRow(fromRow);
-        recalcRow(targetRow);
-        removeSourceItemIfEmpty(fromRow);
-        recalcTotals(); toggleTaxReason();
-        updateOrderHidden();
-      } else if (dragData.kind === 'task') {
-        var fromRow = root.querySelector('tr.inv-item-row[data-row="'+dragData.fromRowId+'"]');
-        var fromTbody = getDetailsTbodyById(dragData.fromRowId);
-        if (!fromRow || !fromTbody) return;
-
-        Array.from(fromTbody.querySelectorAll('tr.time-row')).forEach(function(timeTr){
-          tb.appendChild(timeTr);
-          var cb = timeTr.querySelector('.time-checkbox');
-          if (cb) {
-            var targetRowId = targetRow.getAttribute('data-row') || '';
-            cb.name = 'items[' + targetRowId + '][time_ids][]';
-            cb.checked = true;
-          }
-        });
-
-        recalcRow(targetRow);
-        recalcRow(fromRow);
-        removeSourceItemIfEmpty(fromRow);
-        recalcTotals(); toggleTaxReason();
-        updateOrderHidden();
-      }
-
-      // neu: immer aufräumen
-      clearTimeDropAccept();
-      markDropTargets(false);
-    });
-  });
-
-  // 4) Drop-Ziel: Direkt auf Kopfzeile (auch zugeklappt)
-  root.querySelectorAll('tr.inv-item-row[data-mode="auto"]').forEach(function(row){
-    var hoverTimer = null;
-
-    row.addEventListener('dragenter', function(e){
-      if (!dragData || (dragData.kind!=='time' && dragData.kind!=='task')) return;
-      row.classList.add('time-drop-accept');
-      if (hoverTimer) clearTimeout(hoverTimer);
-      hoverTimer = setTimeout(function(){
-        var det = getDetailsRowByMain(row);
-        if (det && det.style.display !== 'table-row') {
-          det.style.display = 'table-row';
-          row.setAttribute('aria-expanded', 'true');
-        }
-      }, 400);
-    });
-
-    row.addEventListener('dragover', function(e){
-      if (!dragData || (dragData.kind!=='time' && dragData.kind!=='task')) return;
-      e.preventDefault(); // Drop erlauben
-      row.classList.add('time-drop-accept');
-    });
-
-    row.addEventListener('dragleave', function(){
-      row.classList.remove('time-drop-accept');
-      if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = null; }
-    });
-
-    row.addEventListener('drop', function(e){
-      if (!dragData || (dragData.kind!=='time' && dragData.kind!=='task')) return;
-      e.preventDefault();
-
-      row.classList.remove('time-drop-accept');
-      if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = null; }
-
-      var targetRowId = row.getAttribute('data-row') || '';
-      var targetTbody = getDetailsTbodyById(targetRowId);
-      var targetDetails = getDetailsRowById(targetRowId);
-      if (!targetTbody || !targetDetails) return;
-
-      // öffnen (falls zu)
-      row.setAttribute('aria-expanded','true');
-      targetDetails.style.display = 'table-row';
-
-      if (dragData.kind === 'time') {
-        var fromRow  = root.querySelector('tr.inv-item-row[data-row="'+dragData.fromRowId+'"]');
-        var timeTr   = getDetailsRowById(dragData.fromRowId)?.querySelector('tbody tr.time-row[data-time-id="'+dragData.timeId+'"]');
-        if (!timeTr) return;
-
-        targetTbody.appendChild(timeTr);
-        var cb = timeTr.querySelector('.time-checkbox');
-        if (cb) {
-          cb.name = 'items[' + targetRowId + '][time_ids][]';
-          cb.checked = true;
-        }
-
-        if (fromRow) recalcRow(fromRow);
-        recalcRow(row);
-        removeSourceItemIfEmpty(fromRow);
-        recalcTotals(); toggleTaxReason();
-        updateOrderHidden();
-      } else if (dragData.kind === 'task') {
-        var fromRow   = root.querySelector('tr.inv-item-row[data-row="'+dragData.fromRowId+'"]');
-        var fromTbody = getDetailsTbodyById(dragData.fromRowId);
-        if (!fromRow || !fromTbody || fromRow === row) return;
-
-        Array.from(fromTbody.querySelectorAll('tr.time-row')).forEach(function(timeTr){
-          targetTbody.appendChild(timeTr);
-          var cb = timeTr.querySelector('.time-checkbox');
-          if (cb) {
-            cb.name = 'items[' + targetRowId + '][time_ids][]';
-            cb.checked = true;
-          }
-        });
-
-        recalcRow(row);
-        recalcRow(fromRow);
-        removeSourceItemIfEmpty(fromRow);
-        recalcTotals(); toggleTaxReason();
-        updateOrderHidden();
-      }
-
-      // neu: immer aufräumen
-      clearTimeDropAccept();
-      markDropTargets(false);
-    });
-  });
-
-  // 5) Reihenfolge via Handle (nur Hauptzeilen)
-  root.querySelectorAll('.row-reorder-handle').forEach(function(h){
-    h.addEventListener('dragstart', function(e){
-      var row = h.closest('tr.inv-item-row'); if (!row) return;
-      var fromId = row.getAttribute('data-row') || '';
-      dragData = { kind:'reorder', fromRowId:String(fromId) };
-      row.classList.add('dnd-dragging');
-      if (e.stopPropagation) e.stopPropagation();
       if (e.dataTransfer) {
         e.dataTransfer.effectAllowed = 'move';
-        try { e.dataTransfer.setData('text/plain', 'reorder:'+fromId); } catch(_) {}
+        try { e.dataTransfer.setData('text/plain','reorder:'+fromRowId); } catch(_) {}
       }
     });
-    h.addEventListener('dragend', function(e){
-      var row = h.closest('tr.inv-item-row'); if (row) row.classList.remove('dnd-dragging');
-      dragData = null; clearReorderIndicators(); removePlaceholder(); clearTimeDropAccept();
-      if (e.stopPropagation) e.stopPropagation();
+    handle.addEventListener('dragend', function(){
+      var row = handle.closest('tr.inv-item-row');
+      if (row) row.classList.remove('dnd-dragging');
+      dragData = null; clearReorderIndicators(); removePlaceholder();
     });
   });
 
+  // Target rows for reorder
   root.querySelectorAll('tr.inv-item-row').forEach(function(targetRow){
     targetRow.addEventListener('dragover', function(e){
       if (!dragData || dragData.kind !== 'reorder') return;
       e.preventDefault();
-
       var rect = targetRow.getBoundingClientRect();
       var after = (e.clientY - rect.top) > (rect.height / 2);
-
       clearReorderIndicators();
       targetRow.classList.add(after ? 'reorder-indicator-after' : 'reorder-indicator-before');
-
       var ph = ensurePlaceholder();
       var tbody = targetRow.parentNode;
       var ref   = after ? getAfterPairNode(targetRow) : targetRow;
       if (ph !== ref) tbody.insertBefore(ph, ref || null);
     });
-
-    targetRow.addEventListener('dragleave', function(){
-      if (dragData && dragData.kind === 'reorder') {
-        targetRow.classList.remove('reorder-indicator-before','reorder-indicator-after');
-      }
-    });
-
     targetRow.addEventListener('drop', function(e){
       if (!dragData || dragData.kind !== 'reorder') return;
       e.preventDefault();
-
       var rect = targetRow.getBoundingClientRect();
       var after = (e.clientY - rect.top) > (rect.height / 2);
 
       var fromId = dragData.fromRowId;
       var toId   = targetRow.getAttribute('data-row') || '';
-
       clearReorderIndicators();
 
       (function moveRowPair(fromRowId, targetRowId, placeAfter){
@@ -865,7 +803,7 @@ if (empty($groups) && !empty($items)) {
         var targetMain = root.querySelector('tr.inv-item-row[data-row="'+targetRowId+'"]');
         if (!fromMain || !targetMain) return;
         var fromDet = getDetailsRowById(fromRowId);
-        var tbody = targetMain.parentNode;
+        var tbody   = targetMain.parentNode;
         var refNode = placeAfter ? getAfterPairNode(targetMain) : targetMain;
         if (refNode) {
           tbody.insertBefore(fromMain, refNode);
@@ -875,104 +813,137 @@ if (empty($groups) && !empty($items)) {
           if (fromDet) tbody.appendChild(fromDet);
         }
         reindexRows();
+        updateOrderHidden();
       })(fromId, toId, after);
 
       removePlaceholder();
-      reindexRows();
-      updateOrderHidden();
-      clearTimeDropAccept();
     });
   });
 
-  /* ---------- Keine Textdrops in Inputs/Selects (aber Propagation NICHT stoppen) ---------- */
-  root.addEventListener('dragover', function(e){
-    if (e.target && (e.target.matches('input, textarea, select'))) {
-      e.preventDefault(); // verhindert Textcursor/Copy-Effekt
-    }
-  }, true);
-  root.addEventListener('drop', function(e){
-    if (e.target && (e.target.matches('input, textarea, select'))) {
-      e.preventDefault(); // verhindert Einfügen von "time:123" o.ä.
-      // KEIN stopPropagation mehr → Kopfzeile/Row kann den Drop verarbeiten
-    }
-  }, true);
+  /* ----- Drag & Drop: Zeiten zwischen Positionen verschieben ----- */
+  function rejectDropIfIllegal(targetRow){
+    if (!targetRow) return true;
+    var mode = (targetRow.getAttribute('data-mode') || '').toLowerCase();
+    // Zeiten dürfen NICHT in reine 'qty'-Zeilen abgelegt werden
+    return (mode === 'qty');
+  }
+  function markDropTargets(on){
+    root.querySelectorAll('.inv-details tbody').forEach(function(tb){
+      tb.classList.toggle('dnd-drop-target', !!on);
+    });
+  }
 
-  /* ---------- Delegierte UI-Events ---------- */
-  root.addEventListener('click', function(e){
-    var btn = e.target.closest && e.target.closest('.inv-toggle-btn');
-    if (btn && root.contains(btn)) {
-      var tr  = btn.closest('tr.inv-item-row'); if (!tr) return;
-      var det = getDetailsRowByMain(tr);
-      if (!det) return;
-      var open = det.style.display === 'table-row';
-      det.style.display = open ? 'none' : 'table-row';
-      tr.setAttribute('aria-expanded', String(!open));
-      return;
-    }
-
-    var del = e.target.closest && e.target.closest('.btn-remove-item');
-    if (del && root.contains(del)) {
-      if (!confirm('Diese Position aus der Rechnung entfernen?')) return;
-      var tr = del.closest('tr.inv-item-row'); if (!tr) return;
-      var rowId = tr.getAttribute('data-row');
-      var idInput = tr.querySelector('input[name^="items["][name$="[id]"]');
-      if (idInput && idInput.value) {
-        var trash = document.getElementById('invoice-hidden-trash');
-        if (trash) { var hidden = document.createElement('input'); hidden.type='hidden'; hidden.name='items_deleted[]'; hidden.value=idInput.value; trash.appendChild(hidden); }
+  root.querySelectorAll('.inv-details tbody tr.time-row[draggable="true"]').forEach(function(tr){
+    tr.addEventListener('dragstart', function(e){
+      var detailsTr = tr.closest('tr.inv-details');
+      var fromRowId = detailsTr ? detailsTr.getAttribute('data-row') : (tr.closest('tr.inv-item-row')?.getAttribute('data-row') || '');
+      var timeId = tr.getAttribute('data-time-id') || '';
+      dragData = { kind:'time', timeId:String(timeId), fromRowId:String(fromRowId) };
+      tr.classList.add('dnd-dragging');
+      markDropTargets(true);
+      if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed='move';
+        try { e.dataTransfer.setData('text/plain','time:'+timeId); } catch(_) {}
       }
-      var det = getDetailsRowById(rowId); if (det) det.remove();
-      tr.remove();
-      reindexRows();
-      toggleTaxReason();
-      recalcTotals();
-      updateOrderHidden();
-      return;
-    }
-
-    var swTime = e.target.closest && e.target.closest('.switch-time');
-    var swQty  = e.target.closest && e.target.closest('.switch-qty');
-    if ((swTime || swQty) && root.contains(e.target)) {
-      var tr2 = e.target.closest('tr.inv-item-row'); if (!tr2) return;
-      switchMode(tr2, swTime ? 'time' : 'qty');
-      return;
-    }
-  });
-
-  root.addEventListener('change', function(e){
-    var sel = e.target.closest && e.target.closest('.inv-tax-sel');
-    if (sel && root.contains(sel)) { updateVatFromScheme(sel); toggleTaxReason(); return; }
-    if (e.target.closest && e.target.closest('.time-checkbox')) {
-      var rowTr = e.target.closest('tr.inv-details')?.previousElementSibling;
-      if (rowTr && rowTr.classList.contains('inv-item-row')) recalcRow(rowTr);
-      return;
-    }
-  });
-
-  root.addEventListener('input', function(e){
-    if (e.target.matches && (e.target.matches('.rate') || e.target.matches('.inv-vat-input') || e.target.matches('.quantity') || e.target.matches('.hours-input'))) {
-      var tr = e.target.closest('tr.inv-item-row'); if (tr) recalcRow(tr);
-    }
-  });
-
-  /* ---------- Zusätzlich: globales Drag-Ende säubert Highlight ---------- */
-  document.addEventListener('dragend', clearTimeDropAccept, true);
-
-  /* ---------- Initial ---------- */
-  root.querySelectorAll('tr.inv-item-row').forEach(function(tr){
-    var sel = tr.querySelector('.inv-tax-sel');
-    var vat = tr.querySelector('.inv-vat-input');
-    if (sel && vat && (vat.value === '' || vat.value === null)) updateVatFromScheme(sel);
-    recalcRow(tr);
-  });
-  toggleTaxReason();
-  recalcTotals();
-
-  (function(){
-    var f = window.requestAnimationFrame || setTimeout;
-    f(function(){
-      reindexRows();
-      updateOrderHidden();
     });
-  })();
+    tr.addEventListener('dragend', function(){
+      tr.classList.remove('dnd-dragging');
+      dragData = null; markDropTargets(false);
+    });
+  });
+
+  function doAppendTimeTrToRow(timeTr, targetRow){
+    var targetRowId   = targetRow.getAttribute('data-row') || '';
+    var targetDetails = getDetailsRowById(targetRowId);
+    var targetTbody   = getDetailsTbodyById(targetRowId);
+    if (!targetDetails || !targetTbody) return;
+    // öffnen
+    targetRow.setAttribute('aria-expanded','true');
+    targetDetails.style.display = 'table-row';
+    // verschieben
+    targetTbody.appendChild(timeTr);
+    var cb = timeTr.querySelector('.time-checkbox');
+    if (cb) {
+      cb.name = 'items[' + targetRowId + '][time_ids][]';
+      cb.checked = true;
+    }
+  }
+
+  root.querySelectorAll('.inv-details tbody').forEach(function(tb){
+    tb.addEventListener('dragover', function(e){
+      if (!dragData) return;
+      var trItem = tb.closest('tr.inv-details')?.previousElementSibling;
+      if (rejectDropIfIllegal(trItem)) return;
+      e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect='move';
+    });
+    tb.addEventListener('drop', function(e){
+      if (!dragData) return;
+      e.preventDefault();
+      var targetDetails = tb.closest('tr.inv-details');
+      if (!targetDetails) return;
+      var targetRow = root.querySelector('tr.inv-item-row[data-row="'+targetDetails.getAttribute('data-row')+'"]');
+      if (!targetRow || rejectDropIfIllegal(targetRow)) return;
+
+      if (dragData.kind === 'time') {
+        var timeTr = getDetailsRowById(dragData.fromRowId)?.querySelector('tbody tr.time-row[data-time-id="'+dragData.timeId+'"]');
+        if (!timeTr) return;
+        doAppendTimeTrToRow(timeTr, targetRow);
+        var fromRow = root.querySelector('tr.inv-item-row[data-row="'+dragData.fromRowId+'"]');
+        if (fromRow) recalcRow(fromRow);
+        recalcRow(targetRow);
+        recalcTotals();
+      }
+    });
+  });
+
+  // Drop direkt auf Kopfzeile (öffnet Details bei Hover)
+  root.querySelectorAll('tr.inv-item-row').forEach(function(row){
+    var hoverTimer = null;
+    row.addEventListener('dragenter', function(e){
+      if (!dragData || dragData.kind!=='time' || rejectDropIfIllegal(row)) return;
+      row.classList.add('time-drop-accept');
+      if (hoverTimer) clearTimeout(hoverTimer);
+      hoverTimer = setTimeout(function(){
+        var det = getDetailsRowByMain(row);
+        if (det && det.style.display !== 'table-row') {
+          det.style.display = 'table-row';
+          row.setAttribute('aria-expanded', 'true');
+        }
+      }, 300);
+    });
+    row.addEventListener('dragover', function(e){
+      if (!dragData || dragData.kind!=='time' || rejectDropIfIllegal(row)) return;
+      e.preventDefault();
+      row.classList.add('time-drop-accept');
+    });
+    row.addEventListener('dragleave', function(){
+      row.classList.remove('time-drop-accept');
+      if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = null; }
+    });
+    row.addEventListener('drop', function(e){
+      if (!dragData || dragData.kind!=='time' || rejectDropIfIllegal(row)) return;
+      e.preventDefault();
+      row.classList.remove('time-drop-accept');
+      if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = null; }
+
+      var rowId = row.getAttribute('data-row') || '';
+      var targetDetails = getDetailsRowById(rowId);
+      var targetTbody   = getDetailsTbodyById(rowId);
+      if (!targetDetails || !targetTbody) return;
+
+      row.setAttribute('aria-expanded','true');
+      targetDetails.style.display = 'table-row';
+
+      var timeTr = getDetailsRowById(dragData.fromRowId)?.querySelector('tbody tr.time-row[data-time-id="'+dragData.timeId+'"]');
+      if (!timeTr) return;
+
+      doAppendTimeTrToRow(timeTr, row);
+      var fromRow = root.querySelector('tr.inv-item-row[data-row="'+dragData.fromRowId+'"]');
+      if (fromRow) recalcRow(fromRow);
+      recalcRow(row);
+      recalcTotals();
+    });
+  });
+
 })();
 </script>

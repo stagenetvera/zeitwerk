@@ -118,6 +118,18 @@
 
   .no-pointer { pointer-events:none; opacity:.7; }
 
+  /* Chevron-Button klassisch */
+  .inv-toggle-btn { padding: .125rem .375rem; line-height: 1; border:0;  }
+  .inv-toggle-btn svg { width: 14px; height: 14px; vertical-align: -2px; }
+
+  /* Reorder-Feedback wie früher */
+  tr#invoice-reorder-placeholder > td {
+    border: 1px dashed #0d6efd; height: 0px; line-height:0; padding:0; background: rgba(13,110,253,.08);
+  }
+
+  /* dezentes Drop-Ziel für Zeiten (Details-Korpus) */
+  .dnd-drop-target { outline: 2px dashed rgba(13,110,253,.35); outline-offset: -2px; }
+
   </style>
 </head>
 <body class="bg-light">

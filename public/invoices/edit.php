@@ -3,11 +3,11 @@
 require __DIR__ . '/../../src/bootstrap.php';
 require_once __DIR__ . '/../../src/lib/invoice_number.php';
 require_once __DIR__ . '/../../src/lib/settings.php';
-require_once __DIR__ . '/../../src/utils.php';
+require_once __DIR__ . '/../../src/utils.php';            // dec(), parse_hours_to_decimal(), h(), url()
 require_once __DIR__ . '/../../src/lib/flash.php';
 require_once __DIR__ . '/../../src/lib/recurring.php';
 require_once __DIR__ . '/../../src/lib/return_to.php';
-require_once __DIR__ . '/../../src/lib/invoices.php'; // für set_times_status_for_invoice() und delete_item_with_times()
+require_once __DIR__ . '/../../src/lib/invoices.php';     // set_times_status_for_invoice(), delete_item_with_times()
 
 require_login();
 csrf_check();
@@ -20,21 +20,17 @@ $settings = get_account_settings($pdo, $account_id);
 function hurl($s){ return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
 function fmt_money($v){ return number_format((float)$v, 2, ',', '.'); }
 
-// Minuten über Time-IDs (Account-sicher) summieren
-function sum_minutes_for_times_edit(PDO $pdo, int $account_id, array $ids): int {
-  $ids = array_values(array_filter(array_map('intval', $ids), fn($v)=>$v>0));
-  if (!$ids) return 0;
-  $in = implode(',', array_fill(0, count($ids), '?'));
-  $st = $pdo->prepare("SELECT COALESCE(SUM(minutes),0) FROM times WHERE account_id=? AND id IN ($in)");
-  $st->execute(array_merge([$account_id], $ids));
-  return (int)$st->fetchColumn();
-}
+$DEFAULT_VAT       = (float)($settings['default_vat_rate'] ?? 19.0);
+$DEFAULT_SCHEME    = (string)($settings['default_tax_scheme'] ?? 'standard'); // 'standard'|'tax_exempt'|'reverse_charge'
+$ROUND_UNIT_MINS   = max(0, (int)($settings['invoice_round_minutes'] ?? 0));  // Rundung wie in new.php
 
 // ---------- Eingaben ----------
 $invoice_id = isset($_GET['id']) ? (int)$_GET['id'] : (int)($_POST['id'] ?? 0);
 if ($invoice_id <= 0) {
+  require __DIR__ . '/../../src/layout/header.php';
   echo '<div class="alert alert-danger">Ungültige Rechnungs-ID.</div>';
-  require __DIR__ . '/../../src/layout/footer.php'; exit;
+  require __DIR__ . '/../../src/layout/footer.php';
+  exit;
 }
 
 // ---------- Rechnung laden ----------
@@ -42,14 +38,16 @@ $inv = $pdo->prepare("SELECT * FROM invoices WHERE id = ? AND account_id = ?");
 $inv->execute([$invoice_id, $account_id]);
 $invoice = $inv->fetch();
 if (!$invoice) {
+  require __DIR__ . '/../../src/layout/header.php';
   echo '<div class="alert alert-danger">Rechnung nicht gefunden.</div>';
-  require __DIR__ . '/../../src/layout/footer.php'; exit;
+  require __DIR__ . '/../../src/layout/footer.php';
+  exit;
 }
 $company_id = (int)$invoice['company_id'];
 
 $return_to = pick_return_to('/companies/show.php?id='.$company_id);
 
-// Firma laden (nur Anzeige)
+// Firma laden (nur Anzeige + Defaults)
 $cstmt = $pdo->prepare("SELECT * FROM companies WHERE id = ? AND account_id = ?");
 $cstmt->execute([$company_id, $account_id]);
 $company = $cstmt->fetch();
@@ -70,14 +68,16 @@ function load_invoice_items(PDO $pdo, int $account_id, int $invoice_id): array {
       ii.position,
       ii.total_net,
       ii.total_gross,
-      ii.entry_mode
+      ii.entry_mode,
+      ii.is_hidden
     FROM invoice_items ii
     WHERE ii.account_id = ? AND ii.invoice_id = ?
-    ORDER BY ii.position ASC, ii.id ASC
+    ORDER BY COALESCE(ii.position, 999999), ii.id ASC
   ");
   $st->execute([$account_id, $invoice_id]);
   return $st->fetchAll();
 }
+
 /** verlinkte Zeiten je Item */
 function load_times_by_item(PDO $pdo, int $account_id, array $itemIds): array {
   if (!$itemIds) return [];
@@ -89,7 +89,7 @@ function load_times_by_item(PDO $pdo, int $account_id, array $itemIds): array {
     JOIN times tm
       ON tm.id = iit.time_id AND tm.account_id = iit.account_id
     WHERE iit.account_id = ? AND iit.invoice_item_id IN ($in)
-    ORDER BY tm.started_at
+    ORDER BY tm.started_at, tm.id
   ");
   $st->execute($params);
   $out = [];
@@ -105,12 +105,21 @@ function load_times_by_item(PDO $pdo, int $account_id, array $itemIds): array {
   return $out;
 }
 
+/** Einzelne Minuten-Summe (Account-sicher) */
+function sum_minutes_for_times_edit(PDO $pdo, int $account_id, array $ids): int {
+  $ids = array_values(array_filter(array_map('intval', $ids), fn($v)=>$v>0));
+  if (!$ids) return 0;
+  $in = implode(',', array_fill(0, count($ids), '?'));
+  $st = $pdo->prepare("SELECT COALESCE(SUM(minutes),0) FROM times WHERE account_id=? AND id IN ($in)");
+  $st->execute(array_merge([$account_id], $ids));
+  return (int)$st->fetchColumn();
+}
 
+/** Zeiten auf 'offen' zurücksetzen, wenn sie nirgendwo mehr verlinkt sind */
 function free_times_if_unlinked(PDO $pdo, int $account_id, array $timeIds): void {
   $timeIds = array_values(array_filter(array_map('intval', $timeIds), fn($v)=>$v>0));
   if (!$timeIds) return;
   $in  = implode(',', array_fill(0, count($timeIds), '?'));
-
   $sql = "
     UPDATE times t
        SET t.status = 'offen'
@@ -122,41 +131,29 @@ function free_times_if_unlinked(PDO $pdo, int $account_id, array $timeIds): void
               WHERE i.account_id = t.account_id
                 AND i.time_id     = t.id
            )
+       AND t.status <> 'abgerechnet'
   ";
   $pdo->prepare($sql)->execute(array_merge([$account_id], $timeIds));
 }
 
+/** Bulk Status für Zeiten setzen */
+function set_times_status_bulk(PDO $pdo, int $account_id, array $time_ids, string $status): void {
+  $time_ids = array_values(array_filter(array_map('intval', $time_ids), fn($v)=>$v>0));
+  if (!$time_ids) return;
+  $in = implode(',', array_fill(0, count($time_ids), '?'));
+  $pdo->prepare("UPDATE times SET status=? WHERE account_id=? AND id IN ($in)")
+      ->execute(array_merge([$status, $account_id], $time_ids));
+}
 
 // ---------- POST ----------
 $err = null; $ok = null;
 $canEditItems = (($invoice['status'] ?? '') === 'in_vorbereitung');
+$isLockedAll  = !$canEditItems;                       // für UI: alles außer Status sperren
 
 if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '')==='save') {
 
-  if ($post_action === 'cancel') {
-    // weiches Storno
-    $new_status = 'storniert';
-
-    $pdo->beginTransaction();
-    try {
-      // Status setzen
-      $pdo->prepare("UPDATE invoices SET status='storniert' WHERE id=? AND account_id=?")
-          ->execute([(int)$invoice['id'], $account_id]);
-
-      // Times zurück auf 'offen'
-      set_times_status_for_invoice($pdo, $account_id, (int)$invoice['id'], 'offen');
-
-      $pdo->commit();
-      $ok = 'Rechnung storniert.';
-      redirect(url('/invoices/edit.php').'?id='.(int)$invoice['id']);
-      exit;
-    } catch (Throwable $e) {
-      $pdo->rollBack();
-      $err = 'Storno fehlgeschlagen: '.$e->getMessage();
-    }
-  }
   // Basisfelder
-  $allowed_status = ['in_vorbereitung','gestellt','gemahnt','bezahlt','storniert', 'ausgebucht'];
+  $allowed_status = ['in_vorbereitung','gestellt','gemahnt','bezahlt','storniert','ausgebucht'];
   $new_status = $_POST['status'] ?? ($invoice['status'] ?? 'in_vorbereitung');
   if (!in_array($new_status, $allowed_status, true)) $new_status = $invoice['status'] ?? 'in_vorbereitung';
 
@@ -167,6 +164,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '')==='save') {
   $intro_text = (string)($_POST['invoice_intro_text'] ?? '');
   $outro_text = (string)($_POST['invoice_outro_text'] ?? '');
 
+  // Nummer vergeben, falls nötig (gleiches Verhalten wie bisher)
   $assign_number = (empty($invoice['invoice_number']) && in_array($new_status, ['gestellt','gemahnt','bezahlt','storniert'], true));
   $number = $invoice['invoice_number'] ?? null;
   if ($assign_number) {
@@ -186,7 +184,9 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '')==='save') {
         if ($deletedPosted) {
           $deletedIds = array_values(array_filter(array_map('intval', (array)$deletedPosted), fn($v)=>$v>0));
           if ($deletedIds) {
-            foreach ($deletedIds as $delId) delete_item_with_times($pdo, $account_id, (int)$invoice['id'], (int)$delId);
+            foreach ($deletedIds as $delId) {
+              delete_item_with_times($pdo, $account_id, (int)$invoice['id'], (int)$delId);
+            }
           }
         }
 
@@ -197,8 +197,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '')==='save') {
            WHERE account_id=? AND invoice_id=? AND id=?
         ");
         $getCurrTimes = $pdo->prepare("SELECT time_id FROM invoice_item_times WHERE account_id=? AND invoice_item_id=?");
-        $addLink = $pdo->prepare("INSERT INTO invoice_item_times (account_id, invoice_item_id, time_id) VALUES (?,?,?)");
-        $delLink = $pdo->prepare("DELETE FROM invoice_item_times WHERE account_id=? AND invoice_item_id=? AND time_id=?");
+        $addLink      = $pdo->prepare("INSERT INTO invoice_item_times (account_id, invoice_item_id, time_id) VALUES (?,?,?)");
+        $delLink      = $pdo->prepare("DELETE FROM invoice_item_times WHERE account_id=? AND invoice_item_id=? AND time_id=?");
 
         $insItem = $pdo->prepare("
           INSERT INTO invoice_items
@@ -213,25 +213,30 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '')==='save') {
         foreach ((array)$itemsPosted as $row) {
           $item_id = (int)($row['id'] ?? 0);
           $desc    = trim((string)($row['description'] ?? ''));
-          $scheme  = $row['tax_scheme'] ?? 'standard';
+          $scheme  = (string)($row['tax_scheme'] ?? $DEFAULT_SCHEME);
           $rate    = (float)dec($row['hourly_rate'] ?? 0);
-          $vat     = (float)dec($row['vat_rate']     ?? ($row['tax_rate'] ?? 0));
-          if ($scheme !== 'standard') $vat = 0.0;
-          $vat = max(0.0, min(100.0, $vat));
+          $vat     = ($scheme === 'standard') ? (float)dec($row['vat_rate'] ?? $DEFAULT_VAT) : 0.0;
+          $vat     = max(0.0, min(100.0, $vat));
 
-          $newTimes = array_values(array_filter(array_map('intval', (array)($row['time_ids'] ?? [])), fn($v)=>$v>0));
           $postedMode = strtolower(trim((string)($row['entry_mode'] ?? 'qty')));
-          $entry_mode = !empty($newTimes) ? 'auto' : (in_array($postedMode, ['time','qty'], true) ? $postedMode : 'qty');
+          // fixed | auto | time | qty
+          $entry_mode = in_array($postedMode, ['fixed','auto','time','qty'], true) ? $postedMode : 'qty';
+
+          // Zeit-IDs (nur bei auto/fixed relevant)
+          $newTimes = array_values(array_filter(array_map('intval', (array)($row['time_ids'] ?? [])), fn($v)=>$v>0));
 
           $qty = 0.0; $net = 0.0; $gross = 0.0;
 
-          if ($entry_mode === 'auto') {
-            $minutes = 0;
-            if ($newTimes) {
-              $in = implode(',', array_fill(0, count($newTimes), '?'));
-              $st = $pdo->prepare("SELECT COALESCE(SUM(minutes),0) FROM times WHERE account_id=? AND id IN ($in)");
-              $st->execute(array_merge([$account_id], $newTimes));
-              $minutes = (int)$st->fetchColumn();
+          if ($entry_mode === 'fixed') {
+            // Festpreis: Menge = 1, Preis = unit_price
+            $qty = 1.0;
+            $net = round($rate * $qty, 2);
+            $gross = round($net * (1 + $vat/100), 2);
+          } elseif ($entry_mode === 'auto') {
+            // AUTO: Menge = Summe Minuten (gerundet) / 60, Preis = rate
+            $minutes = $newTimes ? sum_minutes_for_times_edit($pdo, $account_id, $newTimes) : 0;
+            if ($ROUND_UNIT_MINS > 0 && $minutes > 0) {
+              $minutes = (int)(ceil($minutes / $ROUND_UNIT_MINS) * $ROUND_UNIT_MINS);
             }
             $qty   = round($minutes / 60.0, 3);
             $net   = round(($minutes / 60.0) * $rate, 2);
@@ -251,22 +256,22 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '')==='save') {
           }
 
           if ($item_id > 0) {
-            // existierendes Item: Times-Diff anwenden
-            $getCurrTimes->execute([$account_id, $item_id]);
-            $currTimes = array_map(fn($r)=>(int)$r['time_id'], $getCurrTimes->fetchAll());
+            // existierendes Item: Times-Diff anwenden (bei auto/fixed)
+            if ($entry_mode === 'auto' || $entry_mode === 'fixed') {
+              $getCurrTimes->execute([$account_id, $item_id]);
+              $currTimes = array_map(fn($r)=>(int)$r['time_id'], $getCurrTimes->fetchAll());
 
-            $toAdd    = array_values(array_diff($newTimes, $currTimes));
-            $toRemove = array_values(array_diff($currTimes, $newTimes));
+              $toAdd    = array_values(array_diff($newTimes, $currTimes));
+              $toRemove = array_values(array_diff($currTimes, $newTimes));
 
-            if ($toAdd) {
-              foreach ($toAdd as $tid) { $addLink->execute([$account_id, $item_id, $tid]); }
-              $ph = implode(',', array_fill(0, count($toAdd), '?'));
-              $pdo->prepare("UPDATE times SET status='in_abrechnung' WHERE account_id=? AND id IN ($ph)")
-                  ->execute(array_merge([$account_id], $toAdd));
-            }
-            if ($toRemove) {
-              foreach ($toRemove as $tid) { $delLink->execute([$account_id, $item_id, $tid]); }
-              free_times_if_unlinked($pdo, $account_id, $toRemove);
+              if ($toAdd) {
+                foreach ($toAdd as $tid) { $addLink->execute([$account_id, $item_id, $tid]); }
+                set_times_status_bulk($pdo, $account_id, $toAdd, 'in_abrechnung');
+              }
+              if ($toRemove) {
+                foreach ($toRemove as $tid) { $delLink->execute([$account_id, $item_id, $tid]); }
+                free_times_if_unlinked($pdo, $account_id, $toRemove);
+              }
             }
 
             // Update + Position
@@ -275,134 +280,70 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '')==='save') {
               $account_id, (int)$invoice['id'], (int)$item_id
             ]);
           } else {
-            // neues Item anlegen (manuell oder auto)
+            // neues Item
             $insItem->execute([
               $account_id, (int)$invoice['id'], null, null, $desc,
               $qty, $rate, $vat, $net, $gross, (int)$pos, $scheme, $entry_mode
             ]);
             $item_id = (int)$pdo->lastInsertId();
 
-            if ($entry_mode === 'auto' && $newTimes) {
+            if (in_array($entry_mode, ['auto','fixed'], true) && $newTimes) {
               foreach ($newTimes as $tid) { $addLink->execute([$account_id, $item_id, $tid]); }
-              $ph = implode(',', array_fill(0, count($newTimes), '?'));
-              $pdo->prepare("UPDATE times SET status='in_abrechnung' WHERE account_id=? AND id IN ($ph)")
-                  ->execute(array_merge([$account_id], $newTimes));
+              set_times_status_bulk($pdo, $account_id, $newTimes, 'in_abrechnung');
             }
           }
 
-          if ($scheme !== 'standard') $hasNonStandard = true;
+          if ($scheme !== 'standard' || $vat <= 0.0) $hasNonStandard = true;
           $sum_net  += $net;
           $sum_gross+= $gross;
           $pos++;
         }
       } else {
-        // nicht editierbar → prüfen, ob nicht-standard existiert
-        $cnt = $pdo->prepare("SELECT COUNT(*) FROM invoice_items WHERE account_id=? AND invoice_id=? AND (tax_scheme IS NOT NULL AND tax_scheme <> 'standard')");
-        $cnt->execute([$account_id, (int)$invoice['id']]);
-        $hasNonStandard = ((int)$cnt->fetchColumn()) > 0;
-        // Summen aus DB
-        $sumSt = $pdo->prepare("SELECT COALESCE(SUM(total_net),0), COALESCE(SUM(total_gross),0) FROM invoice_items WHERE account_id=? AND invoice_id=?");
-        $sumSt->execute([$account_id, (int)$invoice['id']]);
-        [$sum_net, $sum_gross] = $sumSt->fetch(PDO::FETCH_NUM);
-      }
-
-      // Begründung erzwingen
-      if ($hasNonStandard && $tax_reason === '') {
-        throw new RuntimeException('Bitte Begründung für die Steuerbefreiung angeben.');
-      }
-
-      // Summen final aus DB (robust)
-      $sumSt = $pdo->prepare("SELECT COALESCE(SUM(total_net),0), COALESCE(SUM(total_gross),0) FROM invoice_items WHERE account_id=? AND invoice_id=?");
-      $sumSt->execute([$account_id, (int)$invoice['id']]);
-      [$sum_net, $sum_gross] = $sumSt->fetch(PDO::FETCH_NUM);
-
-      // Rechnung updaten
-      if ($assign_number) {
-        $updInv = $pdo->prepare("
-          UPDATE invoices
-            SET issue_date=?, due_date=?, status=?, invoice_number=?, total_net=?, total_gross=?, tax_exemption_reason=?,invoice_intro_text=?, invoice_outro_text=?
-          WHERE account_id=? AND id=?
-        ");
-        $updInv->execute([$issue_date, $due_date, $new_status, $number, (float)$sum_net, (float)$sum_gross, $tax_reason, $intro_text, $outro_text, $account_id, (int)$invoice['id']]);
-      } else {
-        $updInv = $pdo->prepare("
-          UPDATE invoices
-            SET issue_date=?, due_date=?, status=?, total_net=?, total_gross=?, tax_exemption_reason=?, invoice_intro_text=?, invoice_outro_text=?
-          WHERE account_id=? AND id=?
-        ");
-        $updInv->execute([$issue_date, $due_date, $new_status, (float)$sum_net, (float)$sum_gross, $tax_reason, $intro_text, $outro_text, $account_id, (int)$invoice['id']]);
-      }
-
-      // Times-Status bei Statuswechsel
-      if ($new_status !== ($invoice['status'] ?? '')) {
-        $map = [
-          'in_vorbereitung' => 'in_abrechnung',
-          'gestellt'        => 'abgerechnet',
-          'gemahnt'         => 'abgerechnet',
-          'bezahlt'         => 'abgerechnet',
-          'storniert'       => 'offen',
-          'ausgebucht'      => 'abgerechnet'
-        ];
-        if (isset($map[$new_status])) {
-          set_times_status_for_invoice($pdo, $account_id, (int)$invoice['id'], $map[$new_status]);
+        // --- LOCKED: keine Änderungen an Items/Kopf. Nur Status (und ggf. Rechnungsnummer) ---
+        // Nummer nur vergeben, wenn noch keine existiert und der neue Status eine Nummer erfordert.
+        // Wichtig: Datum aus der DB verwenden (nicht aus POST), damit Kopf nicht "indirekt" geändert wird.
+        if ($assign_number) {
+          $number = assign_invoice_number_if_needed(
+            $pdo,
+            $account_id,
+            (int)$invoice['id'],
+            (string)$invoice['issue_date'] // bestehendes Datum verwenden
+          );
+        } else {
+          $number = $invoice['invoice_number'] ?? null;
         }
-      }
 
-      $pdo->prepare("
-        UPDATE times t
-          SET t.status = 'offen'
-        WHERE t.account_id = ?
-          AND t.status = 'in_abrechnung'
-          AND NOT EXISTS (
-                SELECT 1 FROM invoice_item_times i
-                  WHERE i.account_id = t.account_id
-                    AND i.time_id     = t.id
-              )
-      ")->execute([$account_id]);
+        // Nur Status (und evtl. Rechnungsnummer) aktualisieren – keine Summen/Texte/Daten anfassen
+        if ($assign_number) {
+          $pdo->prepare("UPDATE invoices SET status=?, invoice_number=? WHERE account_id=? AND id=?")
+              ->execute([$new_status, $number, $account_id, (int)$invoice['id']]);
+        } else {
+          $pdo->prepare("UPDATE invoices SET status=? WHERE account_id=? AND id=?")
+              ->execute([$new_status, $account_id, (int)$invoice['id']]);
+        }
 
-      // --- Recurring-Ledger aufräumen: Entfernte Runs freigeben ---
-      $linked_runs = ri_runs_for_invoice($pdo, $account_id, $invoice_id);
-
-      // 2 Varianten, um "behaltene" Runs zu erkennen:
-      // A) Best Case: pro Zeile kam ein Hidden-Feld items[idx][ri_key] mit (siehe Punkt 3)
-      // B) Fallback: match nur über die Beschreibung (robust, auch wenn Werte geändert wurden)
-
-      $keptKeys = [];
-      foreach ((array)($_POST['items'] ?? []) as $row) {
-        $k = trim((string)($row['ri_key'] ?? ''));
-        if ($k !== '') { $keptKeys[$k] = true; }
-      }
-
-      $del = $pdo->prepare("
-        DELETE FROM recurring_item_ledger
-        WHERE account_id=? AND invoice_id=? AND recurring_item_id=? AND period_from=? AND period_to=?
-      ");
-
-      if ($keptKeys) {
-        // Variante A: vergleiche Keys
-        foreach ($linked_runs as $L) {
-          if (empty($keptKeys[$L['key']])) {
-            $del->execute([$account_id, $invoice_id, $L['recurring_item_id'], $L['from'], $L['to']]);
+        // Times-Status zur Statusänderung mappen
+        if ($new_status !== ($invoice['status'] ?? '')) {
+          $map = [
+            'in_vorbereitung' => 'in_abrechnung',
+            'gestellt'        => 'abgerechnet',
+            'gemahnt'         => 'abgerechnet',
+            'bezahlt'         => 'abgerechnet',
+            'storniert'       => 'offen',
+            'ausgebucht'      => 'abgerechnet',
+          ];
+          if (isset($map[$new_status])) {
+            set_times_status_for_invoice($pdo, $account_id, (int)$invoice['id'], $map[$new_status]);
           }
         }
-      } else {
-        // Variante B (Fallback): vergleiche Beschreibungen
-        $descSet = [];
-        foreach ((array)($_POST['items'] ?? []) as $row) {
-          $d = trim((string)($row['description'] ?? ''));
-          if ($d !== '') $descSet[$d] = true;
-        }
-        foreach ($linked_runs as $L) {
-          if (empty($descSet[$L['description']])) {
-            $del->execute([$account_id, $invoice_id, $L['recurring_item_id'], $L['from'], $L['to']]);
-          }
-        }
+
+        // Keine Item-/Ledger-/"hängende Zeiten"-Aufräum-Logik hier – es ändert sich ja nichts an den Positionen.
+        $pdo->commit();
+        flash('Rechnung gespeichert.', 'success');
+        redirect(url('/invoices/edit.php').'?id='.(int)$invoice['id']);
+        exit;
       }
-      // --- Ende Ledger-Aufräumen ---
-      $pdo->commit();
-      $ok = 'Rechnung gespeichert.';
-      redirect(url('/invoices/edit.php').'?id='.(int)$invoice['id']);
-      exit;
+
     } catch (Throwable $e) {
       $pdo->rollBack();
       $err = 'Rechnung konnte nicht gespeichert werden: '.$e->getMessage();
@@ -422,15 +363,18 @@ $timesByItem = load_times_by_item($pdo, $account_id, $itemIds);
 // Für _items_table.php (EDIT-Modus: flach)
 $items  = [];
 foreach ($rawItems as $r) {
+  if ((int)($r['is_hidden'] ?? 0) === 1) continue; // versteckte Items nicht im UI
   $iid = (int)$r['item_id'];
+  $mode = strtolower((string)($r['entry_mode'] ?? 'qty'));
   $items[] = [
     'id'            => $iid,
+    'task_id'       => $r['task_id'] !== null ? (int)$r['task_id'] : null,
     'description'   => (string)($r['description'] ?? ''),
     'hourly_rate'   => (float)($r['unit_price'] ?? 0),
-    'vat_rate'      => (float)($r['vat_rate'] ?? 0),
+    'vat_rate'      => ($r['tax_scheme'] ?? 'standard') === 'standard' ? (float)($r['vat_rate'] ?? 0) : 0.0,
     'tax_scheme'    => $r['tax_scheme'] ?? 'standard',
     'quantity'      => (float)($r['quantity'] ?? 0),
-    'entry_mode'    => $r['entry_mode'] ?? null,
+    'entry_mode'    => in_array($mode, ['fixed','auto','time','qty'], true) ? $mode : 'qty',
     'total_net'     => isset($r['total_net'])   ? (float)$r['total_net']   : null,
     'total_gross'   => isset($r['total_gross']) ? (float)$r['total_gross'] : null,
     'time_entries'  => array_map(function($t){
@@ -448,24 +392,35 @@ $groups = []; // EDIT-Modus
 
 // Default-Stundensatz für neu hinzugefügte manuelle Positionen
 $default_manual_rate = 0.00;
-
 // 1) Firmen-Default
 if (!empty($company)) {
   $default_manual_rate = (float)($company['hourly_rate'] ?? 0.0);
 }
-
-// 2) Falls 0: nimm den ersten verfügbaren effektiven Satz aus den offenen Zeiten
-if ($default_manual_rate <= 0 && !empty($groups) && !empty($groups[0]['rows'])) {
-  foreach ($groups as $g) {
-    foreach ($g['rows'] as $r) {
-      $er = (float)($r['hourly_rate'] ?? 0);
-      if ($er > 0) { $default_manual_rate = $er; break 2; }
-    }
+// 2) Falls 0: nimm ersten Satz aus vorhandenen Items
+if ($default_manual_rate <= 0 && !empty($items)) {
+  foreach ($items as $it) {
+    $er = (float)($it['hourly_rate'] ?? 0.0);
+    if ($er > 0) { $default_manual_rate = $er; break; }
   }
 }
+
+// Platzhalter-Texte für Intro/Outro (analog new.php)
+$eff_intro_edit = (string)($settings['invoice_intro_text'] ?? '');
+$eff_outro_edit = (string)($settings['invoice_outro_text'] ?? '');
+if ($company) {
+  $coIntro = isset($company['invoice_intro_text']) ? (string)$company['invoice_intro_text'] : '';
+  $coOutro = isset($company['invoice_outro_text']) ? (string)$company['invoice_outro_text'] : '';
+  if (trim($coIntro) !== '') $eff_intro_edit = $coIntro;
+  if (trim($coOutro) !== '') $eff_outro_edit = $coOutro;
+}
+
+// Recurring-Runs (für ri_key Hidden in _items_table.php)
+$ri_runs = ri_runs_for_invoice($pdo, $account_id, $invoice_id);
+$ri_key_by_desc = [];
+foreach ($ri_runs as $r) { $ri_key_by_desc[$r['description']] = $r['key']; }
+
 // ---------- View ----------
 require __DIR__ . '/../../src/layout/header.php';
-
 ?>
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h3>Rechnung bearbeiten</h3>
@@ -483,7 +438,7 @@ require __DIR__ . '/../../src/layout/header.php';
 
 <div class="card mb-3">
   <div class="card-body">
-    <form method="post" id="invForm" class="row g-3">
+    <form method="post" id="invForm" class="row g-3" action="<?= h(url('/invoices/edit.php')) ?>">
       <?=csrf_field()?>
       <input type="hidden" name="id" value="<?=$invoice_id?>">
       <input type="hidden" name="action" value="save">
@@ -495,11 +450,11 @@ require __DIR__ . '/../../src/layout/header.php';
       </div>
       <div class="col-md-3">
         <label class="form-label">Rechnungsdatum</label>
-        <input type="date" name="issue_date" class="form-control" value="<?=h($invoice['issue_date'] ?? date('Y-m-d'))?>">
+        <input type="date" name="issue_date" class="form-control" value="<?=h($invoice['issue_date'] ?? date('Y-m-d'))?>" <?= $isLockedAll ? 'disabled' : '' ?>>
       </div>
       <div class="col-md-3">
         <label class="form-label">Fällig bis</label>
-        <input type="date" name="due_date" class="form-control" value="<?=h($invoice['due_date'] ?? date('Y-m-d', strtotime('+14 days')))?>">
+        <input type="date" name="due_date" class="form-control" value="<?=h($invoice['due_date'] ?? date('Y-m-d', strtotime('+14 days')))?>" <?= $isLockedAll ? 'disabled' : '' ?>>
       </div>
       <div class="col-md-2">
         <label class="form-label">Status</label>
@@ -514,17 +469,6 @@ require __DIR__ . '/../../src/layout/header.php';
         </select>
       </div>
 
-      <?php
-        // Für Platzhalter in Edit-Ansicht (falls leer):
-        $eff_intro_edit = (string)($settings['invoice_intro_text'] ?? '');
-        $eff_outro_edit = (string)($settings['invoice_outro_text'] ?? '');
-        if ($company) {
-          $coIntro = isset($company['invoice_intro_text']) ? (string)$company['invoice_intro_text'] : '';
-          $coOutro = isset($company['invoice_outro_text']) ? (string)$company['invoice_outro_text'] : '';
-          if (trim($coIntro) !== '') $eff_intro_edit = $coIntro;
-          if (trim($coOutro) !== '') $eff_outro_edit = $coOutro;
-        }
-      ?>
       <div class="col-12">
         <div class="card mt-3">
           <div class="card-body">
@@ -535,19 +479,15 @@ require __DIR__ . '/../../src/layout/header.php';
                 name="invoice_intro_text"
                 rows="3"
                 placeholder="<?= h($eff_intro_edit) ?>"
+                <?= $isLockedAll ? 'disabled' : '' ?>
               ><?= h((string)($invoice['invoice_intro_text'] ?? '')) ?></textarea>
             </div>
-
-
           </div>
         </div>
       </div>
 
       <div class="card mb-3" id="tax-exemption-reason-wrap" style="<?= !empty($invoice['tax_exemption_reason']) ? '' : 'display:none' ?>">
         <div class="card-body">
-          <div class="d-flex justify-content-between align-items-center mb-2">
-            <?php $defVat = number_format((float)$settings['default_vat_rate'],2,'.',''); ?>
-          </div>
           <label class="form-label">Begründung für die Steuerbefreiung</label>
           <textarea
             class="form-control"
@@ -555,9 +495,10 @@ require __DIR__ . '/../../src/layout/header.php';
             name="tax_exemption_reason"
             rows="2"
             placeholder="z. B. § 19 UStG (Kleinunternehmer) / Reverse-Charge nach § 13b UStG / Art. 196 MwStSystRL"
+            <?= $isLockedAll ? 'disabled' : '' ?>
           ><?= h($invoice['tax_exemption_reason'] ?? '') ?></textarea>
           <div class="form-text">
-            Wird benötigt, wenn mindestens eine Position steuerfrei oder Reverse-Charge ist.
+            Wird benötigt, wenn mindestens eine Position steuerfrei oder Reverse-Charge ist, oder der MwSt-Satz 0,00 % beträgt.
           </div>
         </div>
       </div>
@@ -566,14 +507,14 @@ require __DIR__ . '/../../src/layout/header.php';
         <div class="card mt-3">
           <div class="card-body">
             <?php
-              $mode = 'edit';
-              $rowName  = 'items';
-              $timesName = 'time_ids';
+              // so erwartet es _items_table.php
+              $mode       = 'edit';
+              $rowName    = 'items';
+              $timesName  = 'time_ids';
 
-              $ri_runs = ri_runs_for_invoice($pdo, $account_id, $invoice_id);
-              $ri_key_by_desc = [];
-              foreach ($ri_runs as $r) { $ri_key_by_desc[$r['description']] = $r['key']; }
+              $allow_edit = $canEditItems;   // <— NEU: für _items_table.php
 
+              // $items, $groups, $ri_key_by_desc sind oben gesetzt
               require __DIR__ . '/_items_table.php';
             ?>
             <?php if ($canEditItems): ?>
@@ -581,67 +522,67 @@ require __DIR__ . '/../../src/layout/header.php';
               type="button"
               id="addManualItem"
               class="btn btn-sm btn-outline-primary"
-              data-default-vat="<?php echo h(number_format((float)$settings['default_vat_rate'],2,'.','')) ?>"
-              data-default-rate="<?php echo h(number_format((float)$default_manual_rate,2,'.','')) ?>"
+              data-default-vat="<?= h(number_format($DEFAULT_VAT,2,'.','')) ?>"
+              data-default-rate="<?= h(number_format((float)$default_manual_rate,2,'.','')) ?>"
             >+ Position</button>
             <?php endif; ?>
           </div>
         </div>
       </div>
 
-      <div>
-              <label class="form-label">Rechnungs-Schlussformel</label>
-              <textarea
-                class="form-control"
-                name="invoice_outro_text"
-                rows="3"
-                placeholder="<?= h($eff_outro_edit) ?>"
-              ><?= h((string)($invoice['invoice_outro_text'] ?? '')) ?></textarea>
+      <div class="col-12">
+        <div class="card mt-3">
+          <div class="card-body">
+            <label class="form-label">Rechnungs-Schlussformel</label>
+            <textarea
+              class="form-control"
+              name="invoice_outro_text"
+              rows="3"
+              placeholder="<?= h($eff_outro_edit) ?>"
+              <?= $isLockedAll ? 'disabled' : '' ?>
+            ><?= h((string)($invoice['invoice_outro_text'] ?? '')) ?></textarea>
+          </div>
         </div>
+      </div>
 
-        <div class="col-12 text-end">
-          <a class="btn btn-outline-secondary" href="<?=h(url($return_to))?>">Abbrechen</a>
+      <div class="col-12 text-end">
+        <a class="btn btn-outline-secondary" href="<?=h(url($return_to))?>">Abbrechen</a>
+        <button class="btn btn-primary" name="action" value="save">Speichern</button>
+      </div>
+    </form>
 
-          <!-- Speichern -->
-          <button class="btn btn-primary" name="action" value="save">Speichern</button>
+    <?php
+      $st = $invoice['status'] ?? 'in_vorbereitung';
+      $has_no_number = empty($invoice['invoice_number']);
+      $can_delete = ($st === 'in_vorbereitung' && $has_no_number);
+      $can_cancel = in_array($st, ['gestellt','gemahnt','bezahlt','ausgebucht'], true);
+    ?>
 
-          <?php
-            $st = $invoice['status'] ?? 'in_vorbereitung';
-            $has_no_number = empty($invoice['invoice_number']);
-            $can_delete = ($st === 'in_vorbereitung' && $has_no_number);
-            $can_cancel = in_array($st, ['gestellt','gemahnt','bezahlt','ausgebucht'], true); // „storniert“ schon storniert → deaktivieren
-          ?>
+    <!-- Stornieren -->
+    <form method="post" action="<?= url('/invoices/cancel.php') ?>" class="d-inline"
+          onsubmit="return confirm('Rechnung wirklich stornieren?');">
+      <?= csrf_field() ?>
+      <input type="hidden" name="id" value="<?= (int)$invoice['id'] ?>">
+      <input type="hidden" name="return_to" value="<?= h($return_to) ?>">
+      <button class="btn btn-outline-danger" <?= $can_cancel ? '' : 'disabled' ?>>Stornieren</button>
+    </form>
 
-
-
-</form>
-
-             <!-- Stornieren -->
-              <form method="post" action="<?= url('/invoices/cancel.php') ?>" class="d-inline"
-                    onsubmit="return confirm('Rechnung wirklich stornieren?');">
-                <?= csrf_field() ?>
-                <input type="hidden" name="id" value="<?= (int)$invoice['id'] ?>">
-                <input type="hidden" name="return_to" value="<?= h($return_to) ?>">
-                <button class="btn btn-outline-danger" <?= $can_cancel ? '' : 'disabled' ?>>Stornieren</button>
-              </form>
-
-          <!-- Löschen (hart) -->
-          <form method="post" action="<?= url('/invoices/delete.php') ?>" class="d-inline">
-            <?= csrf_field() ?>
-            <?= return_to_hidden($return_to) ?>
-            <input type="hidden" name="id" value="<?= (int)$invoice['id'] ?>">
-            <button class="btn btn-outline-danger" <?= $can_delete ? '' : 'disabled' ?>>
-              <i class="bi bi-trash"></i>
-            </button>
-          </form>
-        </div>
-
+    <!-- Löschen (hart) -->
+    <form method="post" action="<?= url('/invoices/delete.php') ?>" class="d-inline"
+          onsubmit="return confirm('Rechnung wirklich löschen?');">
+      <?= csrf_field() ?>
+      <?= return_to_hidden($return_to) ?>
+      <input type="hidden" name="id" value="<?= (int)$invoice['id'] ?>">
+      <button class="btn btn-outline-danger" <?= $can_delete ? '' : 'disabled' ?>>
+        <i class="bi bi-trash"></i>
+      </button>
+    </form>
 
   </div>
 </div>
 
 <script>
-// Manuelle Zeilen (qty|time) mit ICON-Toggle in der input-group
+// Manuelle Zeilen (qty|time) mit ICON-Toggle (auch für bestehende Zeilen)
 (function(){
   const addBtn = document.getElementById('addManualItem');
   const root   = document.getElementById('invoice-items');
@@ -667,7 +608,6 @@ require __DIR__ . '/../../src/layout/header.php';
   }
 
   function switchRowMode(tr, mode){
-    // helpers für optionale Wertübernahme beim Umschalten
     function decToHHMM(val){
       var n = parseFloat(String(val||'').replace(',','.'));
       if (!isFinite(n)) n = 0;
@@ -685,7 +625,7 @@ require __DIR__ . '/../../src/layout/header.php';
       var n = parseFloat(v.replace(',','.')); return isFinite(n) ? n.toFixed(3) : '0.000';
     }
 
-    const entry = tr.querySelector('input.entry-mode') || tr.appendChild(Object.assign(document.createElement('input'), {type:'hidden', className:'entry-mode', value:'qty'}));
+    const entry = tr.querySelector('input.entry-mode') || tr.appendChild(Object.assign(document.createElement('input'), {type:'hidden', className:'entry-mode', name:'items['+(tr.getAttribute('data-row')||'')+'][entry_mode]', value:'qty'}));
     entry.value = mode;
     tr.setAttribute('data-mode', mode);
 
@@ -693,14 +633,12 @@ require __DIR__ . '/../../src/layout/header.php';
     const hours = tr.querySelector('input.hours-input');
 
     if (mode === 'time') {
-      // ggf. Menge → HH:MM übernehmen, wenn noch leer
       if (hours && qty && (!hours.value || hours.value === '00:00')) {
         hours.value = decToHHMM(qty.value || '0');
       }
       if (qty)   { qty.classList.add('d-none'); qty.disabled = true; }
       if (hours) { hours.classList.remove('d-none'); hours.disabled = false; }
     } else {
-      // ggf. HH:MM → Menge übernehmen, wenn Menge leer ist
       if (qty && hours && (!qty.value || qty.value === '0' || qty.value === '0.000')) {
         qty.value = hhmmToDec(hours.value || '0');
       }
@@ -715,19 +653,12 @@ require __DIR__ . '/../../src/layout/header.php';
       b.setAttribute('aria-pressed', b.dataset.mode === mode ? 'true' : 'false');
     });
 
-    // WICHTIG: Neuberechnung triggern (delegierter 'input'-Listener im zweiten Script ruft recalcRow)
     const activeInput = (mode === 'time') ? hours : qty;
-    if (activeInput) {
-      activeInput.dispatchEvent(new Event('input', { bubbles: true }));
-    }
+    if (activeInput) activeInput.dispatchEvent(new Event('input', { bubbles: true }));
   }
 
-  // Baut (falls nötig) die input-group mit Icon-Toggle um vorhandene Felder
   function ensureIconToggle(tr){
-    // Toggle nur für nicht-auto Zeilen
-    if (tr.getAttribute('data-mode') === 'auto') return;
-
-    // schon vorhanden?
+    if (tr.getAttribute('data-mode') === 'auto' || tr.getAttribute('data-mode') === 'fixed') return;
     if (tr.querySelector('.mode-btn')) return;
 
     const qtyCell = tr.querySelector('td:nth-child(3)');
@@ -739,14 +670,14 @@ require __DIR__ . '/../../src/layout/header.php';
     if (!qty) {
       qty = document.createElement('input');
       qty.type = 'number';
-      qty.className = 'form-control text-end quantity no-spin';
+      qty.className = 'form-control form-control-sm text-end quantity no-spin';
       qty.name = 'items['+(tr.getAttribute('data-row')||'')+'][quantity]';
       qty.value = '1';
     }
     if (!hours) {
       hours = document.createElement('input');
       hours.type = 'text';
-      hours.className = 'form-control text-end hours-input d-none';
+      hours.className = 'form-control form-control-sm text-end hours-input d-none';
       hours.name = 'items['+(tr.getAttribute('data-row')||'')+'][hours]';
       hours.placeholder = 'hh:mm oder 1.5';
       hours.disabled = true;
@@ -757,7 +688,7 @@ require __DIR__ . '/../../src/layout/header.php';
 
     const btnQty  = document.createElement('button');
     btnQty.type   = 'button';
-    btnQty.className = 'btn btn-outline-secondary mode-btn no-spin';
+    btnQty.className = 'btn btn-outline-secondary mode-btn';
     btnQty.dataset.mode = 'qty';
     btnQty.title  = 'Menge';
     btnQty.innerHTML = '<i class="bi bi-123" aria-hidden="true"></i><span class="visually-hidden">Menge</span>';
@@ -779,17 +710,13 @@ require __DIR__ . '/../../src/layout/header.php';
   }
 
   function initRow(tr){
-    // Toggle-UI sicherstellen (auch in edit.php für bestehende Zeilen)
     ensureIconToggle(tr);
-
-    // Ausgangsmodus bestimmen
     const attr  = tr.getAttribute('data-mode');
     const entry = tr.querySelector('input.entry-mode')?.value;
     const mode  = (attr || entry || 'qty');
     switchRowMode(tr, mode);
   }
 
-  // Delegierte Clicks (Buttons & Keyboard)
   root.addEventListener('click', function(e){
     const btn = e.target.closest('.mode-btn');
     if (!btn) return;
@@ -797,6 +724,7 @@ require __DIR__ . '/../../src/layout/header.php';
     if (!tr) return;
     switchRowMode(tr, btn.dataset.mode);
   });
+
   root.addEventListener('keydown', function(e){
     const btn = e.target.closest('.mode-btn');
     if (!btn) return;
@@ -806,7 +734,6 @@ require __DIR__ . '/../../src/layout/header.php';
     }
   });
 
-  // "+ Position" (neue manuelle Zeile mit Icon-Toggle)
   if (addBtn) {
     addBtn.addEventListener('click', function(){
       const idx    = nextIndex();
@@ -828,10 +755,10 @@ require __DIR__ . '/../../src/layout/header.php';
                </svg>
              </span>
            </div>
+           <input type="hidden" class="entry-mode" name="items[${idx}][entry_mode]" value="qty">
          </td>
 
          <td>
-           <input type="hidden" class="entry-mode" name="items[${idx}][entry_mode]" value="qty">
            <input type="text" class="form-control" name="items[${idx}][description]" value="">
          </td>
 
@@ -845,21 +772,22 @@ require __DIR__ . '/../../src/layout/header.php';
              </button>
 
              <input type="number"
-                    class="form-control text-end quantity no-spin"
-                    name="items[${idx}][quantity]" value="1">
+                    class="form-control form-control-sm text-end quantity no-spin"
+                    name="items[${idx}][quantity]" value="1" step="0.001" min="0">
+
              <input type="text"
-                    class="form-control text-end hours-input d-none"
+                    class="form-control form-control-sm text-end hours-input d-none"
                     name="items[${idx}][hours]" placeholder="hh:mm oder 1.5" disabled>
            </div>
          </td>
 
          <td class="text-end">
-           <input type="number" class="form-control text-end rate no_spin"
-                  name="items[${idx}][hourly_rate]" value="${defRate}">
+           <input type="number" class="form-control form-control-sm text-end rate no-spin"
+                  name="items[${idx}][hourly_rate]" value="${defRate}" step="0.01" min="0">
          </td>
 
          <td class="text-end">
-           <select name="items[${idx}][tax_scheme]" class="form-select inv-tax-sel"
+           <select name="items[${idx}][tax_scheme]" class="form-select form-select-sm inv-tax-sel"
                    data-rate-standard="${defVat}" data-rate-tax-exempt="0.00" data-rate-reverse-charge="0.00">
              <option value="standard" selected>standard (mit MwSt)</option>
              <option value="tax_exempt">steuerfrei</option>
@@ -868,7 +796,8 @@ require __DIR__ . '/../../src/layout/header.php';
          </td>
 
          <td class="text-end">
-           <input type="number" min="0" max="100" class="form-control text-end inv-vat-input no-spin"
+           <input type="number" min="0" max="100" step="0.01"
+                  class="form-control form-control-sm text-end inv-vat-input no-spin"
                   name="items[${idx}][vat_rate]" value="${defVat}">
          </td>
 
@@ -880,7 +809,6 @@ require __DIR__ . '/../../src/layout/header.php';
          </td>`;
 
       insertBeforeGrand(tr);
-      // Aktiv-Optik setzen
       const btnQty = tr.querySelector('.mode-btn[data-mode="qty"]');
       const btnTim = tr.querySelector('.mode-btn[data-mode="time"]');
       setBtnActive(btnQty, true);
@@ -889,12 +817,12 @@ require __DIR__ . '/../../src/layout/header.php';
     });
   }
 
-  // Bestehende Zeilen (v.a. in edit.php) initialisieren und ggf. upgraden
   document.querySelectorAll('#invoice-items tr.inv-item-row').forEach(initRow);
 })();
 </script>
 
 <script>
+// Steuer-Begründung automatisch ein-/ausblenden (analog new.php)
 (function () {
   const form   = document.getElementById('invForm');
   const wrap   = document.getElementById('tax-exemption-reason-wrap');
@@ -919,12 +847,7 @@ require __DIR__ . '/../../src/layout/header.php';
       const scheme = (schemeSel.value || '').toLowerCase();
       const vat    = parseVat(vatInput);
 
-      // Gleiche Logik wie serverseitig:
-      // - jede Steuerart ≠ 'standard' → Begründung nötig
-      // - oder 'standard' mit 0,00 % → Begründung nötig
-      if (scheme !== 'standard' || vat <= 0) {
-        return true;
-      }
+      if (scheme !== 'standard' || vat <= 0) return true;
     }
     return false;
   }
@@ -946,7 +869,6 @@ require __DIR__ . '/../../src/layout/header.php';
     }
   }
 
-  // Reagiert auf Änderungen an Steuerart & MwSt
   document.addEventListener('input', function (e) {
     if (e.target && (e.target.classList.contains('inv-tax-sel') || e.target.classList.contains('inv-vat-input'))) {
       updateReasonUI();
@@ -958,7 +880,6 @@ require __DIR__ . '/../../src/layout/header.php';
     }
   });
 
-  // Beobachte Hinzufügen/Entfernen von Zeilen (MutationObserver)
   if (table) {
     const mo = new MutationObserver(updateReasonUI);
     mo.observe(table, { childList: true, subtree: true });
@@ -967,14 +888,12 @@ require __DIR__ . '/../../src/layout/header.php';
   // Initial
   updateReasonUI();
 
-  // Blockiere Submit, wenn Begründung fehlt, obwohl nötig
   if (form) {
     form.addEventListener('submit', function (e) {
       if (needsReason()) {
         if (!reason || !reason.value.trim()) {
           wrap && (wrap.style.display = '');
           reason && reason.setAttribute('required', 'required');
-          // Native Validierung triggern (sofern verfügbar)
           reason && reason.reportValidity && reason.reportValidity();
           reason && reason.focus && reason.focus();
           e.preventDefault();
@@ -985,6 +904,5 @@ require __DIR__ . '/../../src/layout/header.php';
   }
 })();
 </script>
-
 
 <?php require __DIR__ . '/../../src/layout/footer.php'; ?>
