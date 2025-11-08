@@ -10,6 +10,8 @@ $account_id = (int)$user['account_id'];
 $company_id = isset($_POST['company_id']) ? (int)$_POST['company_id']
             : (isset($_GET['company_id']) ? (int)$_GET['company_id'] : 0);
 
+$return_to = pick_return_to($company_id ? '/companies/show.php?id='.$company_id
+                            : '/dashboard/index.php');
 // Firmenliste
 $cs = $pdo->prepare("
   SELECT id, name
@@ -36,11 +38,6 @@ if ($company_id) {
   if (count($projects) === 1) {
     $_POST['project_id'] = (int)$projects[0]['id'];
   }
-  $return_to = pick_return_to('/companies/show.php?id='.$company_id);
-
-}
-else {
-  $return_to = pick_return_to('/dashboard/index.php');
 
 }
 $project_id = isset($_POST['project_id']) ? (int)$_POST['project_id']
@@ -165,14 +162,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST["action"]) && $_POST["
 }
 require __DIR__ . '/../../src/layout/header.php';
 ?>
-<div class="row">
+<div class="row"
   <div class="col-md-8">
     <h3>Neue Aufgabe (nach Firma &amp; Projekt)</h3>
     <?php if ($err): ?><div class="alert alert-danger"><?=$err?></div><?php endif; ?>
 
     <form method="post" id="taskForm">
       <?=csrf_field()?>
-      <?= return_to_hidden($return_to) ?>
+      <?= return_to_hidden($return_to);?>
       <input type="hidden" name="action" value="save">
       <div class="row">
         <div class="col-md-6 mb-3">
@@ -278,24 +275,31 @@ require __DIR__ . '/../../src/layout/header.php';
     <script>
       (function() {
         const company = document.getElementById('company_id');
-        if (company) {
-          company.addEventListener('change', function() {
-            const base = '<?=url('/tasks/new.php')?>';
-            const val = this.value || '';
-            const rt = document.querySelector('input[name="return_to"]');
-            const rtVal = rt ? rt.value : '';
+        if (!company) return;
 
-            let url = base;
-            const params = [];
-            if (val) params.push('company_id=' + encodeURIComponent(val));
-            if (rtVal) params.push('return_to=' + encodeURIComponent(rtVal));
-            if (params.length) url += '?' + params.join('&');
+        company.addEventListener('change', function() {
+          const base = '<?= url('/tasks/new.php') ?>'; // Seite, die neu geladen wird
+          const companyId = this.value || '';
 
-            window.location.href = url;
-          });
-        }
+          // return_to als RELATIVER Pfad: Firma → Firmenseite, sonst Dashboard
+          const nextReturnTo = companyId
+            ? '/companies/show.php?id=' + encodeURIComponent(companyId)
+            : '/dashboard/index.php';
+
+          // Hidden-Feld im Formular updaten (damit POST später das gleiche nutzt)
+          const rtInput = document.querySelector('input[name="return_to"]');
+          if (rtInput) rtInput.value = nextReturnTo;
+
+          // URL fürs Reload bauen
+          const params = [];
+          if (companyId) params.push('company_id=' + encodeURIComponent(companyId));
+          params.push('return_to=' + encodeURIComponent(nextReturnTo));
+
+          const url = base + (params.length ? ('?' + params.join('&')) : '');
+          window.location.href = url;
+        });
       })();
-    </script>
+      </script>
     <script>
         document.addEventListener('DOMContentLoaded', function(){
           const form = document.getElementById('taskForm');
