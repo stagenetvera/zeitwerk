@@ -105,6 +105,9 @@ if (!isset($return_to) || $return_to === null || $return_to === '') {
                 <button class="btn btn-sm btn-outline-secondary"><i class="bi bi-eye"></i></button>
                 <span class="visually-hidden">Ansehen</span>
               </form>
+              <a href="invoice-export-zugferd.php?id=<?= (int)$inv['id'] ?>" class="btn btn-secondary">
+                ZUGFeRD / Factur-X
+              </a>
               <a class="btn btn-sm btn-outline-secondary" href="<?= url('/invoices/export_xml.php') ?>?id=<?= (int)$inv['id'] ?>">XML</a>
               <?php
                 $st = $inv['status'] ?? 'in_vorbereitung';

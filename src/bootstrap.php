@@ -17,6 +17,8 @@ require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/csrf.php';
 
+require __DIR__ . '/../vendor/autoload.php';
+
 session_start();
 $pdo = db_connect($config['db']);
 ?>

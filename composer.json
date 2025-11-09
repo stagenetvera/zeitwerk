@@ -1,0 +1,6 @@
+{
+    "require": {
+        "easybill/zugferd-php": "^4.0",
+        "easybill/e-invoicing": "^0.3.2"
+    }
+}
