@@ -27,6 +27,7 @@ $err = null;
  *  - wenn task_id gesetzt → sofort stoppen + zurück
  *  - wenn task_id leer:
  *      - wenn action=save: zuordnen/neu anlegen, dann stoppen + zurück
+ *      - wenn action=discard: Zeit verwerfen (löschen) + zurück
  *      - sonst: Formular anzeigen (mit Header/Footer)
  */
 try {
@@ -73,6 +74,18 @@ try {
 
   // Hier: task_id ist noch NICHT gesetzt
   $action = $_POST['action'] ?? '';
+
+  // --- Neue Aktion: laufende Zeit verwerfen (löschen) ---
+  if ($action === 'discard') {
+    $del = $pdo->prepare('
+      DELETE FROM times
+      WHERE id = ? AND account_id = ? AND user_id = ? AND ended_at IS NULL
+    ');
+    $del->execute([(int)$cur['id'], $account_id, $user_id]);
+    $pdo->commit();
+    redirect($return_to);
+    exit;
+  }
 
   if ($action === 'save') {
     // --- Zuweisung/Neuanlage aus dem Formular ---
@@ -172,7 +185,7 @@ try {
     }
     // Bei $err geht es unten weiter zum Formular-Render
   } else {
-    // Kein action=save → Formular anzeigen
+    // Kein action=save|discard → Formular anzeigen
     $pdo->commit(); // Transaktion schließen, Anzeige folgt
   }
 
@@ -183,14 +196,14 @@ try {
 
 /**
  * Ab hier: Formular rendern (nur wenn task_id nicht gesetzt war
- * und keine Zuweisung erfolgen konnte bzw. noch nicht erfolgt ist).
+ * und keine Zuweisung/Verwerfen erfolgen konnte bzw. noch nicht erfolgt ist).
  */
 require __DIR__ . '/../../src/layout/header.php';
 
 // Für das Formular brauchen wir die aktuellen Daten:
 $running = get_running_time($pdo, $account_id, $user_id);
 if (!$running) {
-  // Falls zwischenzeitlich gestoppt wurde: zurück
+  // Falls zwischenzeitlich gestoppt wurde/gelöscht wurde: zurück
   redirect($return_to);
   exit;
 }
@@ -237,7 +250,6 @@ $tasksAll = $tsAll->fetchAll();
     <form method="post">
       <?= csrf_field() ?>
       <?= return_to_hidden($return_to) ?>
-      <input type="hidden" name="action" value="save">
 
       <div class="mb-3">
         <label class="form-label">Firma</label>
@@ -296,7 +308,18 @@ $tasksAll = $tsAll->fetchAll();
       </div>
 
       <div class="d-flex gap-2">
-        <button class="btn btn-warning">Speichern & stoppen</button>
+        <button type="submit" class="btn btn-warning" name="action" value="save">
+          Speichern &amp; stoppen
+        </button>
+        <button type="submit"
+                class="btn btn-outline-danger"
+                name="action"
+                value="discard"
+                formnovalidate
+                onclick="return confirm('Diese laufende Zeit wirklich verwerfen? Sie wird vollständig gelöscht.');">
+          Verwerfen
+        </button>
+
         <a class="btn btn-outline-secondary" href="<?= h(url($return_to)) ?>">Abbrechen</a>
       </div>
     </form>
