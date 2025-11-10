@@ -124,7 +124,8 @@ if (!isset($return_to) || $return_to === null || $return_to === '') {
                 <button class="btn btn-sm btn-outline-danger" <?= $can_cancel ? '' : 'disabled' ?>>Stornieren</button>
               </form>
 
-              <form method="post" action="<?= url('/invoices/delete.php') ?>" class="d-inline">
+              <form method="post" action="<?= url('/invoices/delete.php') ?>" class="d-inline"
+                                  onsubmit="return confirm('Rechnung wirklich löschen?');">
                 <?= csrf_field() ?>
                 <?= return_to_hidden($return_to) ?>
                 <input type="hidden" name="id" value="<?= (int)$inv['id'] ?>">

@@ -257,7 +257,7 @@ if (($mode ?? 'new') === 'edit'):
       <td class="text-end text-nowrap">
         <?php if ($allow_edit): ?>
           <button type="button" class="btn btn-sm btn-outline-danger btn-remove-item">
-            Entfernen
+            <i class="bi bi-trash"></i>
           </button>
         <?php endif; ?>
       </td>
@@ -407,7 +407,7 @@ else:
 
       <td class="text-end text-nowrap">
         <button type="button" class="btn btn-sm btn-outline-danger btn-remove-item">
-          Entfernen
+          <i class="bi bi-trash"></i>
         </button>
       </td>
     </tr>
