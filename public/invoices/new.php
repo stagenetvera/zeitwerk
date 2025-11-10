@@ -344,7 +344,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && ($_POST['a
       $insLink = $pdo->prepare("INSERT IGNORE INTO invoice_item_times (account_id, invoice_item_id, time_id) VALUES (?,?,?)");
       $setTimeStatus = $pdo->prepare("UPDATE times SET status=? WHERE account_id=? AND id IN (%s)");
 
-      $pos = 1; $sum_net = 0.00; $sum_gross = 0.00;
+      $pos = 1; $sum_net = 0.00;
       $flash_backattach = []; // [task_id => count]
 
       // Hilfsfunktionen
@@ -420,7 +420,6 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && ($_POST['a
                 ->execute([$invoice_id, $account_id, $task_id]);
 
             $sum_net  += $net;
-            $sum_gross+= $gross;
             continue;
 
           } else {
@@ -570,9 +569,11 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && ($_POST['a
       }
 
       // Summen aktualisieren
-      $updInv = $pdo->prepare("UPDATE invoices SET total_net=?, total_gross=? WHERE id=? AND account_id=?");
-      $updInv->execute([$sum_net, $sum_gross, $invoice_id, $account_id]);
+      // Netto/Brutto/MwSt aus den gespeicherten Positionen je Steuersatz berechnen
+      $totals = calculate_invoice_totals($pdo, $account_id, $invoice_id);
 
+      $updInv = $pdo->prepare("UPDATE invoices SET total_net=?, total_gross=? WHERE id=? AND account_id=?");
+      $updInv->execute([$totals['total_net'], $totals['total_gross'], $invoice_id, $account_id]);
       // Falls keine sichtbaren Positionen: Header löschen, nur Back-Attachs behalten
       if ($visible_count === 0) {
         $pdo->prepare("DELETE FROM invoices WHERE id=? AND account_id=?")->execute([$invoice_id, $account_id]);

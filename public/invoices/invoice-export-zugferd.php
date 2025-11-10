@@ -3,6 +3,8 @@
 declare(strict_types=1);
 
 require __DIR__ . '/../../src/bootstrap.php';
+require_once __DIR__ . '/../../src/utils.php'; // dec(), parse_hours_to_decimal()
+
 require_login();
 
 use easybill\eInvoicing\CII\Documents\CrossIndustryInvoice;
@@ -81,17 +83,37 @@ if (!$invoice) {
 }
 
 // ----------------------------------------------------------------------------
-// Positionen (wie in export_xml.php)
+// Positionen (wie in edit.php)
 // ----------------------------------------------------------------------------
 
 $it = $pdo->prepare('
-  SELECT id, description, quantity, unit_price, vat_rate, tax_scheme, entry_mode, position, total_net
-    FROM invoice_items
-   WHERE account_id = ? AND invoice_id = ?
-   ORDER BY position ASC, id ASC
+  SELECT
+    id           AS item_id,
+    description,
+    quantity,
+    unit_price,
+    vat_rate,
+    tax_scheme,
+    position,
+    total_net,
+    total_gross,
+    entry_mode,
+    is_hidden
+  FROM invoice_items
+  WHERE account_id = ? AND invoice_id = ?
+  ORDER BY COALESCE(position, 999999), id ASC
 ');
 $it->execute([$account_id, $id]);
-$items = $it->fetchAll() ?: [];
+$rawItems = $it->fetchAll() ?: [];
+
+// wie im edit-Formular: versteckte Items ignorieren
+$items = [];
+foreach ($rawItems as $row) {
+    if ((int)($row['is_hidden'] ?? 0) === 1) {
+        continue;
+    }
+    $items[] = $row;
+}
 
 // ----------------------------------------------------------------------------
 // Leistungszeitraum aus verlinkten Zeiten (min/max) – wie im export_xml.php
@@ -159,35 +181,47 @@ $mwst = $vatCandidates ? max($vatCandidates) : 0.0;
 // Summen aus Positionen berechnen (für Factur-X Pflichtfelder)
 // ----------------------------------------------------------------------------
 
-$totalNet      = 0.0;
-$totalTax      = 0.0;
-$byVatRate     = []; // [rate => ['net' => ..., 'tax' => ...]]
+// ----------------------------------------------------------------------------
+// Summen aus Positionen berechnen (für Factur-X Pflichtfelder, EN 16931)
+// ----------------------------------------------------------------------------
 
+$totalNet   = 0.0;
+$totalTax   = 0.0;
+$totalGross = 0.0;
+$byVatRate  = []; // [rate => ['net' => ..., 'tax' => ...]]
+
+// 1. Nettosummen je Steuersatz aufaddieren
 foreach ($items as $r) {
-    $rate    = (float)($r['unit_price'] ?? 0);
-    $qty     = (float)($r['quantity'] ?? 0);
-    $vatRate = (float)($r['vat_rate'] ?? 0);
+    $scheme  = (string)($r['tax_scheme'] ?? 'standard');
+    $vatRate = ($scheme === 'standard') ? (float)($r['vat_rate'] ?? 0) : 0.0;
 
-    // falls du total_net schon vorliegen hast, nimm das
-    if (isset($r['total_net']) && $r['total_net'] !== null) {
-        $lineNet = (float)$r['total_net'];
-    } else {
-        $lineNet = round($rate * $qty, 2);
-    }
-
-    $lineTax = round($lineNet * $vatRate / 100.0, 2);
+    // Netto je Zeile: aus DB oder fallback (bereits gerundet)
+    $lineNet = isset($r['total_net'])
+        ? (float)$r['total_net']
+        : round_half_up((float)$r['unit_price'] * (float)$r['quantity'], 2);
 
     $totalNet += $lineNet;
-    $totalTax += $lineTax;
 
-    if (!isset($byVatRate[$vatRate])) {
-        $byVatRate[$vatRate] = ['net' => 0.0, 'tax' => 0.0];
+    // Nur Standard-Sätze mit > 0 % in die MwSt-Gruppen
+    if ($scheme === 'standard' && $vatRate > 0.0) {
+        if (!isset($byVatRate[$vatRate])) {
+            $byVatRate[$vatRate] = ['net' => 0.0, 'tax' => 0.0];
+        }
+        $byVatRate[$vatRate]['net'] += $lineNet;
     }
-    $byVatRate[$vatRate]['net'] += $lineNet;
-    $byVatRate[$vatRate]['tax'] += $lineTax;
 }
 
-$totalGross = $totalNet + $totalTax;
+// 2. MwSt je Steuersatz EN 16931-konform berechnen (round half up)
+foreach ($byVatRate as $rate => &$group) {
+    $group['tax'] = round_half_up($group['net'] * $rate / 100.0, 2);
+    $totalTax += $group['tax'];
+}
+unset($group);
+
+// 3. Gesamtsummen runden
+$totalNet   = round_half_up($totalNet, 2);
+$totalTax   = round_half_up($totalTax, 2);
+$totalGross = round_half_up($totalNet + $totalTax, 2);
 
 // Leistungszeitraum (optional in den Notes)
 $leistungszeitraumText = '';
@@ -392,7 +426,8 @@ foreach ($byVatRate as $rate => $sumByRate) {
         null,           // AllowanceChargeBasisAmount
         null,           // ApplicablePercent
         $categoryCode,  // CategoryCode
-        (string)$rate   // RateApplicablePercent (z.B. "19")
+        number_format($rate, 2, '.', ''),
+        // (string)$rate   // RateApplicablePercent (z.B. "19")
         // Rest (ExemptionReason etc.) lassen wir null
     );
 
@@ -518,7 +553,7 @@ foreach ($items as $r) {
 
     // Menge und Einheit als Quantity-Objekt
     $lineDelivery->billedQuantity = Quantity::create(
-        number_format($qty, 2, '.', ''), // z.B. "1.50"
+        number_format($qty, 4, '.', ''),
         $unitEnum                        // UnitCode::HUR oder UnitCode::C62
     );
 
@@ -535,16 +570,15 @@ foreach ($items as $r) {
 
     // Steuerobjekt für diese Zeile
     $lineTaxObj = TradeTax::create(
-        'VAT',                // typeCode
-        null,                 // calculatedAmount (lassen wir leer, wir haben Header-Steuerbeträge)
-        null,                 // basisAmount
+        'VAT',
         null,
         null,
         null,
-        $vatRate > 0 ? 'S' : 'Z', // categoryCode
-        (string)$vatRate          // rateApplicablePercent
+        null,
+        null,
+        $vatRate > 0 ? 'S' : 'Z',
+        number_format($vatRate, 2, '.', '')  // oder einfach (string)$vatRate
     );
-
     // KORREKTES Property laut Model: tradeTax (Array)
     $lineSettlement->tradeTax = [$lineTaxObj];
 

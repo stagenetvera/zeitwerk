@@ -35,7 +35,6 @@
  *   'quantity'     => float,
  *   'entry_mode'   => 'fixed'|'auto'|'time'|'qty',
  *   'total_net'    => float|null,
- *   'total_gross'  => float|null,
  *   'time_entries' => [ ['id'=>int,'minutes'=>int,'started_at'=>..., 'ended_at'=>..., 'selected'=>bool], ... ],
  * ]
  */
@@ -105,7 +104,6 @@ function _render_time_row_generic($rowName, $rowIndex, $t, $checked=true){
         <th class="text-end" style="width:150px">Steuerart</th>
         <th class="text-end" style="width:120px">MwSt %</th>
         <th class="text-end" style="width:140px">Netto</th>
-        <th class="text-end" style="width:140px">Brutto</th>
         <th class="text-end" style="width:120px"></th>
       </tr>
     </thead>
@@ -139,21 +137,32 @@ if (($mode ?? 'new') === 'edit'):
     }
     $hhmm = _minutes_to_hhmm($minutesSum);
 
-    // Menge/Netto/Brutto Anzeige
+    // Menge für Anzeige bestimmen (für Input-Felder)
     if ($modeVal === 'fixed') {
       $qty = 1.0;
-      $net = round($rate * $qty, 2);
     } elseif ($modeVal === 'auto') {
       $qty = round($minutesSum / 60.0, 3);
-      $net = round(($minutesSum / 60.0) * $rate, 2);
     } elseif ($modeVal === 'time') {
       $qty = round($qtyIn, 3);
-      $net = round($qtyIn * $rate, 2);
     } else { // qty
       $qty = round($qtyIn, 3);
-      $net = round($qtyIn * $rate, 2);
     }
-    $gross = round($net * (1 + $vat/100), 2);
+
+    // Netto-Anzeige bevorzugt aus DB übernehmen
+    $net = isset($it['total_net']) ? (float)$it['total_net'] : null;
+
+    // Fallback, falls alte Rechnungen noch kein total_net haben
+    if ($net === null) {
+      if ($modeVal === 'fixed') {
+        $net = round($rate * 1.0, 2);
+      } elseif ($modeVal === 'auto') {
+        $net = round(($minutesSum / 60.0) * $rate, 2);
+      } elseif ($modeVal === 'time') {
+        $net = round($qtyIn * $rate, 2);
+      } else {
+        $net = round($qtyIn * $rate, 2);
+      }
+    }
 
     // Recurring-Key (falls übergeben)
     $ri_key = isset($ri_key_by_desc[$desc]) ? (string)$ri_key_by_desc[$desc] : '';
@@ -244,9 +253,6 @@ if (($mode ?? 'new') === 'edit'):
       <td class="text-end">
         <span class="net"><?= _fmt_money($net) ?></span>
       </td>
-      <td class="text-end">
-        <span class="gross"><?= _fmt_money($gross) ?></span>
-      </td>
 
       <td class="text-end text-nowrap">
         <?php if ($allow_edit): ?>
@@ -317,7 +323,6 @@ else:
 
     // Netto/Brutto (fixed: Menge = 1, Preis = $rate)
     if ($isFixed) $net = $rate; else $net = $qtyHours * $rate;
-    $gross = $net * (1 + $vat/100);
 
     $hh = _minutes_to_hhmm($minutesSum);
     ?>
@@ -399,7 +404,6 @@ else:
       </td>
 
       <td class="text-end"><span class="net"><?= _fmt_money($net) ?></span></td>
-      <td class="text-end"><span class="gross"><?= _fmt_money($gross) ?></span></td>
 
       <td class="text-end text-nowrap">
         <button type="button" class="btn btn-sm btn-outline-danger btn-remove-item">
@@ -438,7 +442,6 @@ endif; // end edit/new
         <td></td>
         <td class="text-end fw-bold" colspan="5">Gesamt</td>
         <td class="text-end fw-bold"><span id="grand-net">0,00</span></td>
-        <td class="text-end fw-bold"><span id="grand-gross">0,00</span></td>
         <td></td>
       </tr>
     </tbody>
@@ -503,16 +506,81 @@ endif; // end edit/new
     var n = parseFloat(v.replace(',','.')); return isFinite(n) ? n : 0;
   }
 
+  function roundHalfUp(value, places) {
+    var factor = Math.pow(10, places);
+    if (value >= 0) {
+      return Math.floor(value * factor + 0.5) / factor;
+    }
+    return Math.ceil(value * factor - 0.5) / factor;
+  }
+
   /* ===== Recalc ===== */
-  function recalcTotals(){
-    var gnet=0, ggross=0;
+    function recalcTotals(){
+    var gnet    = 0;
+    var vatMap  = {}; // key: "19.00" -> Nettosumme
+    var totalVat = 0;
+
     root.querySelectorAll('tr.inv-item-row').forEach(function(tr){
-      gnet  += toNumber(tr.querySelector('.net')?.textContent || '0');
-      ggross+= toNumber(tr.querySelector('.gross')?.textContent || '0');
+      var netVal = toNumber(tr.querySelector('.net')?.textContent || '0');
+      gnet += netVal;
+
+      var scheme = (tr.querySelector('.inv-tax-sel')?.value || 'standard').toLowerCase();
+      var rate   = toNumber(tr.querySelector('.inv-vat-input')?.value || '0');
+
+      // Nur Standard-Steuersätze mit > 0 % berücksichtigen
+      if (scheme === 'standard' && rate > 0) {
+        var key = rate.toFixed(2);    // z.B. "19.00"
+        if (!vatMap[key]) vatMap[key] = 0;
+        vatMap[key] += netVal;
+      }
     });
-    var gN = document.getElementById('grand-net'); var gG = document.getElementById('grand-gross');
+
+    gnet = roundHalfUp(gnet, 2);
+
+    var gN = document.getElementById('grand-net');
     if (gN) gN.textContent = fmt2(gnet);
-    if (gG) gG.textContent = fmt2(ggross);
+
+    // Alte MwSt-/Brutto-Zeilen entfernen
+    root.querySelectorAll('tr.vat-summary-row, tr.grand-gross-row').forEach(function(r){
+      r.parentNode && r.parentNode.removeChild(r);
+    });
+
+    var grandRow = root.querySelector('tr.inv-grand-total');
+    if (!grandRow) return;
+    var tbody = grandRow.parentNode;
+    var insertRef = grandRow.nextSibling; // wir fügen NACH der Netto-Gesamtzeile ein
+
+    // MwSt-Zeilen pro Satz
+    Object.keys(vatMap).sort(function(a, b){
+      return parseFloat(a) - parseFloat(b);
+    }).forEach(function(key){
+      var rate    = parseFloat(key);
+      var netSum  = vatMap[key];
+      var vatAmt  = roundHalfUp(netSum * rate / 100.0, 2);
+      totalVat   += vatAmt;
+
+      var tr = document.createElement('tr');
+      tr.className = 'vat-summary-row';
+      tr.innerHTML =
+        '<td></td>' +
+        '<td class="text-end" colspan="5">MwSt ' + rate.toString().replace('.', ',') + ' %</td>' +
+        '<td class="text-end">' + fmt2(vatAmt) + '</td>' +
+        '<td></td>';
+
+      tbody.insertBefore(tr, insertRef);
+    });
+
+    // Brutto-Gesamt unter den MwSt-Zeilen
+    var totalGross = roundHalfUp(gnet + totalVat, 2);
+    var grossRow = document.createElement('tr');
+    grossRow.className = 'grand-gross-row fw-bold';
+    grossRow.innerHTML =
+      '<td></td>' +
+      '<td class="text-end" colspan="5">Brutto gesamt</td>' +
+      '<td class="text-end">' + fmt2(totalGross) + '</td>' +
+      '<td></td>';
+
+    tbody.insertBefore(grossRow, insertRef);
   }
 
   function recalcRow(tr){
@@ -538,19 +606,15 @@ endif; // end edit/new
 
       if (mode === 'auto') {
         var net   = (minutes/60.0) * rate;
-        var gross = net * (1 + vat/100);
         var hh    = tr.querySelector('.sum-hhmm');  if (hh)  hh.textContent = hhmm(minutes);
         var smi   = tr.querySelector('.sum-minutes'); if (smi) smi.value = String(minutes);
         var nspan = tr.querySelector('.net');      if (nspan) nspan.textContent = fmt2(net);
-        var gspan = tr.querySelector('.gross');    if (gspan) gspan.textContent = fmt2(gross);
       } else { // fixed
         var hhInfo = tr.querySelector('.form-control-plaintext .text-muted');
         if (hhInfo) hhInfo.textContent = '('+hhmm(minutes)+')';
         var smi   = tr.querySelector('.sum-minutes'); if (smi) smi.value = String(minutes);
         var net   = rate * 1.0;
-        var gross = net * (1 + vat/100);
         var nspan = tr.querySelector('.net');      if (nspan) nspan.textContent = fmt2(net);
-        var gspan = tr.querySelector('.gross');    if (gspan) gspan.textContent = fmt2(gross);
       }
       recalcTotals();
       return;
@@ -567,9 +631,7 @@ endif; // end edit/new
       qtyDec = toNumber(tr.querySelector('.quantity')?.value||'0');
     }
     var net   = qtyDec * rate;
-    var gross = net * (1 + vat/100);
     var nspan = tr.querySelector('.net');   if (nspan) nspan.textContent = fmt2(net);
-    var gspan = tr.querySelector('.gross'); if (gspan) gspan.textContent = fmt2(gross);
     recalcTotals();
   }
 
@@ -662,8 +724,10 @@ endif; // end edit/new
   root.querySelectorAll('tr.inv-item-row').forEach(function(tr){
     var sel = tr.querySelector('.inv-tax-sel');
     var vat = tr.querySelector('.inv-vat-input');
-    if (sel && vat && (vat.value === '' || vat.value === null)) updateVatFromScheme(sel);
-    recalcRow(tr);
+    if (sel && vat && (vat.value === '' || vat.value === null)) {
+      updateVatFromScheme(sel);
+    }
+    // WICHTIG: KEIN recalcRow(tr) hier -> wir lassen die von PHP/DB gelieferten Net-Werte unangetastet.
   });
   toggleTaxReason();
   recalcTotals();

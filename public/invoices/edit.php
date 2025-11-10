@@ -177,7 +177,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '')==='save') {
   if (!$err) {
     $pdo->beginTransaction();
     try {
-      $sum_net = 0.0; $sum_gross = 0.0; $hasNonStandard = false;
+      $sum_net = 0.0; $hasNonStandard = false;
 
       if ($canEditItems) {
         // 1) Gelöschte Positionen
@@ -275,7 +275,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '')==='save') {
             }
 
             // Update + Position
-            $updItem->execute([
+            $x = $updItem->execute([
               $desc, $rate, $vat, $qty, $net, $gross, $scheme, $entry_mode, (int)$pos,
               $account_id, (int)$invoice['id'], (int)$item_id
             ]);
@@ -295,9 +295,71 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '')==='save') {
 
           if ($scheme !== 'standard' || $vat <= 0.0) $hasNonStandard = true;
           $sum_net  += $net;
-          $sum_gross+= $gross;
           $pos++;
         }
+
+        // -----------------------------------------
+        // NEU: Kopf & Summen der Rechnung aktualisieren
+        // -----------------------------------------
+        $tax_reason_to_save = $hasNonStandard ? $tax_reason : '';
+
+        // Netto/Brutto/MwSt je Steuersatz aus der DB neu berechnen
+        $totals = calculate_invoice_totals($pdo, $account_id, (int)$invoice['id']);
+        $sum_net   = $totals['total_net'];
+        $sum_gross = $totals['total_gross'];
+
+        $updInv = $pdo->prepare("
+          UPDATE invoices
+             SET issue_date = ?,
+                 due_date   = ?,
+                 total_net  = ?,
+                 total_gross = ?,
+                 tax_exemption_reason = ?,
+                 invoice_intro_text   = ?,
+                 invoice_outro_text   = ?
+           WHERE account_id = ? AND id = ?
+        ");
+        $updInv->execute([
+          $issue_date,
+          $due_date,
+          $sum_net,
+          $sum_gross,
+          $tax_reason_to_save,
+          $intro_text,
+          $outro_text,
+          $account_id,
+          (int)$invoice['id'],
+        ]);
+
+        // 3) Status + evtl. Rechnungsnummer (auch im "editierbaren" Zustand)
+        if ($assign_number) {
+          $pdo->prepare("UPDATE invoices SET status = ?, invoice_number = ? WHERE account_id = ? AND id = ?")
+              ->execute([$new_status, $number, $account_id, (int)$invoice['id']]);
+        } else {
+          $pdo->prepare("UPDATE invoices SET status = ? WHERE account_id = ? AND id = ?")
+              ->execute([$new_status, $account_id, (int)$invoice['id']]);
+        }
+
+        // 4) Times-Status entsprechend dem neuen Rechnungs-Status anpassen
+        if ($new_status !== ($invoice['status'] ?? '')) {
+          $map = [
+            'in_vorbereitung' => 'in_abrechnung',
+            'gestellt'        => 'abgerechnet',
+            'gemahnt'         => 'abgerechnet',
+            'bezahlt'         => 'abgerechnet',
+            'storniert'       => 'offen',
+            'ausgebucht'      => 'abgerechnet',
+          ];
+          if (isset($map[$new_status])) {
+            set_times_status_for_invoice($pdo, $account_id, (int)$invoice['id'], $map[$new_status]);
+          }
+        }
+
+        // 5) Transaktion festschreiben und zurück zur Edit-Seite
+        $pdo->commit();
+        flash('Rechnung gespeichert.', 'success');
+        redirect(url('/invoices/edit.php').'?id='.(int)$invoice['id']);
+        exit;
       } else {
         // --- LOCKED: keine Änderungen an Items/Kopf. Nur Status (und ggf. Rechnungsnummer) ---
         // Nummer nur vergeben, wenn noch keine existiert und der neue Status eine Nummer erfordert.

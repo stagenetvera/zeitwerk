@@ -655,7 +655,7 @@ $recurrings = $riStmt->fetchAll();
         <table class="table table-sm align-middle mb-0">
           <thead>
             <tr>
-              <th>Bezeichnung (Template)</th>
+              <th>Bezeichnung</th>
               <th class="text-end">Menge</th>
               <th class="text-end">Einzelpreis</th>
               <th class="text-end">Steuerart</th>

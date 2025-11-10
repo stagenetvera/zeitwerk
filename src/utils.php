@@ -98,3 +98,93 @@ $HOURS = function($v) use ($NUM): float {
   }
   return $NUM($s); // "1.5" oder "1,5"
 };
+
+
+/**
+ * Berechnet die Summen für eine Rechnung anhand der gespeicherten invoice_items.
+ *
+ * - Nur sichtbare Positionen (is_hidden = 0)
+ * - Gruppiert Netto nach (tax_scheme, vat_rate)
+ * - Berechnet MwSt pro Gruppe und daraus Total-Brutto
+ *
+ * Rückgabe:
+ * [
+ *   'total_net'   => float,
+ *   'total_gross' => float,
+ *   'total_vat'   => float,
+ *   'vat_groups'  => [
+ *     ['scheme' => 'standard', 'rate' => 19.00, 'net' => 123.45, 'vat' => 23.46],
+ *     ...
+ *   ],
+ * ]
+ */
+function calculate_invoice_totals(PDO $pdo, int $account_id, int $invoice_id): array {
+  $st = $pdo->prepare("
+    SELECT tax_scheme, vat_rate, total_net, COALESCE(is_hidden,0) AS is_hidden
+    FROM invoice_items
+    WHERE account_id = ? AND invoice_id = ?
+  ");
+  $st->execute([$account_id, $invoice_id]);
+
+  $sum_net = 0.0;
+  $vatGroups = []; // key: "$scheme:$rate"
+
+  while ($row = $st->fetch()) {
+    $isHidden = (int)($row['is_hidden'] ?? 0);
+    if ($isHidden === 1) continue; // wie beim sichtbaren UI
+
+    $scheme = (string)($row['tax_scheme'] ?? 'standard');
+    $vat    = ($scheme === 'standard') ? (float)($row['vat_rate'] ?? 0.0) : 0.0;
+    $net    = (float)($row['total_net'] ?? 0.0);
+
+    $sum_net += $net;
+
+    // Nur echte MwSt (standard, >0%) in Gruppen
+    if ($scheme === 'standard' && $vat > 0.0) {
+      $key = sprintf('%s:%.4f', $scheme, $vat);
+      if (!isset($vatGroups[$key])) {
+        $vatGroups[$key] = [
+          'scheme' => $scheme,
+          'rate'   => $vat,
+          'net'    => 0.0,
+          'vat'    => 0.0,
+        ];
+      }
+      $vatGroups[$key]['net'] += $net;
+    }
+  }
+
+  $sum_vat = 0.0;
+  foreach ($vatGroups as &$group) {
+    $baseVat     = $group['net'] * $group['rate'] / 100.0;
+    $group['vat'] = round_half_up($baseVat, 2);
+    $sum_vat += $group['vat'];
+  }
+  unset($group);
+
+  $total_net   = round($sum_net, 2);
+  $total_vat   = round($sum_vat, 2);
+  $total_gross = round($total_net + $total_vat, 2);
+
+  return [
+    'total_net'   => $total_net,
+    'total_gross' => $total_gross,
+    'total_vat'   => $total_vat,
+    'vat_groups'  => array_values($vatGroups),
+  ];
+}
+
+
+/**
+ * Kaufmännisches Runden (round half up) auf $places Nachkommastellen.
+ * EN 16931-konform für MwSt-Beträge.
+ */
+function round_half_up(float $value, int $places = 2): float {
+    $factor = pow(10, $places);
+
+    if ($value >= 0) {
+        return floor($value * $factor + 0.5) / $factor;
+    }
+    // negative Werte symmetrisch behandeln
+    return ceil($value * $factor - 0.5) / $factor;
+}
