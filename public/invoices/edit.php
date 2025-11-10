@@ -709,18 +709,20 @@ require __DIR__ . '/../../src/layout/header.php';
     const qty   = tr.querySelector('input.quantity');
     const hours = tr.querySelector('input.hours-input');
 
+    var locked    = (root.getAttribute('data-locked') === '1');
+
     if (mode === 'time') {
       if (hours && qty && (!hours.value || hours.value === '00:00')) {
         hours.value = decToHHMM(qty.value || '0');
       }
       if (qty)   { qty.classList.add('d-none'); qty.disabled = true; }
-      if (hours) { hours.classList.remove('d-none'); hours.disabled = false; }
+      if (hours) { hours.classList.remove('d-none'); hours.disabled = locked; }
     } else {
       if (qty && hours && (!qty.value || qty.value === '0' || qty.value === '0.000')) {
         qty.value = hhmmToDec(hours.value || '0');
       }
       if (qty)   { qty.classList.remove('d-none'); qty.disabled = false; }
-      if (hours) { hours.classList.add('d-none');  hours.disabled = true; }
+      if (hours) { hours.classList.add('d-none');  hours.disabled = locked; }
     }
 
     tr.querySelectorAll('.mode-btn').forEach(b=>{

@@ -455,7 +455,8 @@ endif; // end edit/new
 <!-- --- JS: Toggle, Recalc, DnD, "+ Position" (manuell) --- -->
 <script>
 (function(){
-  var root = document.getElementById('invoice-items'); if (!root) return;
+  var root = document.getElementById('invoice-items');
+  if (!root) return;
 
   var roundUnit = parseInt(root.getAttribute('data-round-unit') || '0', 10) || 0;
   var locked    = (root.getAttribute('data-locked') === '1');
@@ -515,7 +516,7 @@ endif; // end edit/new
   }
 
   /* ===== Recalc ===== */
-    function recalcTotals(){
+  function recalcTotals(){
     var gnet    = 0;
     var vatMap  = {}; // key: "19.00" -> Nettosumme
     var totalVat = 0;
@@ -738,6 +739,7 @@ endif; // end edit/new
     root.querySelectorAll('input, select, textarea, button').forEach(function(el){
       if (el.classList.contains('inv-toggle-btn')) return; // Details-Toggler erlauben
       el.disabled = true;
+console.log(el);
     });
     root.querySelectorAll('#addManualItem, .btn-remove-item, .row-reorder-handle, .time-row').forEach(function(el){
       el.removeAttribute('draggable');
