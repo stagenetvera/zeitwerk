@@ -1,6 +1,9 @@
 {
     "require": {
         "easybill/zugferd-php": "^4.0",
-        "easybill/e-invoicing": "^0.3.2"
+        "easybill/e-invoicing": "^0.3.2",
+        "setasign/fpdf": "^1.8",
+        "setasign/fpdi": "^2.6",
+        "horstoeko/zugferd": "^1.0"
     }
 }

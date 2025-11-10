@@ -6,10 +6,38 @@ namespace Composer\Autoload;
 
 class ComposerStaticInite96f8c4d192a6583f3f7d0687a3bc107
 {
+    public static $files = array (
+        '6e3fae29631ef280660b3cdad06f25a8' => __DIR__ . '/..' . '/symfony/deprecation-contracts/function.php',
+        '320cde22f66dd4f5d3fd621d3e88b98f' => __DIR__ . '/..' . '/symfony/polyfill-ctype/bootstrap.php',
+        '0e6d7bf4a5811bfa5cf40c5ccd6fae6a' => __DIR__ . '/..' . '/symfony/polyfill-mbstring/bootstrap.php',
+        '662a729f963d39afe703c9d9b7ab4a8c' => __DIR__ . '/..' . '/symfony/polyfill-php83/bootstrap.php',
+    );
+
     public static $prefixLengthsPsr4 = array (
+        's' => 
+        array (
+            'setasign\\Fpdi\\' => 14,
+        ),
+        'h' => 
+        array (
+            'horstoeko\\zugferd\\' => 18,
+            'horstoeko\\stringmanagement\\' => 27,
+            'horstoeko\\mimedb\\' => 17,
+        ),
         'e' => 
         array (
             'easybill\\eInvoicing\\' => 20,
+        ),
+        'S' => 
+        array (
+            'Symfony\\Polyfill\\Php83\\' => 23,
+            'Symfony\\Polyfill\\Mbstring\\' => 26,
+            'Symfony\\Polyfill\\Ctype\\' => 23,
+            'Symfony\\Contracts\\Translation\\' => 30,
+            'Symfony\\Component\\Yaml\\' => 23,
+            'Symfony\\Component\\Validator\\' => 28,
+            'Symfony\\Component\\Process\\' => 26,
+            'Symfony\\Component\\Finder\\' => 25,
         ),
         'P' => 
         array (
@@ -22,6 +50,10 @@ class ComposerStaticInite96f8c4d192a6583f3f7d0687a3bc107
         'J' => 
         array (
             'JMS\\Serializer\\' => 15,
+        ),
+        'G' => 
+        array (
+            'GoetasWebservices\\Xsd\\XsdToPhpRuntime\\' => 38,
         ),
         'E' => 
         array (
@@ -36,9 +68,57 @@ class ComposerStaticInite96f8c4d192a6583f3f7d0687a3bc107
     );
 
     public static $prefixDirsPsr4 = array (
+        'setasign\\Fpdi\\' => 
+        array (
+            0 => __DIR__ . '/..' . '/setasign/fpdi/src',
+        ),
+        'horstoeko\\zugferd\\' => 
+        array (
+            0 => __DIR__ . '/..' . '/horstoeko/zugferd/src',
+        ),
+        'horstoeko\\stringmanagement\\' => 
+        array (
+            0 => __DIR__ . '/..' . '/horstoeko/stringmanagement/src',
+        ),
+        'horstoeko\\mimedb\\' => 
+        array (
+            0 => __DIR__ . '/..' . '/horstoeko/mimedb/src',
+        ),
         'easybill\\eInvoicing\\' => 
         array (
             0 => __DIR__ . '/..' . '/easybill/e-invoicing/src',
+        ),
+        'Symfony\\Polyfill\\Php83\\' => 
+        array (
+            0 => __DIR__ . '/..' . '/symfony/polyfill-php83',
+        ),
+        'Symfony\\Polyfill\\Mbstring\\' => 
+        array (
+            0 => __DIR__ . '/..' . '/symfony/polyfill-mbstring',
+        ),
+        'Symfony\\Polyfill\\Ctype\\' => 
+        array (
+            0 => __DIR__ . '/..' . '/symfony/polyfill-ctype',
+        ),
+        'Symfony\\Contracts\\Translation\\' => 
+        array (
+            0 => __DIR__ . '/..' . '/symfony/translation-contracts',
+        ),
+        'Symfony\\Component\\Yaml\\' => 
+        array (
+            0 => __DIR__ . '/..' . '/symfony/yaml',
+        ),
+        'Symfony\\Component\\Validator\\' => 
+        array (
+            0 => __DIR__ . '/..' . '/symfony/validator',
+        ),
+        'Symfony\\Component\\Process\\' => 
+        array (
+            0 => __DIR__ . '/..' . '/symfony/process',
+        ),
+        'Symfony\\Component\\Finder\\' => 
+        array (
+            0 => __DIR__ . '/..' . '/symfony/finder',
         ),
         'PHPStan\\PhpDocParser\\' => 
         array (
@@ -51,6 +131,10 @@ class ComposerStaticInite96f8c4d192a6583f3f7d0687a3bc107
         'JMS\\Serializer\\' => 
         array (
             0 => __DIR__ . '/..' . '/jms/serializer/src',
+        ),
+        'GoetasWebservices\\Xsd\\XsdToPhpRuntime\\' => 
+        array (
+            0 => __DIR__ . '/..' . '/goetas-webservices/xsd2php-runtime/src',
         ),
         'Easybill\\ZUGFeRD\\' => 
         array (
@@ -70,8 +154,30 @@ class ComposerStaticInite96f8c4d192a6583f3f7d0687a3bc107
         ),
     );
 
+    public static $prefixesPsr0 = array (
+        'S' => 
+        array (
+            'Smalot\\PdfParser\\' => 
+            array (
+                0 => __DIR__ . '/..' . '/smalot/pdfparser/src',
+            ),
+        ),
+    );
+
     public static $classMap = array (
         'Composer\\InstalledVersions' => __DIR__ . '/..' . '/composer/InstalledVersions.php',
+        'DateError' => __DIR__ . '/..' . '/symfony/polyfill-php83/Resources/stubs/DateError.php',
+        'DateException' => __DIR__ . '/..' . '/symfony/polyfill-php83/Resources/stubs/DateException.php',
+        'DateInvalidOperationException' => __DIR__ . '/..' . '/symfony/polyfill-php83/Resources/stubs/DateInvalidOperationException.php',
+        'DateInvalidTimeZoneException' => __DIR__ . '/..' . '/symfony/polyfill-php83/Resources/stubs/DateInvalidTimeZoneException.php',
+        'DateMalformedIntervalStringException' => __DIR__ . '/..' . '/symfony/polyfill-php83/Resources/stubs/DateMalformedIntervalStringException.php',
+        'DateMalformedPeriodStringException' => __DIR__ . '/..' . '/symfony/polyfill-php83/Resources/stubs/DateMalformedPeriodStringException.php',
+        'DateMalformedStringException' => __DIR__ . '/..' . '/symfony/polyfill-php83/Resources/stubs/DateMalformedStringException.php',
+        'DateObjectError' => __DIR__ . '/..' . '/symfony/polyfill-php83/Resources/stubs/DateObjectError.php',
+        'DateRangeError' => __DIR__ . '/..' . '/symfony/polyfill-php83/Resources/stubs/DateRangeError.php',
+        'FPDF' => __DIR__ . '/..' . '/setasign/fpdf/fpdf.php',
+        'Override' => __DIR__ . '/..' . '/symfony/polyfill-php83/Resources/stubs/Override.php',
+        'SQLite3Exception' => __DIR__ . '/..' . '/symfony/polyfill-php83/Resources/stubs/SQLite3Exception.php',
     );
 
     public static function getInitializer(ClassLoader $loader)
@@ -79,6 +185,7 @@ class ComposerStaticInite96f8c4d192a6583f3f7d0687a3bc107
         return \Closure::bind(function () use ($loader) {
             $loader->prefixLengthsPsr4 = ComposerStaticInite96f8c4d192a6583f3f7d0687a3bc107::$prefixLengthsPsr4;
             $loader->prefixDirsPsr4 = ComposerStaticInite96f8c4d192a6583f3f7d0687a3bc107::$prefixDirsPsr4;
+            $loader->prefixesPsr0 = ComposerStaticInite96f8c4d192a6583f3f7d0687a3bc107::$prefixesPsr0;
             $loader->classMap = ComposerStaticInite96f8c4d192a6583f3f7d0687a3bc107::$classMap;
 
         }, null, ClassLoader::class);

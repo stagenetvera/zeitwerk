@@ -6,10 +6,23 @@ $vendorDir = dirname(__DIR__);
 $baseDir = dirname($vendorDir);
 
 return array(
+    'setasign\\Fpdi\\' => array($vendorDir . '/setasign/fpdi/src'),
+    'horstoeko\\zugferd\\' => array($vendorDir . '/horstoeko/zugferd/src'),
+    'horstoeko\\stringmanagement\\' => array($vendorDir . '/horstoeko/stringmanagement/src'),
+    'horstoeko\\mimedb\\' => array($vendorDir . '/horstoeko/mimedb/src'),
     'easybill\\eInvoicing\\' => array($vendorDir . '/easybill/e-invoicing/src'),
+    'Symfony\\Polyfill\\Php83\\' => array($vendorDir . '/symfony/polyfill-php83'),
+    'Symfony\\Polyfill\\Mbstring\\' => array($vendorDir . '/symfony/polyfill-mbstring'),
+    'Symfony\\Polyfill\\Ctype\\' => array($vendorDir . '/symfony/polyfill-ctype'),
+    'Symfony\\Contracts\\Translation\\' => array($vendorDir . '/symfony/translation-contracts'),
+    'Symfony\\Component\\Yaml\\' => array($vendorDir . '/symfony/yaml'),
+    'Symfony\\Component\\Validator\\' => array($vendorDir . '/symfony/validator'),
+    'Symfony\\Component\\Process\\' => array($vendorDir . '/symfony/process'),
+    'Symfony\\Component\\Finder\\' => array($vendorDir . '/symfony/finder'),
     'PHPStan\\PhpDocParser\\' => array($vendorDir . '/phpstan/phpdoc-parser/src'),
     'Metadata\\' => array($vendorDir . '/jms/metadata/src'),
     'JMS\\Serializer\\' => array($vendorDir . '/jms/serializer/src'),
+    'GoetasWebservices\\Xsd\\XsdToPhpRuntime\\' => array($vendorDir . '/goetas-webservices/xsd2php-runtime/src'),
     'Easybill\\ZUGFeRD\\' => array($vendorDir . '/easybill/zugferd-php/src/zugferd10'),
     'Easybill\\ZUGFeRD2\\' => array($vendorDir . '/easybill/zugferd-php/src/zugferd2'),
     'Doctrine\\Instantiator\\' => array($vendorDir . '/doctrine/instantiator/src/Doctrine/Instantiator'),
