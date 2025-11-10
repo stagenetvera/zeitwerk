@@ -7,6 +7,7 @@ require_once __DIR__ . '/../../src/lib/recurring.php';
 require_once __DIR__ . '/../../src/lib/return_to.php';
 require_once __DIR__ . '/../../src/lib/invoices.php';
 require_once __DIR__ . '/../../src/lib/invoice_number.php';
+require_once __DIR__ . '/../../src/lib/flash.php';
 
 require_login();
 csrf_check();

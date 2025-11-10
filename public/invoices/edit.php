@@ -209,6 +209,9 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '')==='save') {
 
         $pos = 1;
 
+        $addedTimeCount = 0;       // wie viele Times wurden neu zugeordnet?
+        $addedTimesToExistingInvoice = false;
+
         // 2) Alle übergebenen Items (in *Formular-Reihenfolge*)
         foreach ((array)$itemsPosted as $row) {
           $item_id = (int)($row['id'] ?? 0);
@@ -267,6 +270,11 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '')==='save') {
               if ($toAdd) {
                 foreach ($toAdd as $tid) { $addLink->execute([$account_id, $item_id, $tid]); }
                 set_times_status_bulk($pdo, $account_id, $toAdd, 'in_abrechnung');
+
+
+                // Merken für Flash-Meldung
+                $addedTimesToExistingInvoice = true;
+                $addedTimeCount += count($toAdd);
               }
               if ($toRemove) {
                 foreach ($toRemove as $tid) { $delLink->execute([$account_id, $item_id, $tid]); }
@@ -357,7 +365,14 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '')==='save') {
 
         // 5) Transaktion festschreiben und zurück zur Edit-Seite
         $pdo->commit();
-        flash('Rechnung gespeichert.', 'success');
+
+        if ($addedTimesToExistingInvoice) {
+          // „ältere Rechnung“: Invoice existiert schon, wir benutzen hier einfach die vorhandene Nummer/Datum
+          $msg = 'Rechnung gespeichert. Es wurden ' . $addedTimeCount . ' offene Zeiten einer bestehenden Rechnung zugeschlagen.';
+          flash($msg, 'success');
+        } else {
+          flash('Rechnung gespeichert.', 'success');
+        }
         redirect(url('/invoices/edit.php').'?id='.(int)$invoice['id']);
         exit;
       } else {
