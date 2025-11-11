@@ -12,18 +12,149 @@ $account_id = (int)$user['account_id'];
 
 $err = null; $ok = null;
 
+$set = get_account_settings($pdo, $account_id);
+
+function hurl($s){ return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
+
+/**
+ * Hilfsfunktion: PDF nach PNG (erste Seite) mit Imagick
+ *
+ * @param string $pdfPath
+ * @param string $pngPath
+ * @return bool
+ */
+function generate_letterhead_preview($pdfPath, $pngPath): bool {
+  if (!class_exists('Imagick')) {
+    return false;
+  }
+  try {
+    $im = new Imagick();
+    // Auflösung etwas höher, damit die Preview nicht matschig ist
+    $im->setResolution(150, 150);
+    // nur erste Seite
+    $im->readImage($pdfPath . '[0]');
+    $im->setImageBackgroundColor('white');
+    $im = $im->mergeImageLayers(Imagick::LAYERMETHOD_FLATTEN);
+    $im->setImageFormat('png');
+    $im->writeImage($pngPath);
+    $im->clear();
+    $im->destroy();
+    return true;
+  } catch (Throwable $e) {
+    return false;
+  }
+}
+
+/**
+ * Hilfsfunktion: existierende Datei aus Settings löschen
+ *
+ * @param string|null $urlPath  z.B. "/storage/layout/letterhead_first_1_1234.pdf"
+ */
+function delete_setting_file(?string $urlPath): void {
+  if (!$urlPath) return;
+  // Annahme: public/ ist Webroot, also "../.." zurück zum Projekt
+  $fsPath = realpath(__DIR__ . '/../../storage/layout/' . basename($urlPath));
+  if (is_file($fsPath)) {
+    @unlink($fsPath);
+  }
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   try {
-    save_account_settings($pdo, $account_id, $_POST);
+    // Basis: vorhandene Settings übernehmen, damit wir vorhandene Pfade weiterreichen können
+    $data = $_POST;
+
+    // Upload-Verzeichnis vorbereiten
+    $baseStorageDir = __DIR__ . '/../../storage';
+    $layoutDir      = $baseStorageDir . '/layout';
+    if (!is_dir($layoutDir)) {
+      @mkdir($layoutDir, 0775, true);
+    }
+
+    // Vorhandene Pfade als Default übernehmen
+    $data['invoice_letterhead_first_pdf']     = $set['invoice_letterhead_first_pdf']     ?? '';
+    $data['invoice_letterhead_first_preview'] = $set['invoice_letterhead_first_preview'] ?? '';
+    $data['invoice_letterhead_next_pdf']      = $set['invoice_letterhead_next_pdf']      ?? '';
+    $data['invoice_letterhead_next_preview']  = $set['invoice_letterhead_next_preview']  ?? '';
+
+    // -- Upload-Funktion inline, um Dopplung klein zu halten --
+    $handleUpload = function(string $fieldName, string $labelBase, string $oldPdfKey, string $oldPngKey) use (&$data, $layoutDir, $account_id, $set) {
+      if (!isset($_FILES[$fieldName]) || !is_array($_FILES[$fieldName])) {
+        return;
+      }
+      $file = $_FILES[$fieldName];
+
+      if ($file['error'] !== UPLOAD_ERR_OK || $file['tmp_name'] === '') {
+        return;
+      }
+
+      // MIME prüfen
+      $finfo = finfo_open(FILEINFO_MIME_TYPE);
+      $mime  = finfo_file($finfo, $file['tmp_name']);
+      finfo_close($finfo);
+
+      // simple Prüfung auf PDF
+      if ($mime !== 'application/pdf' && $mime !== 'application/x-pdf') {
+        // Wenn du willst, kannst du hier noch eine Fehlermeldung in $GLOBALS['err'] setzen
+        return;
+      }
+
+      $timestamp = time();
+      $baseName  = $labelBase . '_' . $account_id . '_' . $timestamp;
+
+      $pdfFsPath = $layoutDir . '/' . $baseName . '.pdf';
+      $pngFsPath = $layoutDir . '/' . $baseName . '.png';
+
+      if (!move_uploaded_file($file['tmp_name'], $pdfFsPath)) {
+        return;
+      }
+
+      // Preview generieren
+      $previewOk = generate_letterhead_preview($pdfFsPath, $pngFsPath);
+
+      // alte Dateien löschen
+      if (!empty($set[$oldPdfKey])) {
+        delete_setting_file($set[$oldPdfKey]);
+      }
+      if (!empty($set[$oldPngKey])) {
+        delete_setting_file($set[$oldPngKey]);
+      }
+
+      // URL-Pfade in Settings speichern (relativ zum Webroot)
+      $data[$oldPdfKey] = '/settings/file.php?path=' . rawurlencode('layout/' . $baseName . '.pdf');
+      if ($previewOk) {
+        $data[$oldPngKey] = '/settings/file.php?path=' . rawurlencode('layout/' . $baseName . '.png');
+      } else {
+        $data[$oldPngKey] = '';
+      }
+    };
+
+    // Upload Briefbogen 1. Seite
+    $handleUpload(
+      'invoice_letterhead_first_pdf_upload',
+      'letterhead_first',
+      'invoice_letterhead_first_pdf',
+      'invoice_letterhead_first_preview'
+    );
+
+    // Upload Briefbogen Folgeseiten
+    $handleUpload(
+      'invoice_letterhead_next_pdf_upload',
+      'letterhead_next',
+      'invoice_letterhead_next_pdf',
+      'invoice_letterhead_next_preview'
+    );
+
+    // Jetzt alle Settings speichern
+    save_account_settings($pdo, $account_id, $data);
     $ok = 'Einstellungen wurden gespeichert.';
+
+    // $set für Anzeige aktualisieren
+    $set = get_account_settings($pdo, $account_id);
   } catch (Throwable $e) {
     $err = 'Konnte Einstellungen nicht speichern.';
   }
 }
-
-$set = get_account_settings($pdo, $account_id);
-
-function hurl($s){ return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
 ?>
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h3>Einstellungen</h3>
@@ -32,7 +163,7 @@ function hurl($s){ return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
 <?php if ($ok): ?><div class="alert alert-success"><?=h($ok)?></div><?php endif; ?>
 <?php if ($err): ?><div class="alert alert-danger"><?=h($err)?></div><?php endif; ?>
 
-<form method="post" class="card">
+<form method="post" enctype="multipart/form-data" class="card">
   <div class="card-body">
     <?= csrf_field() ?>
 
@@ -128,7 +259,7 @@ function hurl($s){ return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
           // Beim ersten Laden nur dann setzen, wenn das Feld leer ist (bestehende Werte nicht überschreiben)
           if (!vat.value) applyByScheme();
         });
-        </script>
+      </script>
 
       <div class="col-md-3">
         <label class="form-label">Minuten-Rundung</label>
@@ -149,7 +280,6 @@ function hurl($s){ return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
         </div>
       </div>
 
-
       <div class="mb-3">
         <label class="form-label">Standard-Einleitungstext</label>
         <textarea class="form-control" name="invoice_intro_text" rows="3"><?= h($set['invoice_intro_text'] ?? '') ?></textarea>
@@ -162,7 +292,7 @@ function hurl($s){ return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
 
       <hr class="my-3">
 
-      <h5 class="mb-3">Absender & Bankverbindung</h5>
+      <h5 class="mb-3">Absender &amp; Bankverbindung</h5>
 
       <div class="col-md-6">
         <label class="form-label">Absenderadresse (für Rechnungen)</label>
@@ -178,6 +308,80 @@ function hurl($s){ return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
         <input type="text" class="form-control" name="bank_bic" value="<?= h($set['bank_bic']) ?>"
                placeholder="MARKDEF...">
       </div>
+
+      <hr class="my-3">
+
+      <h5 class="mb-3">Rechnungslayout / Briefbogen</h5>
+
+      <div class="col-md-6">
+        <label class="form-label">Briefbogen 1. Seite (PDF)</label>
+        <input
+          type="file"
+          class="form-control"
+          name="invoice_letterhead_first_pdf_upload"
+          accept="application/pdf"
+        >
+        <div class="form-text">
+          PDF im A4-Format. Die erste Seite wird als Hintergrund für Seite 1 der Rechnung verwendet.
+          Eine PNG-Vorschau wird automatisch erzeugt.
+        </div>
+
+        <?php if (!empty($set['invoice_letterhead_first_pdf'])): ?>
+          <div class="mt-2">
+            <div class="small text-muted">
+              Aktueller Briefbogen:
+
+            </div>
+          </div>
+        <?php endif; ?>
+
+        <?php if (!empty($set['invoice_letterhead_first_preview'])): ?>
+          <div class="mt-2">
+            <img
+              src="<?= hurl(url($set['invoice_letterhead_first_preview'])) ?>"
+              alt="Vorschau Briefbogen 1. Seite"
+              class="img-fluid border"
+            >
+          </div>
+        <?php endif; ?>
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label">Briefbogen Folgeseiten (PDF)</label>
+        <input
+          type="file"
+          class="form-control"
+          name="invoice_letterhead_next_pdf_upload"
+          accept="application/pdf"
+        >
+        <div class="form-text">
+          Wird als Hintergrund für Seite 2 ff. verwendet.
+          Falls nicht gesetzt, kann später die erste Seite wiederverwendet werden.
+        </div>
+
+        <?php if (!empty($set['invoice_letterhead_next_pdf'])): ?>
+          <div class="mt-2">
+            <div class="small text-muted">
+              Aktueller Briefbogen (Folgeseiten):
+            </div>
+          </div>
+        <?php endif; ?>
+
+        <?php if (!empty($set['invoice_letterhead_next_preview'])): ?>
+          <div class="mt-2">
+            <img
+              src="<?= hurl(url($set['invoice_letterhead_next_preview'])) ?>"
+              alt="Vorschau Briefbogen Folgeseiten"
+              class="img-fluid border"
+            >
+          </div>
+        <?php endif; ?>
+      </div>
+
+      <a href="<?= hurl(url("/settings/invoice-layout.php")) ?>" target="_blank" rel="noopener">
+        PDF-Bereiche definieren
+      </a>
+
     </div>
   </div>
 
