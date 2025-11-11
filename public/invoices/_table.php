@@ -108,6 +108,9 @@ if (!isset($return_to) || $return_to === null || $return_to === '') {
               <a href="<?= url('/invoices/invoice-export-zugferd.php') ?>?id=<?= (int)$inv['id'] ?>" class="btn btn-secondary">
                 ZUGFeRD / Factur-X
               </a>
+              <a href="<?= h(url('/invoices/pdf.php?id=' . $inv['id'])) ?>" target="_blank">
+              PDF anzeigen
+            </a>
               <a class="btn btn-sm btn-outline-secondary" href="<?= url('/invoices/export_xml.php') ?>?id=<?= (int)$inv['id'] ?>">XML</a>
               <?php
                 $st = $inv['status'] ?? 'in_vorbereitung';
