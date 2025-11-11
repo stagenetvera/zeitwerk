@@ -31,7 +31,15 @@ $val = function($key, $default = '') {
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save') {
   $name    = trim($_POST['name'] ?? '');
-  $address = trim($_POST['address'] ?? '');
+  $address_line1 = trim($_POST['address_line1'] ?? '');
+  $address_line2 = trim($_POST['address_line2'] ?? '');
+  $postal_code   = trim($_POST['postal_code']   ?? '');
+  $city          = trim($_POST['city']          ?? '');
+  $country_code  = strtoupper(trim($_POST['country_code'] ?? 'DE'));
+  if ($country_code === '') {
+      $country_code = 'DE';
+  }
+
   $rate    = ($_POST['hourly_rate'] !== '' ? (float)str_replace(',', '.', (string)$_POST['hourly_rate']) : null);
   $vat_id  = trim($_POST['vat_id'] ?? '');
   $status  = $_POST['status'] ?? 'aktiv';
@@ -58,23 +66,58 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save'
 
   if (!$err) {
     // Insert inkl. Steuer-Overrides
-    $ins = $pdo->prepare('
+   $ins = $pdo->prepare('
       INSERT INTO companies
-        (account_id, name, address, hourly_rate, vat_id, status, default_tax_scheme, default_vat_rate)
+        (account_id,
+        name,
+        address,
+        address_line1,
+        address_line2,
+        postal_code,
+        city,
+        country_code,
+        hourly_rate,
+        vat_id,
+        status,
+        default_tax_scheme,
+        default_vat_rate,
+        invoice_intro_text,
+        invoice_outro_text)
       VALUES
-        (?,           ?,    ?,       ?,           ?,      ?,      ?,                  ?)
-    ');
-    $ins->execute([
+        (?,          -- account_id
+        ?,          -- name
+        ?,          -- address (Textblock)
+        ?,          -- address_line1
+        ?,          -- address_line2
+        ?,          -- postal_code
+        ?,          -- city
+        ?,          -- country_code
+        ?,          -- hourly_rate
+        ?,          -- vat_id
+        ?,          -- status
+        ?,          -- default_tax_scheme
+        ?,          -- default_vat_rate
+        ?,          -- invoice_intro_text
+        ?)          -- invoice_outro_text
+  ');
+
+  $ins->execute([
       $account_id,
       $name,
       $address,
+      $address_line1,
+      $address_line2,
+      $postal_code,
+      $city,
+      $country_code,
       $rate,
       $vat_id,
       $status,
-      $tax_scheme, // kann NULL sein
-      $vat_val,    // kann NULL sein
-    ]);
-
+      $tax_scheme,   // kann NULL sein
+      $vat_val,      // kann NULL sein
+      $co_intro,     // ggf. '' oder NULL, je nach deinem Code
+      $co_outro,
+  ]);
     flash('Firma angelegt.', 'success');
     redirect($return_to);
     exit;
@@ -94,14 +137,55 @@ require __DIR__ . '/../../src/layout/header.php';
       <?= return_to_hidden($return_to) ?>
       <input type="hidden" name="action" value="save" />
 
-      <div class="mb-3">
-        <label class="form-label">Name</label>
-        <input type="text" name="name" class="form-control" value="<?=$val('name')?>" required>
-      </div>
 
-      <div class="mb-3">
-        <label class="form-label">Adresse</label>
-        <textarea name="address" class="form-control" rows="3"><?=$val('address')?></textarea>
+      <div class="row g-3">
+        <div class="col-md-12">
+          <label class="form-label">Name / Firma</label>
+          <input type="text" name="name" class="form-control"
+                value="<?= $val('name') ?>" required>
+        </div>
+
+        <div class="col-md-8">
+          <label class="form-label">Straße & Hausnummer</label>
+          <input type="text" name="address_line1" class="form-control"
+                value="<?= $val('address_line1') ?>">
+        </div>
+
+        <div class="col-md-4">
+          <label class="form-label">Adresszusatz</label>
+          <input type="text" name="address_line2" class="form-control"
+                value="<?= $val('address_line2') ?>">
+        </div>
+
+        <div class="col-md-4">
+          <label class="form-label">PLZ</label>
+          <input type="text" name="postal_code" class="form-control"
+                value="<?= $val('postal_code') ?>">
+        </div>
+
+        <div class="col-md-8">
+          <label class="form-label">Ort</label>
+          <input type="text" name="city" class="form-control"
+                value="<?= $val('city') ?>">
+        </div>
+
+        <div class="col-md-4">
+          <label class="form-label">Land</label>
+          <select name="country_code" class="form-select">
+            <?php
+            $cc = $val('country_code') ?: 'DE';
+            $countries = [
+              'DE' => 'Deutschland',
+              'AT' => 'Österreich',
+              'CH' => 'Schweiz',
+              // bei Bedarf erweitern
+            ];
+            foreach ($countries as $code => $label):
+            ?>
+              <option value="<?=h($code)?>" <?=$cc === $code ? 'selected' : ''?>><?=h($label)?></option>
+            <?php endforeach; ?>
+          </select>
+        </div>
       </div>
 
       <div class="row">

@@ -234,11 +234,55 @@ require __DIR__ . '/../../src/layout/header.php';
     <div class="card h-100">
       <div class="card-body">
         <h5 class="card-title">Stammdaten</h5>
+        <?php
+        // Adresse für Anzeige zusammensetzen (bevorzugt aus den neuen Feldern)
+        $addrLines = [];
+
+        $line1  = trim((string)($company['address_line1'] ?? ''));
+        $line2  = trim((string)($company['address_line2'] ?? ''));
+        $postal = trim((string)($company['postal_code']   ?? ''));
+        $city   = trim((string)($company['city']          ?? ''));
+        $cc     = strtoupper((string)($company['country_code'] ?? ''));
+
+        if ($line1 !== '') {
+            $addrLines[] = $line1;
+        }
+        if ($line2 !== '') {
+            $addrLines[] = $line2;
+        }
+
+        $cityLine = trim($postal . ' ' . $city);
+        if ($cityLine !== '') {
+            $addrLines[] = $cityLine;
+        }
+
+        // Land nur anzeigen, wenn nicht DE (kannst du natürlich ändern)
+        if ($cc !== '' && $cc !== 'DE') {
+            $addrLines[] = $cc;
+        }
+
+        // Fallback: wenn neue Felder leer sind, altes address-Feld nutzen
+        if (!$addrLines && !empty($company['address'])) {
+            $addrDisplay = (string)$company['address'];
+        } else {
+            $addrDisplay = implode("\n", $addrLines);
+        }
+        ?>
+
         <dl class="row mb-0">
-          <dt class="col-sm-4">Adresse</dt><dd class="col-sm-8"><?= nl2br(h($company['address'] ?? '')) ?></dd>
-          <dt class="col-sm-4">USt-ID</dt><dd class="col-sm-8"><?= h($company['vat_id'] ?? '—') ?></dd>
-          <dt class="col-sm-4">Stundensatz (Firma)</dt><dd class="col-sm-8">€ <?= h(number_format((float)($company['hourly_rate'] ?? 0), 2, ',', '.')) ?></dd>
-          <dt class="col-sm-4">Status</dt><dd class="col-sm-8"><?= h($company['status'] ?? '') ?></dd>
+          <dt class="col-sm-4">Adresse</dt>
+          <dd class="col-sm-8"><?= nl2br(h($addrDisplay)) ?></dd>
+
+          <dt class="col-sm-4">USt-ID</dt>
+          <dd class="col-sm-8"><?= h($company['vat_id'] ?? '—') ?></dd>
+
+          <dt class="col-sm-4">Stundensatz (Firma)</dt>
+          <dd class="col-sm-8">
+            € <?= h(number_format((float)($company['hourly_rate'] ?? 0), 2, ',', '.')) ?>
+          </dd>
+
+          <dt class="col-sm-4">Status</dt>
+          <dd class="col-sm-8"><?= h($company['status'] ?? '') ?></dd>
         </dl>
       </div>
     </div>
