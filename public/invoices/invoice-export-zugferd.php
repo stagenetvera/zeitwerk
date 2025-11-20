@@ -3,7 +3,8 @@
 declare(strict_types=1);
 
 require __DIR__ . '/../../src/bootstrap.php';
-require_once __DIR__ . '/../../src/utils.php'; // dec(), parse_hours_to_decimal()
+require_once __DIR__ . '/../../src/utils.php';        // dec(), parse_hours_to_decimal()
+require_once __DIR__ . '/../../src/lib/settings.php'; // get_account_settings()
 
 require_login();
 
@@ -44,6 +45,7 @@ use easybill\eInvoicing\CII\Models\Quantity;
 use easybill\eInvoicing\Enums\UnitCode;
 use easybill\eInvoicing\CII\Models\TradeSettlementLineMonetarySummation;
 use easybill\eInvoicing\CII\Models\DocumentLineDocument;
+
 // ----------------------------------------------------------------------------
 // Eingaben / Basis
 // ----------------------------------------------------------------------------
@@ -132,7 +134,7 @@ $spanStmt->execute([$account_id, $id]);
 $span = $spanStmt->fetch() ?: ['min_start' => null, 'max_end' => null];
 
 // ----------------------------------------------------------------------------
-// Helpers aus deinem bisherigen export_xml.php
+// Helpers
 // ----------------------------------------------------------------------------
 
 function de_date_long(?string $ymd, bool $with_place = false, string $place = ''): string {
@@ -161,7 +163,6 @@ $intro_full = trim((string)($invoice['invoice_intro_text'] ?? ''));
 
 // Adressat (Firma + Anschrift)
 $adressat = trim(
-    // (string)($invoice['company_name'] ?? '') . "\n" .
     (string)($invoice['company_address'] ?? '')
 );
 
@@ -176,10 +177,6 @@ foreach ($items as $r) {
     }
 }
 $mwst = $vatCandidates ? max($vatCandidates) : 0.0;
-
-// ----------------------------------------------------------------------------
-// Summen aus Positionen berechnen (für Factur-X Pflichtfelder)
-// ----------------------------------------------------------------------------
 
 // ----------------------------------------------------------------------------
 // Summen aus Positionen berechnen (für Factur-X Pflichtfelder, EN 16931)
@@ -232,31 +229,42 @@ if (!empty($span['min_start']) || !empty($span['max_end'])) {
 }
 
 // ----------------------------------------------------------------------------
-// Seller-Daten (Vera / dein Unternehmen)
-// HIER musst du deine Account-/Firma-Daten aus deiner DB holen!
+// Seller-Daten (Absender) aus account_settings
 // ----------------------------------------------------------------------------
-//
-// Beispielhaft angenommen: Tabelle accounts mit name, address, zip, city, country, vat_id
-// Passe das an deine echte Struktur an oder hol dir die Daten aus einem Config-Array.
-//
+
+$acct = get_account_settings($pdo, $account_id);
+
+$senderVatId = trim((string)($acct['sender_vat_id'] ?? '')); // <-- neue Setting-Spalte
+
 $seller = [
-    'name'    => 'Dein Firmenname GmbH',                       // TODO: aus DB laden
-    'street'  => 'Musterstraße 1',                             // TODO
-    'zip'     => '12345',                                      // TODO
-    'city'    => 'Berlin',                                     // TODO
-    'country' => 'DE',
-    'vat_id'  => 'DE123456789',                                // TODO
-    'contact' => $user['email'] ?? null,                       // optional
+    'name'    => (string)($acct['sender_name'] ?? ''),
+    'street'  => (string)($acct['sender_street'] ?? ''),
+    'zip'     => (string)($acct['sender_postcode'] ?? ''),
+    'city'    => (string)($acct['sender_city'] ?? ''),
+    'country' => strtoupper((string)($acct['sender_country'] ?? 'DE') ?: 'DE'),
+    'vat_id'  => $senderVatId,
+    'contact' => $user['email'] ?? null,
 ];
+
+// Prüfen: gibt es überhaupt standardbesteuerte Zeilen?
+$hasStandardRatedLines = !empty($byVatRate);
+
+// BR-S-02: Wenn Standard-Steuersätze vorhanden sind, muss eine USt-ID des Verkäufers vorhanden sein.
+if ($hasStandardRatedLines && $seller['vat_id'] === '') {
+    http_response_code(500);
+    echo 'Fehler beim Factur-X-Export: Für Rechnungen mit Standard-MwSt (BR-S-02) muss eine USt-IdNr '
+       . 'des Absenders in den Einstellungen hinterlegt sein.';
+    exit;
+}
 
 // Buyer-Daten (kommen aus $invoice / $adressat)
 $buyerName    = (string)($invoice['company_name'] ?? '');
 $buyerAddress = (string)($invoice['company_address'] ?? '');
 
 // Versuch einer simplen Adress-Aufteilung: letzte Zeile = "PLZ ORT"
-$buyerStreet = '';
-$buyerZip    = '';
-$buyerCity   = '';
+$buyerStreet  = '';
+$buyerZip     = '';
+$buyerCity    = '';
 $buyerCountry = 'DE';
 
 $lines = preg_split('~\R+~', $buyerAddress);
@@ -291,12 +299,9 @@ if ($lines) {
 $document = new CrossIndustryInvoice();
 
 // Kontext
-$document->exchangedDocumentContext                         = new ExchangedDocumentContext();
-$document->exchangedDocumentContext->documentContextParameter       = new DocumentContextParameter();
-// Klassischer EN16931 Context; für Factur-X Basic/EN16931 könntest du hier
-// ggf. noch ein spezielles Profil setzen, z.B.:
-// urn:cen.eu:en16931:2017#compliant#urn:factur-x.eu:1p0:en16931:basic
-$document->exchangedDocumentContext->documentContextParameter->id   = 'urn:cen.eu:en16931:2017';
+$document->exchangedDocumentContext                                   = new ExchangedDocumentContext();
+$document->exchangedDocumentContext->documentContextParameter         = new DocumentContextParameter();
+$document->exchangedDocumentContext->documentContextParameter->id     = 'urn:cen.eu:en16931:2017';
 
 // Kopf: Rechnung
 $document->exchangedDocument                               = new ExchangedDocument();
@@ -304,7 +309,6 @@ $document->exchangedDocument->id                           = (string)($invoice['
 $document->exchangedDocument->typeCode                     = DocumentType::COMMERCIAL_INVOICE;
 $issueDate                                                 = (string)($invoice['issue_date'] ?? date('Y-m-d'));
 $document->exchangedDocument->issueDateTime                = CiiDateTime::create(102, date('Ymd', strtotime($issueDate)));
-
 
 
 // SupplyChainTradeTransaction (Kern der Rechnung)
@@ -317,39 +321,38 @@ $tradeTransaction = new SupplyChainTradeTransaction();
 $agreement = new HeaderTradeAgreement();
 
 // Seller (Lieferant)
-$agreement->sellerTradeParty = new TradeParty();
-$agreement->sellerTradeParty->name = $seller['name'];
+$agreement->sellerTradeParty       = new TradeParty();
+$agreement->sellerTradeParty->name = $seller['name'] !== '' ? $seller['name'] : 'Absender';
 
-$sellerAddress          = new TradeAddress();
-$sellerAddress->lineOne = $seller['street'] ?: null;
+
+$sellerAddress           = new TradeAddress();
+$sellerAddress->lineOne  = $seller['street'] ?: null;
 $sellerAddress->postcode = $seller['zip'] ?: null;
-$sellerAddress->city    = $seller['city'] ?: null;
+$sellerAddress->city     = $seller['city'] ?: null;
 
-// CountryCode-Enum verwenden (z.B. 'DE', 'AT', 'CH' …)
-$country = strtoupper((string)($seller['country'] ?? 'DE'));
+$country = $seller['country'] ?: 'DE';
 try {
     $sellerAddress->countryCode = CountryCode::from($country);
 } catch (\ValueError $e) {
-    // Fallback: kein CountryCode, wenn der Wert ungültig ist
     $sellerAddress->countryCode = null;
 }
 
 $agreement->sellerTradeParty->postalTradeAddress = $sellerAddress;
 
-if (!empty($seller['vat_id'])) {
-    // 'VAT' als Scheme-ID ist üblich; kannst du bei Bedarf anpassen
+if ($seller['vat_id'] !== '') {
+    // BR-S-02 / BR-CO-26: VAT ID / TaxRegistration
     $agreement->sellerTradeParty->taxRegistrations[] =
         TaxRegistration::create($seller['vat_id'], 'VA');
 }
 
 // Buyer (Kunde)
-$agreement->buyerTradeParty = new TradeParty();
+$agreement->buyerTradeParty       = new TradeParty();
 $agreement->buyerTradeParty->name = $buyerName ?: $buyerStreet ?: $buyerCity ?: $buyerAddress;
 
-$buyerAddr          = new TradeAddress();
-$buyerAddr->lineOne = $buyerStreet ?: null;
+$buyerAddr           = new TradeAddress();
+$buyerAddr->lineOne  = $buyerStreet ?: null;
 $buyerAddr->postcode = $buyerZip ?: null;
-$buyerAddr->city    = $buyerCity ?: null;
+$buyerAddr->city     = $buyerCity ?: null;
 
 $country = strtoupper((string)($buyerCountry ?: 'DE'));
 try {
@@ -377,12 +380,8 @@ if (!empty($span['min_start'])) {
     $event = new SupplyChainEvent();
 
     $deliveryDate = date('Ymd', strtotime($span['min_start']));
+    $event->date  = CiiDateTime::create(102, $deliveryDate);
 
-    // Property-Name in SupplyChainEvent hängt von der Model-Klasse ab.
-    // In der Regel heißt es "occurrenceDateTime" (mit zwei r).
-    $event->date = CiiDateTime::create(102, $deliveryDate);
-
-    // WICHTIG: Name des Properties in HeaderTradeDelivery ist "chainEvent"
     $delivery->chainEvent = $event;
 }
 
@@ -393,19 +392,13 @@ $tradeTransaction->applicableHeaderTradeDelivery = $delivery;
 // ------------------------
 
 $settlement = new HeaderTradeSettlement();
-
-// Währungen (Enums)
 $settlement->invoiceCurrency = CurrencyCode::EUR;
 $settlement->taxCurrency     = CurrencyCode::EUR;
 
-// ------------------------
 // Steuern pro MwSt.-Satz (Header-Ebene)
-// ------------------------
-
 $settlement->tradeTaxes = [];
 
 foreach ($byVatRate as $rate => $sumByRate) {
-    // Beträge als Amount-Objekte
     $basisAmount = Amount::create(
         number_format($sumByRate['net'], 2, '.', ''),
         CurrencyCode::EUR
@@ -419,34 +412,27 @@ foreach ($byVatRate as $rate => $sumByRate) {
     $categoryCode = $rate > 0 ? 'S' : 'Z'; // S = Standard, Z = Zero
 
     $tax = TradeTax::create(
-        'VAT',          // typeCode
-        $calcAmount,    // CalculatedAmount
-        $basisAmount,   // BasisAmount
-        null,           // LineTotalBasisAmount
-        null,           // AllowanceChargeBasisAmount
-        null,           // ApplicablePercent
-        $categoryCode,  // CategoryCode
-        number_format($rate, 2, '.', ''),
-        // (string)$rate   // RateApplicablePercent (z.B. "19")
-        // Rest (ExemptionReason etc.) lassen wir null
+        'VAT',
+        $calcAmount,
+        $basisAmount,
+        null,
+        null,
+        null,
+        $categoryCode,
+        number_format($rate, 2, '.', '')
     );
 
     $settlement->tradeTaxes[] = $tax;
 }
 
-// ------------------------
 // Kopf-Summen (Monetary Summation)
-// ------------------------
-
 $headerSum = new TradeSettlementHeaderMonetarySummation();
 
-// Nettosumme aller Positionen
 $headerSum->lineTotalAmount = Amount::create(
     number_format($totalNet, 2, '.', ''),
     CurrencyCode::EUR
 );
 
-// TaxBasisTotalAmount: array von Amount
 $headerSum->taxBasisTotalAmount = [
     Amount::create(
         number_format($totalNet, 2, '.', ''),
@@ -454,7 +440,6 @@ $headerSum->taxBasisTotalAmount = [
     ),
 ];
 
-// TaxTotalAmount: array von Amount
 $headerSum->taxTotalAmount = [
     Amount::create(
         number_format($totalTax, 2, '.', ''),
@@ -462,7 +447,6 @@ $headerSum->taxTotalAmount = [
     ),
 ];
 
-// GrandTotalAmount: array von Amount
 $headerSum->grandTotalAmount = [
     Amount::create(
         number_format($totalGross, 2, '.', ''),
@@ -470,36 +454,28 @@ $headerSum->grandTotalAmount = [
     ),
 ];
 
-// DuePayableAmount: Pflichtfeld, hier = Bruttosumme
 $headerSum->duePayableAmount = Amount::create(
     number_format($totalGross, 2, '.', ''),
     CurrencyCode::EUR
 );
 
-// In HeaderTradeSettlement einhängen
 $settlement->specifiedTradeSettlementHeaderMonetarySummation = $headerSum;
 
-// ------------------------
 // Zahlungsziel / Fälligkeitsdatum
-// ------------------------
-
 if (!empty($invoice['due_date'])) {
-    $terms = new TradePaymentTerms();
-
-    $due = date('Ymd', strtotime((string)$invoice['due_date']));
+    $terms       = new TradePaymentTerms();
+    $due         = date('Ymd', strtotime((string)$invoice['due_date']));
     $terms->dueDate = CiiDateTime::create(102, $due);
 
     $settlement->specifiedTradePaymentTerms = $terms;
 }
 
-// Settlement an die Transaktion hängen
 $tradeTransaction->applicableHeaderTradeSettlement = $settlement;
 
 // ------------------------
 // Positionen als SupplyChainTradeLineItem
 // ------------------------
 
-// Array initialisieren (eigentlich schon per Default leer, aber zur Klarheit gut)
 $tradeTransaction->lineItems = [];
 
 $lineNumber = 0;
@@ -508,22 +484,17 @@ foreach ($items as $r) {
 
     $lineItem = new SupplyChainTradeLineItem();
 
-    // Pflichtfeld: LineID setzen
-    // Variante 1: einfache laufende Nummer
+    // Pflichtfeld: LineID
     $lineItem->associatedDocumentLineDocument = DocumentLineDocument::create((string)$lineNumber);
-
-    // oder Variante 2: Position-ID aus der DB (falls du eine hast)
-    // $lineItem->associatedDocumentLineDocument = DocumentLineDocument::create((string)$r['id']);
 
     // Produkt
     $product       = new TradeProduct();
     $product->name = (string)($r['description'] ?? ('Pos. ' . $lineNumber));
     $lineItem->specifiedTradeProduct = $product;
 
-    // Line agreement (Preis / Einheit)
+    // Agreement (Preis / Einheit)
     $lineAgreement = new LineTradeAgreement();
 
-    // Preis pro Einheit
     $qty       = (float)($r['quantity'] ?? 0);
     $unitPrice = (float)($r['unit_price'] ?? 0);
 
@@ -533,42 +504,33 @@ foreach ($items as $r) {
         CurrencyCode::EUR
     );
 
-    // Einheit bestimmen (Enum)
-    $mode = strtolower((string)($r['entry_mode'] ?? 'qty'));
+    $mode     = strtolower((string)($r['entry_mode'] ?? 'qty'));
     $unitEnum = ($mode === 'auto' || $mode === 'time')
-        ? UnitCode::HUR   // Stunden
-        : UnitCode::C62;  // Stück
+        ? UnitCode::HUR
+        : UnitCode::C62;
 
-    // Basis-Menge = 1 mit passender Einheit
-    $basisQuantity = Quantity::create('1', $unitEnum);
-
+    $basisQuantity        = Quantity::create('1', $unitEnum);
     $price->basisQuantity = $basisQuantity;
 
-    $lineAgreement->netPrice = $price;
-    $lineItem->tradeAgreement = $lineAgreement;
+    $lineAgreement->netPrice     = $price;
+    $lineItem->tradeAgreement    = $lineAgreement;
 
-
-    // Lieferung (Menge)
+    // Lieferung
     $lineDelivery = new LineTradeDelivery();
-
-    // Menge und Einheit als Quantity-Objekt
     $lineDelivery->billedQuantity = Quantity::create(
         number_format($qty, 4, '.', ''),
-        $unitEnum                        // UnitCode::HUR oder UnitCode::C62
+        $unitEnum
     );
-
-    // Falls es in deiner LineTradeDelivery-Klasse noch andere Felder gibt, hier befüllen
     $lineItem->delivery = $lineDelivery;
 
-    // Settlement auf Positionsebene (Steuer + Nettosumme)
+    // Settlement (Zeile)
     $lineSettlement = new LineTradeSettlement();
 
     $vatRate = (float)($r['vat_rate'] ?? 0);
     $lineNet = isset($r['total_net'])
         ? (float)$r['total_net']
-        : round($qty * $unitPrice, 2);
+        : round_half_up($qty * $unitPrice, 2);
 
-    // Steuerobjekt für diese Zeile
     $lineTaxObj = TradeTax::create(
         'VAT',
         null,
@@ -577,27 +539,24 @@ foreach ($items as $r) {
         null,
         null,
         $vatRate > 0 ? 'S' : 'Z',
-        number_format($vatRate, 2, '.', '')  // oder einfach (string)$vatRate
+        number_format($vatRate, 2, '.', '')
     );
-    // KORREKTES Property laut Model: tradeTax (Array)
+
     $lineSettlement->tradeTax = [$lineTaxObj];
 
-    // Zeilen-Monetary Summation
-    $lineSum = new TradeSettlementLineMonetarySummation();
-    $lineSum->totalAmount = Amount::create(      // <- Property heißt totalAmount
+    $lineSum              = new TradeSettlementLineMonetarySummation();
+    $lineSum->totalAmount = Amount::create(
         number_format($lineNet, 2, '.', ''),
         CurrencyCode::EUR
     );
 
-    $lineSettlement->monetarySummation = $lineSum;
+    $lineSettlement->monetarySummation          = $lineSum;
+    $lineItem->specifiedLineTradeSettlement     = $lineSettlement;
 
-    $lineItem->specifiedLineTradeSettlement = $lineSettlement;
-
-    // HIER: korrektes Property laut Model
     $tradeTransaction->lineItems[] = $lineItem;
 }
 
-// Komplettes Trade-Objekt ans Dokument hängen
+// Trade-Objekt ans Dokument hängen
 $document->supplyChainTradeTransaction = $tradeTransaction;
 
 // ----------------------------------------------------------------------------

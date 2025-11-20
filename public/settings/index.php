@@ -295,15 +295,81 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       <h5 class="mb-3">Absender &amp; Bankverbindung</h5>
 
       <div class="col-md-6">
-        <label class="form-label">Absenderadresse (für Rechnungen)</label>
-        <textarea class="form-control" name="sender_address" rows="5" placeholder="Firma / Name&#10;Straße Hausnr.&#10;PLZ Ort&#10;Land"><?= h($set['sender_address']) ?></textarea>
+        <label class="form-label">Name / Firma (Absender)</label>
+        <input
+          type="text"
+          class="form-control"
+          name="sender_name"
+          value="<?= h($set['sender_name'] ?? '') ?>"
+          placeholder="Firma / Name"
+        >
       </div>
+
+      <div class="col-md-6">
+        <label class="form-label">Straße und Hausnummer</label>
+        <input
+          type="text"
+          class="form-control"
+          name="sender_street"
+          value="<?= h($set['sender_street'] ?? '') ?>"
+          placeholder="Straße Hausnr."
+        >
+      </div>
+
       <div class="col-md-3">
+        <label class="form-label">Postleitzahl</label>
+        <input
+          type="text"
+          class="form-control"
+          name="sender_postcode"
+          value="<?= h($set['sender_postcode'] ?? '') ?>"
+          placeholder="PLZ"
+        >
+      </div>
+
+      <div class="col-md-5">
+        <label class="form-label">Ort</label>
+        <input
+          type="text"
+          class="form-control"
+          name="sender_city"
+          value="<?= h($set['sender_city'] ?? '') ?>"
+          placeholder="Ort"
+        >
+      </div>
+
+      <div class="col-md-2">
+        <label class="form-label">Land (ISO)</label>
+        <input
+          type="text"
+          class="form-control"
+          name="sender_country"
+          value="<?= h($set['sender_country'] ?? '') ?>"
+          placeholder="DE"
+        >
+        <div class="form-text">2-stelliger ISO-Code, z.B. DE.</div>
+      </div>
+
+      <div class="col-md-4">
+        <label class="form-label">USt-IdNr. (Absender)</label>
+        <input
+          type="text"
+          class="form-control"
+          name="sender_vat_id"
+          value="<?= h($set['sender_vat_id'] ?? '') ?>"
+          placeholder="z.B. DE123456789"
+        >
+        <div class="form-text">
+          Wird im Factur-X-Export als Seller VAT ID (BT-31) verwendet.
+        </div>
+      </div>
+
+      <div class="col-md-4">
         <label class="form-label">IBAN</label>
         <input type="text" class="form-control" name="bank_iban" value="<?= h($set['bank_iban']) ?>"
                placeholder="DE..">
       </div>
-      <div class="col-md-3">
+      <div class="col-md-4">
         <label class="form-label">BIC</label>
         <input type="text" class="form-control" name="bank_bic" value="<?= h($set['bank_bic']) ?>"
                placeholder="MARKDEF...">
@@ -330,7 +396,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
           <div class="mt-2">
             <div class="small text-muted">
               Aktueller Briefbogen:
-
             </div>
           </div>
         <?php endif; ?>

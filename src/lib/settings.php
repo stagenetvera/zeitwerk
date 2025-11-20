@@ -14,8 +14,13 @@ function settings_defaults(): array {
     'invoice_outro_text'             => '',
     'bank_iban'                      => '',
     'bank_bic'                       => '',
-    'sender_address'                 => '',
-    // NEU: Briefbogen / Layout
+    'sender_name'                    => '',
+    'sender_street'                  => '',
+    'sender_postcode'                => '',
+    'sender_city'                    => '',
+    'sender_country'                 => 'DE',
+    'sender_vat_id'                  => '',
+    // Briefbogen / Layout
     'invoice_letterhead_first_pdf'     => '',
     'invoice_letterhead_first_preview' => '',
     'invoice_letterhead_next_pdf'      => '',
@@ -51,14 +56,19 @@ function get_account_settings(PDO $pdo, int $account_id): array {
           invoice_outro_text,
           bank_iban,
           bank_bic,
-          sender_address,
+          sender_name,
+          sender_street,
+          sender_postcode,
+          sender_city,
+          sender_country,
+          sender_vat_id,
           invoice_letterhead_first_pdf,
           invoice_letterhead_first_preview,
           invoice_letterhead_next_pdf,
           invoice_letterhead_next_preview,
           invoice_layout_zones
         )
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ');
     $ins->execute([
       $account_id,
@@ -73,7 +83,12 @@ function get_account_settings(PDO $pdo, int $account_id): array {
       $defs['invoice_outro_text'],
       $defs['bank_iban'],
       $defs['bank_bic'],
-      $defs['sender_address'],
+      $defs['sender_name'],
+      $defs['sender_street'],
+      $defs['sender_postcode'],
+      $defs['sender_city'],
+      $defs['sender_country'],
+      $defs['sender_vat_id'],
       $defs['invoice_letterhead_first_pdf'],
       $defs['invoice_letterhead_first_preview'],
       $defs['invoice_letterhead_next_pdf'],
@@ -194,11 +209,50 @@ function save_account_settings(PDO $pdo, int $account_id, array $in): void {
     $bic = strtoupper((string)$current['bank_bic']);
   }
 
-  // Absenderadresse
-  if (array_key_exists('sender_address', $in)) {
-    $sender = trim((string)$in['sender_address']);
+  // NEU: strukturierte Absenderfelder
+  if (array_key_exists('sender_name', $in)) {
+    $senderName = trim((string)$in['sender_name']);
   } else {
-    $sender = (string)$current['sender_address'];
+    $senderName = (string)$current['sender_name'];
+  }
+
+  if (array_key_exists('sender_street', $in)) {
+    $senderStreet = trim((string)$in['sender_street']);
+  } else {
+    $senderStreet = (string)$current['sender_street'];
+  }
+
+  if (array_key_exists('sender_postcode', $in)) {
+    $senderPostcode = trim((string)$in['sender_postcode']);
+  } else {
+    $senderPostcode = (string)$current['sender_postcode'];
+  }
+
+  if (array_key_exists('sender_city', $in)) {
+    $senderCity = trim((string)$in['sender_city']);
+  } else {
+    $senderCity = (string)$current['sender_city'];
+  }
+
+  if (array_key_exists('sender_country', $in)) {
+    $senderCountry = strtoupper(trim((string)$in['sender_country']));
+    if ($senderCountry === '') {
+      $senderCountry = 'DE';
+    }
+    if (!preg_match('~^[A-Z]{2}$~', $senderCountry)) {
+      // Falls irgendwas Komisches kommt, altes oder DE verwenden
+      $senderCountry = $current['sender_country'] ?: 'DE';
+    }
+  } else {
+    $senderCountry = strtoupper($current['sender_country'] ?: 'DE');
+  }
+
+  // NEU: USt-IdNr. des Absenders
+  if (array_key_exists('sender_vat_id', $in)) {
+    // Leerzeichen entfernen, alles groß, sonst nichts hart validieren
+    $senderVatId = strtoupper(preg_replace('~\s+~', '', (string)$in['sender_vat_id']));
+  } else {
+    $senderVatId = strtoupper((string)$current['sender_vat_id']);
   }
 
   // Minuten-Rundung
@@ -212,7 +266,7 @@ function save_account_settings(PDO $pdo, int $account_id, array $in): void {
     if ($roundMin > 60) $roundMin = 60;
   }
 
-  // NEU: Briefbogen / Layout-Felder
+  // Briefbogen / Layout-Felder
   if (array_key_exists('invoice_letterhead_first_pdf', $in)) {
     $lhFirstPdf = (string)$in['invoice_letterhead_first_pdf'];
   } else {
@@ -246,18 +300,23 @@ function save_account_settings(PDO $pdo, int $account_id, array $in): void {
   // --- UPDATE (Datensatz existiert durch get_account_settings immer) ---
   $upd = $pdo->prepare('
     UPDATE account_settings
-       SET invoice_number_pattern         = ?,
-           invoice_seq_pad               = ?,
-           invoice_next_seq              = ?,
-           default_vat_rate              = ?,
-           default_tax_scheme            = ?,
-           default_due_days              = ?,
-           invoice_round_minutes         = ?,
-           invoice_intro_text            = ?,
-           invoice_outro_text            = ?,
-           bank_iban                     = ?,
-           bank_bic                      = ?,
-           sender_address                = ?,
+       SET invoice_number_pattern          = ?,
+           invoice_seq_pad                = ?,
+           invoice_next_seq               = ?,
+           default_vat_rate               = ?,
+           default_tax_scheme             = ?,
+           default_due_days               = ?,
+           invoice_round_minutes          = ?,
+           invoice_intro_text             = ?,
+           invoice_outro_text             = ?,
+           bank_iban                      = ?,
+           bank_bic                       = ?,
+           sender_name                    = ?,
+           sender_street                  = ?,
+           sender_postcode                = ?,
+           sender_city                    = ?,
+           sender_country                 = ?,
+           sender_vat_id                  = ?,
            invoice_letterhead_first_pdf     = ?,
            invoice_letterhead_first_preview = ?,
            invoice_letterhead_next_pdf      = ?,
@@ -278,7 +337,12 @@ function save_account_settings(PDO $pdo, int $account_id, array $in): void {
     $outro,
     $iban,
     $bic,
-    $sender,
+    $senderName,
+    $senderStreet,
+    $senderPostcode,
+    $senderCity,
+    $senderCountry,
+    $senderVatId,
     $lhFirstPdf,
     $lhFirstPrev,
     $lhNextPdf,

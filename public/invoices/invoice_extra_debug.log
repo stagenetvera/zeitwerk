@@ -1,7 +1,0 @@
-2025-10-20T08:41:52+02:00 
-            INSERT INTO invoice_items
-              (account_id, invoice_id, project_id, task_id, description,
-               quantity, unit_price, vat_rate, total_net, total_gross, position, tax_scheme)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-          
-[1,33,null,null,"asd",1,100,19,100,119,3,"standard"]
