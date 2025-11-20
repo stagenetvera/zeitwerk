@@ -8,6 +8,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
   $pass  = $_POST['password'] ?? '';
   if ($name && $email && $pass) {
     if (register_user($pdo, $name, $email, $pass)) {
+      redirect(url('/login.php'));
       $msg = "Registrierung erfolgreich. Bitte einloggen.";
     } else {
       $err = "Registrierung fehlgeschlagen (E-Mail evtl. bereits vergeben).";

@@ -6,7 +6,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
   $email = trim($_POST['email'] ?? '');
   $pass  = $_POST['password'] ?? '';
   if (login($pdo, $email, $pass)) {
-    redirect('/dashboard/index.php');
+    redirect(url('/dashboard/index.php'));
   } else {
     $err = "Login fehlgeschlagen.";
   }
