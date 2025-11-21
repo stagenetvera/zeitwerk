@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<BillingcatSettings xmlns="urn:billingcat.de/ns/billingcatsettings" version="1.0">
+    <generatedAt>2025-11-11T10:17:48.067874Z</generatedAt>
+    <invoiceId>25</invoiceId>
+    <invoiceNumber>R-4192-003</invoiceNumber>
+    <units>cm</units>
+    <introductionText>Vielen Dank für Ihren Auftrag. Wir freuen uns auf die weitere Zusammenarbeit.</introductionText>
+    <conclusionText>Bei Fragen zur Rechnung stehen wir Ihnen gerne zur Verfügung.</conclusionText>
+    <letterhead>
+        <name>demobilling-2</name>
+        <pageWidthCm>21.01</pageWidthCm>
+        <pageHeightCm>29.7</pageHeightCm>
+        <regions>
+            <region kind="addressee" page="1">
+                <xCm>2.01546951160221</xCm>
+                <yCm>5.081546540773481</yCm>
+                <widthCm>8</widthCm>
+                <heightCm>3</heightCm>
+                <hAlign>left</hAlign>
+                <fontSizePt>10</fontSizePt>
+                <lineSpacing>1.2</lineSpacing>
+            </region>
+            <region kind="invoice_info" page="1">
+                <xCm>10.577294326629834</xCm>
+                <yCm>9.17635367801105</yCm>
+                <widthCm>8</widthCm>
+                <heightCm>4</heightCm>
+                <hAlign>right</hAlign>
+                <fontSizePt>10</fontSizePt>
+                <lineSpacing>1.2</lineSpacing>
+            </region>
+            <region kind="main_area" page="1">
+                <xCm>2.039337484640884</xCm>
+                <yCm>13.536464043314918</yCm>
+                <widthCm>17.00993093922652</widthCm>
+                <heightCm>13.185966850828727</heightCm>
+                <hAlign>left</hAlign>
+                <fontSizePt>10</fontSizePt>
+                <lineSpacing>1.2</lineSpacing>
+                <hasPage2>true</hasPage2>
+                <x2Cm>2.039337484640884</x2Cm>
+                <y2Cm>1.1803314184530387</y2Cm>
+                <width2Cm>17.00993093922652</width2Cm>
+                <height2Cm>25.542009668508285</height2Cm>
+            </region>
+        </regions>
+        <pdfPath>letterhead.pdf</pdfPath>
+        <fonts>
+            <normal>DINPro-Regular.otf</normal>
+            <bold>DINPro-Medium.otf</bold>
+        </fonts>
+    </letterhead>
+</BillingcatSettings>

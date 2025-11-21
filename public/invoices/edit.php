@@ -241,8 +241,16 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '')==='save') {
             if ($ROUND_UNIT_MINS > 0 && $minutes > 0) {
               $minutes = (int)(ceil($minutes / $ROUND_UNIT_MINS) * $ROUND_UNIT_MINS);
             }
-            $qty   = round($minutes / 60.0, 3);
-            $net   = round(($minutes / 60.0) * $rate, 2);
+            // Stunden aus GERUNDETEN Minuten.
+            // Für die Menge in Stunden auf 4 Nachkommastellen AUFRUNDEN,
+            // damit z.B. 5 Minuten -> 0,0834 h (statt 0,0833...).
+            $hours = $minutes / 60.0;
+            if ($hours > 0) {
+              $qty = ceil($hours * 10000.0) / 10000.0;
+            } else {
+              $qty = 0.0;
+            }
+            $net   = round($qty * $rate, 2);
             $gross = round($net * (1 + $vat/100), 2);
           } elseif ($entry_mode === 'time') {
             $qty_hours = ($row['quantity'] ?? '') !== ''

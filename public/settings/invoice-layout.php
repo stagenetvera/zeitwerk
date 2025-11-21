@@ -101,7 +101,7 @@ $layoutJsonForJs = json_encode($layoutData, JSON_UNESCAPED_UNICODE);
 
       <p class="text-muted">
         Ziehe und skaliere die farbigen Bereiche auf dem Briefbogen,
-        um festzulegen, wo Adresse, Rechnungsinformationen, Positionen, Summen und Seitenzahl platziert werden sollen.
+        um festzulegen, wo Adresse, Rechnungsinformationen, Positionen platziert werden sollen.
         Für Folgeseiten kannst du ein separates Layout definieren.
       </p>
 
@@ -184,7 +184,7 @@ $layoutJsonForJs = json_encode($layoutData, JSON_UNESCAPED_UNICODE);
             </div>
           </div>
           <div class="mt-2 small text-muted">
-            Layout für die erste Seite (Adresse, Rechnungsinfo, Positionen, Summen, Seitenzahl).
+            Layout für die erste Seite (Adresse, Rechnungsinfo, Positionen).
           </div>
         </div>
 
@@ -198,7 +198,7 @@ $layoutJsonForJs = json_encode($layoutData, JSON_UNESCAPED_UNICODE);
               </div>
             </div>
             <div class="mt-2 small text-muted">
-              Layout für Folgeseiten (Positionen, Summen, Seitenzahl).
+              Layout für Folgeseiten (Positionen).
             </div>
           </div>
         <?php endif; ?>
@@ -239,34 +239,26 @@ $layoutJsonForJs = json_encode($layoutData, JSON_UNESCAPED_UNICODE);
 
       // Felder Seite 1
       var FIELDS_PAGE1 = [
-        { name: 'address',      label: 'Adresse',       page: 1 },
+        { name: 'addressee',      label: 'Adresse',       page: 1 },
         { name: 'invoice_info', label: 'Rechnungsinfo', page: 1 },
-        { name: 'items',        label: 'Positionen',    page: 1 },
-        { name: 'totals',       label: 'Summen',        page: 1 },
-        { name: 'page_number',  label: 'Seitenzahl',    page: 1 }
+        { name: 'main_area',        label: 'Positionen',    page: 1 },
       ];
 
       // Felder Seite 2
       var FIELDS_PAGE2 = [
-        { name: 'page2_items',       label: 'Positionen (Folgeseiten)', page: 2 },
-        { name: 'page2_totals',      label: 'Summen (Folgeseiten)',    page: 2 },
-        { name: 'page2_page_number', label: 'Seitenzahl (Folgeseiten)', page: 2 }
+        { name: 'main_area_page_2',       label: 'Positionen (Folgeseiten)', page: 2 },
       ];
 
       // Default-Layout Seite 1 (in %)
       var defaultZonesPage1 = {
-        address:      { page: 1, x: 10, y: 25, w: 40, h: 20 },
+        addressee:      { page: 1, x: 10, y: 25, w: 40, h: 20 },
         invoice_info: { page: 1, x: 60, y: 25, w: 30, h: 20 },
-        items:        { page: 1, x: 10, y: 55, w: 80, h: 35 },
-        totals:       { page: 1, x: 60, y: 93, w: 30, h: 7  },
-        page_number:  { page: 1, x: 70, y: 97, w: 20, h: 3  }
+        main_area:        { page: 1, x: 10, y: 55, w: 80, h: 35 },
       };
 
       // Default-Layout Seite 2 (in %)
       var defaultZonesPage2 = {
-        page2_items:       { page: 2, x: 10, y: 20, w: 80, h: 60 },
-        page2_totals:      { page: 2, x: 60, y: 85, w: 30, h: 10 },
-        page2_page_number: { page: 2, x: 70, y: 97, w: 20, h: 3  }
+        main_area_page_2:       { page: 2, x: 10, y: 20, w: 80, h: 60 },
       };
 
       function getZoneConfig(fieldName, defaults) {
@@ -500,7 +492,10 @@ $layoutJsonForJs = json_encode($layoutData, JSON_UNESCAPED_UNICODE);
               x: xPercent,
               y: yPercent,
               w: wPercent,
-              h: hPercent
+              h: hPercent,
+              hAlign: "left",
+              fontSizePt: 10,
+              lineSpacing: 1.2
             };
           });
         }

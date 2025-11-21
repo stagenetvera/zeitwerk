@@ -1,578 +1,884 @@
 <?php
-// public/invoices/pdf.php
-//
-// Erzeugt ein PDF für eine Rechnung auf Basis der Layout-Zonen
-// und der Briefbogen-PDFs aus den Einstellungen.
-//
-// Aufruf: /invoices/pdf.php?id=123
-
+// public/invoices/export_facturx_speedata.php
 declare(strict_types=1);
 
-// *** WICHTIG: Kein layout/header.php einbinden, sonst kommt HTML-Ausgabe! ***
-require __DIR__ . '/../../src/bootstrap.php';         // <- an dein Projekt anpassen
+require __DIR__ . '/../../src/bootstrap.php';
+require_once __DIR__ . '/../../src/utils.php';
 require_once __DIR__ . '/../../src/lib/settings.php';
-// ggf. weitere Libs, aber ohne Ausgabe:
-// require_once __DIR__ . '/../../src/lib/whatever.php';
+require_once __DIR__ . '/../../src/lib/speedata.php';
 
 require_login();
-csrf_check();
 
-require __DIR__ . '/../../vendor/autoload.php';
+use easybill\eInvoicing\CII\Documents\CrossIndustryInvoice;
+use easybill\eInvoicing\CII\Models\DocumentContextParameter;
+use easybill\eInvoicing\CII\Models\ExchangedDocument;
+use easybill\eInvoicing\CII\Models\ExchangedDocumentContext;
+use easybill\eInvoicing\CII\Models\DateTime as CiiDateTime;
+use easybill\eInvoicing\CII\Models\SupplyChainTradeTransaction;
+use easybill\eInvoicing\CII\Models\TradeParty;
+use easybill\eInvoicing\CII\Models\TradeAddress;
+use easybill\eInvoicing\CII\Models\HeaderTradeAgreement;
+use easybill\eInvoicing\CII\Models\HeaderTradeDelivery;
+use easybill\eInvoicing\CII\Models\HeaderTradeSettlement;
+use easybill\eInvoicing\CII\Models\TradeTax;
+use easybill\eInvoicing\CII\Models\SupplyChainTradeLineItem;
+use easybill\eInvoicing\CII\Models\LineTradeAgreement;
+use easybill\eInvoicing\CII\Models\LineTradeDelivery;
+use easybill\eInvoicing\CII\Models\LineTradeSettlement;
+use easybill\eInvoicing\CII\Models\TradeProduct;
+use easybill\eInvoicing\CII\Models\TradePrice;
+use easybill\eInvoicing\CII\Models\SupplyChainEvent;
+use easybill\eInvoicing\CII\Models\TradeSettlementHeaderMonetarySummation;
+use easybill\eInvoicing\CII\Models\Amount;
+use easybill\eInvoicing\CII\Models\TradePaymentTerms;
+use easybill\eInvoicing\CII\Models\Quantity;
+use easybill\eInvoicing\CII\Models\TradeSettlementLineMonetarySummation;
+use easybill\eInvoicing\CII\Models\DocumentLineDocument;
 
-use setasign\Fpdi\Fpdi;
+use easybill\eInvoicing\Transformer;
+use easybill\eInvoicing\Enums\DocumentType;
+use easybill\eInvoicing\Enums\CountryCode;
+use easybill\eInvoicing\CII\Models\TaxRegistration;
+use easybill\eInvoicing\Enums\CurrencyCode;
+use easybill\eInvoicing\Enums\UnitCode;
+
+use easybill\eInvoicing\CII\Models\TradeContact;
+
+// ----------------------------------------------------------
+// Hilfsfunktionen
+// ----------------------------------------------------------
+
+function de_date_long(?string $ymd): string {
+    if (!$ymd) return '';
+    $ts = strtotime($ymd);
+    if ($ts === false) return '';
+    $mon = [
+        1 => 'Januar', 2 => 'Februar', 3 => 'März', 4 => 'April', 5 => 'Mai', 6 => 'Juni',
+        7 => 'Juli',   8 => 'August',  9 => 'September', 10 => 'Oktober', 11 => 'November', 12 => 'Dezember'
+    ];
+    $d = (int)date('j', $ts);
+    $m = (int)date('n', $ts);
+    $y = (int)date('Y', $ts);
+    return sprintf('%d. %s %d', $d, $mon[$m] ?? date('F', $ts), $y);
+}
+
+// „round half up“ – wie in deinem restlichen Code
+if (!function_exists('round_half_up')) {
+    function round_half_up(float $value, int $precision = 0): float {
+        $factor = pow(10, $precision);
+        return floor($value * $factor + 0.5) / $factor;
+    }
+}
+
+/**
+ * Settings-XML auf Basis von account_settings['invoice_layout_zones'] bauen.
+ * Erwartet JSON der Form:
+ * {
+ *   "page_size": "A4",
+ *   "units": "percent" | "cm",
+ *   "zones": {
+ *     "addressee":        { "page": 1, "x": ..., "y": ..., "w": ..., "h": ... },
+ *     "invoice_info":     { ... },
+ *     "main_area":        { ... },
+ *     "main_area_page_2": { "page": 2, ... }
+ *   }
+ * }
+ *
+ * Fallback auf statische Demo-Werte, wenn nichts konfiguriert ist.
+ */
+function build_settings_xml_from_layout(array $acct, array $invoice): string
+{
+    $zonesJson = $acct['invoice_layout_zones'] ?? '';
+    $layout    = null;
+
+    if (is_string($zonesJson) && trim($zonesJson) !== '') {
+        $decoded = json_decode($zonesJson, true);
+        if (is_array($decoded)) {
+            $layout = $decoded;
+        }
+    }
+
+    $ns = 'urn:billingcat.de/ns/billingcatsettings';
+
+    $dom = new DOMDocument('1.0', 'UTF-8');
+    $dom->formatOutput = false;
+
+    $root = $dom->createElementNS($ns, 'BillingcatSettings');
+    $root->setAttribute('version', '1.0');
+    $dom->appendChild($root);
+
+    // Basis-Metadaten
+    $root->appendChild($dom->createElementNS($ns, 'generatedAt', gmdate('c')));
+    $root->appendChild($dom->createElementNS($ns, 'invoiceId', (string)($invoice['id'] ?? '0')));
+    $root->appendChild($dom->createElementNS($ns, 'invoiceNumber', (string)($invoice['invoice_number'] ?? $invoice['id'])));
+
+    // Die Speedata-Settings arbeiten in cm
+    $root->appendChild($dom->createElementNS($ns, 'units', 'cm'));
+
+    // Einleitung / Schluss aus Rechnung, dann aus Account-Defaults, sonst Fallback
+    $intro = trim((string)($invoice['invoice_intro_text'] ?? ''));
+    if ($intro === '') {
+        $intro = trim((string)($acct['invoice_intro_text'] ?? ''));
+    }
+    // Zeilenumbrüche → <br/>
+    $intro = preg_replace("~\r\n|\r|\n~", "<br/>", $intro);
+
+    $outro = trim((string)($invoice['invoice_outro_text'] ?? ''));
+    if ($outro === '') {
+        $outro = trim((string)($acct['invoice_outro_text'] ?? ''));
+    }
+    $outro = preg_replace("~\r\n|\r|\n~", "<br/>", $outro);
+
+    $root->appendChild($dom->createElementNS($ns, 'introductionText', $intro));
+    $root->appendChild($dom->createElementNS($ns, 'conclusionText', $outro));
+
+    // Letterhead
+    $letterhead = $dom->createElementNS($ns, 'letterhead');
+    $root->appendChild($letterhead);
+
+    $name = $layout['name'] ?? 'demobilling-2';
+    $letterhead->appendChild($dom->createElementNS($ns, 'name', $name));
+
+    // page_size -> Seitenmaße (cm)
+    $pageSize = $layout['page_size'] ?? 'A4';
+    switch ($pageSize) {
+        case 'A4':
+        default:
+            $pageWidth  = 21.01;
+            $pageHeight = 29.7;
+            break;
+    }
+
+    $letterhead->appendChild($dom->createElementNS($ns, 'pageWidthCm',  (string)$pageWidth));
+    $letterhead->appendChild($dom->createElementNS($ns, 'pageHeightCm', (string)$pageHeight));
+
+    // Regions-Container
+    $regionsEl = $dom->createElementNS($ns, 'regions');
+    $letterhead->appendChild($regionsEl);
+
+    // Welche Einheit steht im JSON? (z.B. "percent" oder "cm")
+    $unitsSource = isset($layout['units']) ? (string)$layout['units'] : 'percent';
+
+    if ($layout && !empty($layout['zones']) && is_array($layout['zones'])) {
+        foreach ($layout['zones'] as $zoneKey => $reg) {
+            if (!is_array($reg)) {
+                continue;
+            }
+
+            $kind = (string)$zoneKey;
+            $page = isset($reg['page']) ? (int)$reg['page'] : 1;
+
+            $regionEl = $dom->createElementNS($ns, 'region');
+            $regionEl->setAttribute('kind', $kind);
+            $regionEl->setAttribute('page', (string)$page);
+
+            // Helper zum Formatieren von Floats
+            $fmt = static function (float $v): string {
+                $s = sprintf('%.6F', $v);
+                $s = rtrim(rtrim($s, '0'), '.');
+                return $s === '' ? '0' : $s;
+            };
+
+            // x/y/w/h aus dem JSON holen
+            $x = isset($reg['x']) ? (float)$reg['x'] : null;
+            $y = isset($reg['y']) ? (float)$reg['y'] : null;
+            $w = isset($reg['w']) ? (float)$reg['w'] : null;
+            $h = isset($reg['h']) ? (float)$reg['h'] : null;
+
+            // Wenn Prozentwerte: auf cm umrechnen
+            if ($unitsSource === 'percent') {
+                if ($x !== null) {
+                    $x = $x * $pageWidth / 100.0;
+                }
+                if ($y !== null) {
+                    $y = $y * $pageHeight / 100.0;
+                }
+                if ($w !== null) {
+                    $w = $w * $pageWidth / 100.0;
+                }
+                if ($h !== null) {
+                    $h = $h * $pageHeight / 100.0;
+                }
+            }
+
+            if ($x !== null) {
+                $regionEl->appendChild($dom->createElementNS($ns, 'xCm', $fmt($x)));
+            }
+            if ($y !== null) {
+                $regionEl->appendChild($dom->createElementNS($ns, 'yCm', $fmt($y)));
+            }
+            if ($w !== null) {
+                $regionEl->appendChild($dom->createElementNS($ns, 'widthCm', $fmt($w)));
+            }
+            if ($h !== null) {
+                $regionEl->appendChild($dom->createElementNS($ns, 'heightCm', $fmt($h)));
+            }
+
+            // Optionale Typo/Format-Infos – falls im JSON vorhanden
+            if (isset($reg['hAlign'])) {
+                $regionEl->appendChild($dom->createElementNS($ns, 'hAlign', (string)$reg['hAlign']));
+            }
+            if (isset($reg['fontSizePt'])) {
+                $regionEl->appendChild($dom->createElementNS($ns, 'fontSizePt', (string)$reg['fontSizePt']));
+            }
+            if (isset($reg['lineSpacing'])) {
+                $regionEl->appendChild($dom->createElementNS($ns, 'lineSpacing', (string)$reg['lineSpacing']));
+            }
+
+            $regionsEl->appendChild($regionEl);
+        }
+    } else {
+        // Fallback: feste Standard-Regionen, falls noch nichts konfiguriert ist
+        $fallbackXml = <<<XML
+        <regions xmlns="$ns">
+            <region kind="addressee" page="1">
+                <xCm>2.01546951160221</xCm>
+                <yCm>5.081546540773481</yCm>
+                <widthCm>8</widthCm>
+                <heightCm>3</heightCm>
+                <hAlign>left</hAlign>
+                <fontSizePt>10</fontSizePt>
+                <lineSpacing>1.2</lineSpacing>
+            </region>
+            <region kind="invoice_info" page="1">
+                <xCm>10.577294326629834</xCm>
+                <yCm>9.17635367801105</yCm>
+                <widthCm>8</widthCm>
+                <heightCm>4</heightCm>
+                <hAlign>right</hAlign>
+                <fontSizePt>10</fontSizePt>
+                <lineSpacing>1.2</lineSpacing>
+            </region>
+            <region kind="main_area" page="1">
+                <xCm>10.577294326629834</xCm>
+                <yCm>9.17635367801105</yCm>
+                <widthCm>8</widthCm>
+                <heightCm>4</heightCm>
+                <hAlign>right</hAlign>
+                <fontSizePt>10</fontSizePt>
+                <lineSpacing>1.2</lineSpacing>
+            </region>
+            <region kind="main_area_page_2" page="2">
+                <xCm>2.01546951160221</xCm>
+                <yCm>2.01546951160221</yCm>
+                <widthCm>8</widthCm>
+                <heightCm>20</heightCm>
+                <hAlign>left</hAlign>
+                <fontSizePt>10</fontSizePt>
+                <lineSpacing>1.2</lineSpacing>
+            </region>
+        </regions>
+        XML;
+        $tmp = new DOMDocument('1.0', 'UTF-8');
+        $tmp->loadXML($fallbackXml);
+        foreach ($tmp->documentElement->childNodes as $node) {
+            if ($node instanceof DOMElement) {
+                $imported = $dom->importNode($node, true);
+                $regionsEl->appendChild($imported);
+            }
+        }
+    }
+
+    // pdfPath + fonts (Dateinamen müssen zu denen passen, die du an speedata_publish schickst)
+    $letterhead->appendChild($dom->createElementNS($ns, 'pdfPath', 'letterhead.pdf'));
+
+    $fontsEl = $dom->createElementNS($ns, 'fonts');
+    $letterhead->appendChild($fontsEl);
+
+    $fontsEl->appendChild($dom->createElementNS($ns, 'normal', 'regular_font.otf'));
+    $fontsEl->appendChild($dom->createElementNS($ns, 'bold',   'medium_font.otf'));
+
+    return $dom->saveXML();
+}
+
+// ----------------------------------------------------------
+// Eingaben / Basis
+// ----------------------------------------------------------
 
 $user       = auth_user();
 $account_id = (int)$user['account_id'];
 
-$invoice_id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
-if ($invoice_id <= 0) {
-    // Noch KEINE Ausgabe passiert → safe:
-    http_response_code(400);
-    echo 'Missing or invalid invoice id.';
-    exit;
-}
-
-// -----------------------------------------------------------------------------
-// 1. Rechnung + Positionen laden
-// -----------------------------------------------------------------------------
-
-// TODO: Diese Funktion an dein tatsächliches Schema anpassen
-function load_invoice_with_items(PDO $pdo, int $account_id, int $invoice_id): ?array {
-    // Beispiel: Tabellen "invoices" und "invoice_items" – bitte anpassen!
-    $st = $pdo->prepare('SELECT * FROM invoices WHERE id = ? AND account_id = ?');
-    $st->execute([$invoice_id, $account_id]);
-    $inv = $st->fetch(PDO::FETCH_ASSOC);
-    if (!$inv) return null;
-
-    $st2 = $pdo->prepare('SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY position ASC');
-    $st2->execute([$invoice_id]);
-    $items = $st2->fetchAll(PDO::FETCH_ASSOC);
-
-    // Beispiel: Firma / Kunde, falls benötigt
-    $company = null;
-    if (!empty($inv['company_id'])) {
-        $st3 = $pdo->prepare('SELECT * FROM companies WHERE id = ? AND account_id = ?');
-        $st3->execute([(int)$inv['company_id'], $account_id]);
-        $company = $st3->fetch(PDO::FETCH_ASSOC) ?: null;
-    }
-
-    return [
-        'invoice' => $inv,
-        'items'   => $items,
-        'company' => $company,
-    ];
-}
-
-$data = load_invoice_with_items($pdo, $account_id, $invoice_id);
-if (!$data) {
+$id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
+if ($id <= 0) {
     http_response_code(404);
-    echo 'Rechnung nicht gefunden.';
-    exit;
+    exit('Invalid invoice id');
 }
 
-$invoice = $data['invoice'];
-$items   = $data['items'];
-$company = $data['company'];
+$pdo = isset($pdo) ? $pdo : db();
 
-// -----------------------------------------------------------------------------
-// 2. Account-Settings + Layout-Zonen laden
-// -----------------------------------------------------------------------------
+// ----------------------------------------------------------
+// Rechnung + Firma
+// ----------------------------------------------------------
+$inv = $pdo->prepare('
+  SELECT
+    i.*,
+    c.name          AS company_name,
+    c.address_line1 AS company_address_line1,
+    c.address_line2 AS company_address_line2,
+    c.postal_code   AS company_postal_code,
+    c.city          AS company_city,
+    c.country_code  AS company_country_code,
+    c.vat_id        AS company_vat,
 
-$settings = get_account_settings($pdo, $account_id);
+    -- salutation: erster Buchstabe groß
+    CONCAT(
+        UPPER(LEFT(ct.salutation, 1)),
+        LOWER(SUBSTRING(ct.salutation, 2))
+    ) AS contact_salutation,
 
-$layoutData = [];
-if (!empty($settings['invoice_layout_zones'])) {
-    $decoded = json_decode($settings['invoice_layout_zones'], true);
-    if (is_array($decoded)) {
-        $layoutData = $decoded;
+    ct.first_name   AS contact_first_name,
+    ct.last_name    AS contact_last_name,
+
+    TRIM(CONCAT(
+        CONCAT(
+            UPPER(LEFT(ct.salutation, 1)),
+            LOWER(SUBSTRING(ct.salutation, 2))
+        ),
+        CASE WHEN ct.salutation IS NOT NULL AND ct.salutation <> "" THEN " " ELSE "" END,
+        COALESCE(ct.first_name, ""),
+        CASE WHEN ct.first_name IS NOT NULL AND ct.first_name <> "" THEN " " ELSE "" END,
+        COALESCE(ct.last_name, "")
+    )) AS contact_person_name
+
+  FROM invoices i
+  JOIN companies c
+    ON c.id = i.company_id
+   AND c.account_id = i.account_id
+
+  LEFT JOIN contacts ct
+    ON ct.company_id = c.id
+   AND ct.account_id = c.account_id
+   AND ct.is_invoice_addressee = 1
+
+  WHERE i.id = ?
+    AND i.account_id = ?
+  LIMIT 1
+');
+$inv->execute([$id, $account_id]);
+$invoice = $inv->fetch(PDO::FETCH_ASSOC);
+
+if (!$invoice) {
+    http_response_code(404);
+    exit('Invoice not found');
+}
+
+// ----------------------------------------------------------
+// Positionen (sichtbare)
+// ----------------------------------------------------------
+
+$it = $pdo->prepare('
+  SELECT
+    id           AS item_id,
+    description,
+    quantity,
+    unit_price,
+    vat_rate,
+    tax_scheme,
+    position,
+    total_net,
+    total_gross,
+    entry_mode,
+    is_hidden
+  FROM invoice_items
+  WHERE account_id = ? AND invoice_id = ?
+  ORDER BY COALESCE(position, 999999), id ASC
+');
+$it->execute([$account_id, $id]);
+$rawItems = $it->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+$items = [];
+foreach ($rawItems as $row) {
+    if ((int)($row['is_hidden'] ?? 0) === 1) {
+        continue;
     }
-}
-if (empty($layoutData)) {
-    $layoutData = [
-        'page_size' => 'A4',
-        'units'     => 'percent',
-        'zones'     => [],
-    ];
-}
-$zones = $layoutData['zones'] ?? [];
-
-// Hilfsfunktion: Zone holen
-function get_zone(array $zones, string $key): ?array {
-    if (!isset($zones[$key]) || !is_array($zones[$key])) return null;
-    $z = $zones[$key];
-    return [
-        'page' => (int)($z['page'] ?? 1),
-        'x'    => (float)($z['x'] ?? 0),
-        'y'    => (float)($z['y'] ?? 0),
-        'w'    => (float)($z['w'] ?? 100),
-        'h'    => (float)($z['h'] ?? 100),
-    ];
+    $items[] = $row;
 }
 
-// Zonen für Seite 1
-$zAddress     = get_zone($zones, 'address');   // NEU: Empfängeradresse
-$zInvoiceInfo = get_zone($zones, 'invoice_info');
-$zItems1      = get_zone($zones, 'items');
-$zTotals1     = get_zone($zones, 'totals');
-$zPageNo1     = get_zone($zones, 'page_number');
+// ----------------------------------------------------------
+// Leistungszeitraum (aus verlinkten Zeiten)
+// ----------------------------------------------------------
 
-// Zonen für Folgeseiten
-$zItems2      = get_zone($zones, 'page2_items')       ?: $zItems1;
-$zTotals2     = get_zone($zones, 'page2_totals')      ?: $zTotals1;
-$zPageNo2     = get_zone($zones, 'page2_page_number') ?: $zPageNo1;
+$spanStmt = $pdo->prepare('
+  SELECT MIN(t.started_at) AS min_start, MAX(t.ended_at) AS max_end
+    FROM times t
+    JOIN invoice_item_times iit
+      ON iit.time_id = t.id AND iit.account_id = t.account_id
+    JOIN invoice_items ii
+      ON ii.id = iit.invoice_item_id AND ii.account_id = iit.account_id
+   WHERE ii.account_id = ? AND ii.invoice_id = ?
+');
+$spanStmt->execute([$account_id, $id]);
+$span = $spanStmt->fetch(PDO::FETCH_ASSOC) ?: ['min_start' => null, 'max_end' => null];
 
-// -----------------------------------------------------------------------------
-// 2b. Briefbogen-Pfade auflösen (Filesystem)
-// -----------------------------------------------------------------------------
+// ----------------------------------------------------------
+// Summen für Factur-X
+// ----------------------------------------------------------
 
-// In den Settings hast du vermutlich (je nach Implementierung) einen Pfad wie:
-//  - 'storage/accounts/1/letterhead-first.pdf'   (relativ zum Projektroot)
-//  oder
-//  - '/storage/accounts/1/letterhead-first.pdf'  (Web-Pfad)
-// oder schon einen absoluten Pfad.
-//
-// Wir machen daraus einen echten Filesystem-Pfad.
+$totalNet   = 0.0;
+$totalTax   = 0.0;
+$totalGross = 0.0;
+$byVatRate  = []; // [rate => ['net' => ..., 'tax' => ...]]
 
-$publicDir   = realpath(__DIR__ . '/..');              // .../zeitwerk/public
-$projectRoot = dirname($publicDir);                    // .../zeitwerk
-$storageRoot = dirname($projectRoot) . '/storage';     // .../storage
+foreach ($items as $r) {
+    $scheme  = (string)($r['tax_scheme'] ?? 'standard');
+    $vatRate = ($scheme === 'standard') ? (float)($r['vat_rate'] ?? 0) : 0.0;
 
-/**
- * Wandelt einen Web-Pfad oder eine URL wie
- *   "/storage/accounts/1/letterhead-first.pdf"
- *   "storage/accounts/1/letterhead-first.pdf"
- *   APP_BASE_URL . "/storage/..."
- * in einen echten Filesystem-Pfad unterhalb von $storageRoot.
- */
-function storage_web_to_fs(?string $value, string $storageRoot): ?string {
-    if (!$value) {
-        return null;
-    }
+    $lineNet = isset($r['total_net'])
+        ? (float)$r['total_net']
+        : round_half_up((float)$r['unit_price'] * (float)$r['quantity'], 2);
 
-    $path = $value;
+    $totalNet += $lineNet;
 
-    // 0. Spezieller Fall: /settings/file.php?path=...
-    //    -> Pfad aus dem Query-Parameter holen
-    if (strpos($path, 'file.php') !== false && strpos($path, 'path=') !== false) {
-        $query = parse_url($path, PHP_URL_QUERY);
-        if ($query) {
-            parse_str($query, $params);
-            if (!empty($params['path'])) {
-                $rel = urldecode($params['path']); // z.B. "layout/letterhead_first_1_1762848330.pdf"
-                $fs  = rtrim($storageRoot, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $rel;
-                return is_file($fs) ? $fs : null;
-            }
+    if ($scheme === 'standard' && $vatRate > 0.0) {
+        if (!isset($byVatRate[$vatRate])) {
+            $byVatRate[$vatRate] = ['net' => 0.0, 'tax' => 0.0];
         }
-        // wenn irgendwas damit schiefgeht, weiter unten normal versuchen
+        $byVatRate[$vatRate]['net'] += $lineNet;
     }
-
-    // 1. Falls eine komplette URL (http/https) -> nur den Pfadanteil nehmen
-    if (preg_match('~^https?://~i', $path)) {
-        $urlPath = parse_url($path, PHP_URL_PATH);
-        if ($urlPath !== false && $urlPath !== null) {
-            $path = $urlPath; // z.B. "/storage/accounts/1/letterhead-first.pdf"
-        }
-    }
-
-    // 2. Falls APP_BASE_URL vorne dran hängt, abschneiden
-    if (defined('APP_BASE_URL') && strpos($path, APP_BASE_URL) === 0) {
-        $path = substr($path, strlen(APP_BASE_URL));
-    }
-
-    // 3. Jetzt behandeln wir es als Web-Pfad
-    $path = ltrim($path, '/'); // "storage/..." oder "layout/..."
-
-    // a) Wenn es mit "storage/" beginnt → alles dahinter relativ zu $storageRoot
-    $posStorage = strpos($path, 'storage/');
-    if ($posStorage === 0) {
-        $rel = substr($path, strlen('storage/'));  // "accounts/..."
-        $fs  = rtrim($storageRoot, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $rel;
-        return is_file($fs) ? $fs : null;
-    }
-
-    // b) Wenn es direkt wie "layout/..." aussieht, auch relativ zu $storageRoot
-    //    (so wie bei deinem file.php-Parameter)
-    $fsDirect = rtrim($storageRoot, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $path;
-    if (is_file($fsDirect)) {
-        return $fsDirect;
-    }
-
-    // Wenn nichts passt: gib null zurück
-    return null;
 }
 
-$publicDir   = realpath(__DIR__ . '/..');              // .../zeitwerk/public
-$projectRoot = dirname($publicDir);                    // .../zeitwerk
-$storageRoot = $projectRoot . '/storage';     // .../storage
+foreach ($byVatRate as $rate => &$group) {
+    $group['tax'] = round_half_up($group['net'] * $rate / 100.0, 2);
+    $totalTax += $group['tax'];
+}
+unset($group);
 
-$letterFirstPdf = $settings['invoice_letterhead_first_pdf'] ?? null;
-$letterNextPdf  = $settings['invoice_letterhead_next_pdf']  ?? $letterFirstPdf;
+$totalNet   = round_half_up($totalNet, 2);
+$totalTax   = round_half_up($totalTax, 2);
+$totalGross = round_half_up($totalNet + $totalTax, 2);
 
-$letterFirstPdfFs = storage_web_to_fs($letterFirstPdf, $storageRoot);
-$letterNextPdfFs  = storage_web_to_fs($letterNextPdf,  $storageRoot);
+// ----------------------------------------------------------
+// Seller-Daten aus account_settings
+// ----------------------------------------------------------
 
-// Wenn selbst danach nichts existiert → sauber abbrechen, aber ohne HTML-Layer
-if (!$letterFirstPdfFs) {
+$acct = get_account_settings($pdo, $account_id);
+
+$senderVatId = trim((string)($acct['sender_vat_id'] ?? ''));
+
+$seller = [
+    'name'    => (string)($acct['sender_name'] ?? ''),
+    'street'  => (string)($acct['sender_street'] ?? ''),
+    'zip'     => (string)($acct['sender_postcode'] ?? ''),
+    'city'    => (string)($acct['sender_city'] ?? ''),
+    'country' => strtoupper((string)($acct['sender_country'] ?? 'DE') ?: 'DE'),
+    'vat_id'  => $senderVatId,
+    'contact' => $user['email'] ?? null,
+];
+
+$byVatRateNonZero       = array_filter(array_keys($byVatRate), fn($r) => $r > 0);
+$hasStandardRatedLines  = !empty($byVatRateNonZero);
+
+// Falls Standard steuerpflichtige Zeilen existieren, muss Seller-VAT gesetzt sein
+if ($hasStandardRatedLines && $seller['vat_id'] === '') {
     http_response_code(500);
-    echo 'Briefbogen-PDF für die erste Seite wurde nicht gefunden.';
+    header('Content-Type: text/plain; charset=UTF-8');
+    echo "Fehler beim Factur-X-Export: Für Rechnungen mit Standard-MwSt muss eine USt-IdNr. des Absenders (Einstellungen → Absender) hinterlegt sein.";
     exit;
 }
 
-// -----------------------------------------------------------------------------
-// 3. Hilfsfunktionen für Koordinaten (Prozent → mm) und Text
-// -----------------------------------------------------------------------------
+// ----------------------------------------------------------
+// Buyer-Daten aus Invoice (NEU: strukturierte Felder)
+// ----------------------------------------------------------
 
-// Wir gehen von A4 aus, überschreiben aber gleich mit tatsächlicher Seitengröße
-$pageWidthMm  = 210.0;
-$pageHeightMm = 297.0;
+$buyerName = (string)($invoice['company_name'] ?? '');
 
-function zone_to_mm(array $zone, float $pageWidthMm, float $pageHeightMm): array {
-    return [
-        'x' => $zone['x'] / 100.0 * $pageWidthMm,
-        'y' => $zone['y'] / 100.0 * $pageHeightMm,
-        'w' => $zone['w'] / 100.0 * $pageWidthMm,
-        'h' => $zone['h'] / 100.0 * $pageHeightMm,
-    ];
+// Straße = address_line1 [+ address_line2]
+$streetParts = [];
+$line1 = trim((string)($invoice['company_address_line1'] ?? ''));
+$line2 = trim((string)($invoice['company_address_line2'] ?? ''));
+if ($line1 !== '') {
+    $streetParts[] = $line1;
+}
+if ($line2 !== '') {
+    $streetParts[] = $line2;
+}
+$buyerStreet = trim(implode(' ', $streetParts));
+
+$buyerZip     = trim((string)($invoice['company_postal_code'] ?? ''));
+$buyerCity    = trim((string)($invoice['company_city'] ?? ''));
+$buyerCountry = strtoupper((string)($invoice['company_country_code'] ?? 'DE') ?: 'DE');
+
+// Für Fallbacks (z.B. Name, falls kein Name gesetzt)
+$addressLines = [];
+if ($buyerStreet !== '') {
+    $addressLines[] = $buyerStreet;
+}
+$cityLine = trim($buyerZip . ' ' . $buyerCity);
+if ($cityLine !== '') {
+    $addressLines[] = $cityLine;
+}
+$buyerAddress = implode("\n", $addressLines);
+
+// ----------------------------------------------------------
+// Factur-X / CrossIndustryInvoice aufbauen
+// ----------------------------------------------------------
+
+$document = new CrossIndustryInvoice();
+
+// Kontext
+$document->exchangedDocumentContext                                   = new ExchangedDocumentContext();
+$document->exchangedDocumentContext->documentContextParameter         = new DocumentContextParameter();
+$document->exchangedDocumentContext->documentContextParameter->id     = 'urn:cen.eu:en16931:2017';
+
+// Kopf
+$document->exchangedDocument                               = new ExchangedDocument();
+$document->exchangedDocument->id                           = (string)($invoice['invoice_number'] ?? $invoice['id']);
+$document->exchangedDocument->typeCode                     = DocumentType::COMMERCIAL_INVOICE;
+$issueDate                                                 = (string)($invoice['issue_date'] ?? date('Y-m-d'));
+$document->exchangedDocument->issueDateTime                = CiiDateTime::create(102, date('Ymd', strtotime($issueDate)));
+
+// TradeTransaction
+$tradeTransaction = new SupplyChainTradeTransaction();
+
+// Agreement
+$agreement = new HeaderTradeAgreement();
+
+// Seller
+$agreement->sellerTradeParty       = new TradeParty();
+$agreement->sellerTradeParty->name = $seller['name'] !== '' ? $seller['name'] : 'Absender';
+
+$sellerAddress           = new TradeAddress();
+$sellerAddress->lineOne  = $seller['street'] ?: null;
+$sellerAddress->postcode = $seller['zip'] ?: null;
+$sellerAddress->city     = $seller['city'] ?: null;
+
+$country = $seller['country'] ?: 'DE';
+try {
+    $sellerAddress->countryCode = CountryCode::from($country);
+} catch (\ValueError $e) {
+    $sellerAddress->countryCode = null;
 }
 
-// -----------------------------------------------------------------------------
-// 4. PDF erzeugen (sichtbare Rechnung)
-// -----------------------------------------------------------------------------
+$agreement->sellerTradeParty->postalTradeAddress = $sellerAddress;
 
-$pdf = new Fpdi();
-$pdf->SetAuthor('Deine App');
-$pdf->SetTitle('Rechnung ' . ($invoice['number'] ?? $invoice_id));
-$pdf->SetCreator('Deine App');
+if ($seller['vat_id'] !== '') {
+    $agreement->sellerTradeParty->taxRegistrations[] =
+        TaxRegistration::create($seller['vat_id'], 'VA');
+}
 
-// Hintergrund-Seite importieren (erste Seite)
-$pdf->setSourceFile($letterFirstPdfFs);
-$tplFirst = $pdf->importPage(1);
-$size     = $pdf->getTemplateSize($tplFirst);
+// Buyer
+$agreement->buyerTradeParty       = new TradeParty();
+$agreement->buyerTradeParty->name = $buyerName ?: $buyerStreet ?: $buyerCity ?: $buyerAddress;
 
-$pageWidthMm  = $size['width'];
-$pageHeightMm = $size['height'];
+$buyerAddr           = new TradeAddress();
+$buyerAddr->lineOne  = $buyerStreet ?: null;
+$buyerAddr->postcode = $buyerZip ?: null;
+$buyerAddr->city     = $buyerCity ?: null;
 
-// Folgeseiten-Vorlage
-if ($letterNextPdfFs && is_file($letterNextPdfFs)) {
-    $pdf->setSourceFile($letterNextPdfFs);
-    $tplNext = $pdf->importPage(1);
+$country = $buyerCountry ?: 'DE';
+try {
+    $buyerAddr->countryCode = CountryCode::from($country);
+} catch (\ValueError $e) {
+    $buyerAddr->countryCode = null;
+}
+
+$agreement->buyerTradeParty->postalTradeAddress = $buyerAddr;
+
+// Beispiel 1: ein kombinierter Name im Invoice-Record
+$contactPersonName = '';
+if (!empty($invoice['contact_person_name'])) {
+    $contactPersonName = trim((string)$invoice['contact_person_name']);
 } else {
-    $tplNext = $tplFirst;
+    // Beispiel 2: Vor- und Nachname separat im Invoice-Record
+    $cpFirst = trim((string)($invoice['contact_first_name'] ?? ''));
+    $cpLast  = trim((string)($invoice['contact_last_name'] ?? ''));
+    $contactPersonName = trim($cpFirst . ' ' . $cpLast);
 }
 
-// Fonts
-$pdf->SetFont('Helvetica', '', 10);
-
-// Seitenzähler
-$currentPage    = 0;
-$showTotalPages = false; // erstmal nur "Seite X", nicht "von Y"
-
-// Items vorbereiten
-// TODO: Feldnamen an dein Schema anpassen
-$rows = [];
-foreach ($items as $it) {
-    $rows[] = [
-        'pos'   => $it['position']    ?? '',
-        'desc'  => $it['description'] ?? '',
-        'qty'   => (float)($it['quantity']    ?? 1),
-        'unit'  => $it['unit']        ?? '',
-        'price' => (float)($it['unit_price']  ?? 0),
-        'total' => (float)($it['total']       ?? 0),
-    ];
+// Wenn wir einen Namen haben, als DefinedTradeContact setzen
+if ($contactPersonName !== '') {
+    $contact = new TradeContact();
+    $contact->personName = $contactPersonName;
+    $agreement->buyerTradeParty->definedTradeContact = $contact;
 }
 
-function fmt_money(float $v): string {
-    return number_format($v, 2, ',', '.');
-}
-function fmt_date(?string $d): string {
-    if (!$d) return '';
-    $ts = strtotime($d);
-    if (!$ts) return $d;
-    return date('d.m.Y', $ts);
+if (!empty($invoice['company_vat'])) {
+    $agreement->buyerTradeParty->taxRegistrations[] =
+        TaxRegistration::create((string)$invoice['company_vat'], 'VA');
 }
 
-function get_recipient_address_components(?array $company, array $invoice): array {
-    // TODO: Feldnamen an dein Schema anpassen
+$tradeTransaction->applicableHeaderTradeAgreement = $agreement;
 
-    // Name/Firma
-    $name = '';
-    if (!empty($company['name'])) {
-        $name = $company['name'];
-    } elseif (!empty($invoice['recipient_name'])) {
-        $name = $invoice['recipient_name'];
-    }
+// Delivery
+$delivery = new HeaderTradeDelivery();
 
-    // Straße / Hausnummer
-    $line1 = '';
-    if (!empty($company['address_line1'])) {
-        $line1 = $company['address_line1'];
-    } elseif (!empty($company['street'])) {
-        $line1 = $company['street'];
-    }
-
-    // optionale 2. Zeile (z.B. Abteilung, c/o)
-    $line2 = '';
-    if (!empty($company['address_line2'])) {
-        $line2 = $company['address_line2'];
-    } elseif (!empty($company['address_extra'])) {
-        $line2 = $company['address_extra'];
-    }
-
-    // PLZ / Ort
-    $postcode = '';
-    if (!empty($company['zip'])) {
-        $postcode = $company['zip'];
-    } elseif (!empty($company['postal_code'])) {
-        $postcode = $company['postal_code'];
-    }
-
-    $city = $company['city'] ?? '';
-
-    // ISO-Ländercode (für ZUGFeRD: z.B. "DE", "FR", "CH")
-    $countryCode = '';
-    if (!empty($company['country_code'])) {
-        $countryCode = strtoupper($company['country_code']);
-    } elseif (!empty($company['country'])) {
-        $countryCode = strtoupper($company['country']);
-    } else {
-        $countryCode = 'DE'; // Fallback
-    }
-
-    return [
-        'name'        => trim($name),
-        'line1'       => trim($line1),
-        'line2'       => trim($line2),
-        'postcode'    => trim($postcode),
-        'city'        => trim($city),
-        'countryCode' => $countryCode,
-    ];
+if (!empty($span['min_start'])) {
+    $event = new SupplyChainEvent();
+    $deliveryDate = date('Ymd', strtotime($span['min_start']));
+    $event->date  = CiiDateTime::create(102, $deliveryDate);
+    $delivery->chainEvent = $event;
 }
 
-function build_recipient_address(?array $company, array $invoice): string {
-    $addr = get_recipient_address_components($company, $invoice);
+$tradeTransaction->applicableHeaderTradeDelivery = $delivery;
 
-    $lines = [];
+// Settlement
+$settlement = new HeaderTradeSettlement();
+$settlement->invoiceCurrency = CurrencyCode::EUR;
+$settlement->taxCurrency     = CurrencyCode::EUR;
 
-    if ($addr['name'] !== '') {
-        $lines[] = $addr['name'];
-    }
-    if ($addr['line1'] !== '') {
-        $lines[] = $addr['line1'];
-    }
-    if ($addr['line2'] !== '') {
-        $lines[] = $addr['line2'];
-    }
+// TradeTaxes
+$settlement->tradeTaxes = [];
 
-    $cityLine = trim($addr['postcode'] . ' ' . $addr['city']);
-    if ($cityLine !== '') {
-        $lines[] = $cityLine;
-    }
+foreach ($byVatRate as $rate => $sumByRate) {
+    $basisAmount = Amount::create(
+        number_format($sumByRate['net'], 2, '.', ''),
+        CurrencyCode::EUR
+    );
 
-    // Land nur ausgeben, wenn nicht DE – kannst du nach Wunsch ändern
-    if ($addr['countryCode'] !== '' && $addr['countryCode'] !== 'DE') {
-        $lines[] = $addr['countryCode'];
-    }
+    $calcAmount = Amount::create(
+        number_format($sumByRate['tax'], 2, '.', ''),
+        CurrencyCode::EUR
+    );
 
-    return implode("\n", $lines);
+    $categoryCode = $rate > 0 ? 'S' : 'Z';
+
+    $tax = TradeTax::create(
+        'VAT',
+        $calcAmount,
+        $basisAmount,
+        null,
+        null,
+        null,
+        $categoryCode,
+        number_format($rate, 2, '.', '')
+    );
+
+    $settlement->tradeTaxes[] = $tax;
 }
-// Seite beginnen
-$addPage = function(bool $isFirstPage) use (
-    $pdf, $tplFirst, $tplNext, $size,
-    &$currentPage, $invoice, $company, $zAddress, $zInvoiceInfo,
-    $pageWidthMm, $pageHeightMm
-) {
-    $currentPage++;
-
-    // Seite mit Briefbogen anlegen
-    $pdf->AddPage('P', [$size['width'], $size['height']]);
-    $tpl = $isFirstPage ? $tplFirst : $tplNext;
-    $pdf->useTemplate($tpl, 0, 0, $size['width'], $size['height']);
-
-    // 1) Empfängeradresse nur auf Seite 1
-    if ($isFirstPage && $zAddress) {
-        $r = zone_to_mm($zAddress, $pageWidthMm, $pageHeightMm);
-
-        $addressText = build_recipient_address($company, $invoice);
-        if ($addressText !== '') {
-            $pdf->SetXY($r['x'], $r['y']);
-            $pdf->SetFont('Helvetica', '', 10);
-            // Mehrzeilige Ausgabe innerhalb des Rahmens
-            $pdf->MultiCell($r['w'], 4, $addressText, 0, 'L');
-        }
-    }
-
-    // 2) Rechnungsinfo nur auf Seite 1
-    if ($isFirstPage && $zInvoiceInfo) {
-        $r = zone_to_mm($zInvoiceInfo, $pageWidthMm, $pageHeightMm);
-
-        $pdf->SetXY($r['x'], $r['y']);
-        $pdf->SetFont('Helvetica', 'B', 11);
-
-        $invNo = $invoice['number'] ?? ('Rechnung ' . $invoice['id']);
-        $date  = fmt_date($invoice['date'] ?? $invoice['invoice_date'] ?? null);
-
-        $pdf->Cell($r['w'], 5, 'Rechnung ' . $invNo, 0, 2, 'L');
-
-        $pdf->SetFont('Helvetica', '', 10);
-        if ($date) {
-            $pdf->Cell($r['w'], 5, 'Rechnungsdatum: ' . $date, 0, 2, 'L');
-        }
-
-        if ($company) {
-            $line = [];
-            if (!empty($company['name']))   $line[] = $company['name'];
-            if (!empty($company['city']))   $line[] = $company['city'];
-            $pdf->Cell($r['w'], 5, implode(' · ', $line), 0, 2, 'L');
-        }
-    }
-};
-
-// Items rendern
-$renderItemsOnPage = function(
-    array $rows,
-    int $startIndex,
-    array $zoneItems,
-    Fpdi $pdf
-) use ($pageWidthMm, $pageHeightMm): int {
-
-    if (!$zoneItems) return $startIndex;
-
-    $r = zone_to_mm($zoneItems, $pageWidthMm, $pageHeightMm);
-
-    $pdf->SetFont('Helvetica', 'B', 9);
-    $pdf->SetXY($r['x'], $r['y']);
-
-    $colPos   = 10;
-    $colDesc  = $r['w'] - 10 - 20 - 25 - 25;
-    if ($colDesc < 40) $colDesc = 40;
-    $colQty   = 20;
-    $colPrice = 25;
-    $colTotal = 25;
-
-    $pdf->Cell($colPos,   5, 'Pos',          0, 0, 'L');
-    $pdf->Cell($colDesc,  5, 'Beschreibung', 0, 0, 'L');
-    $pdf->Cell($colQty,   5, 'Menge',        0, 0, 'R');
-    $pdf->Cell($colPrice, 5, 'Einzelpreis',  0, 0, 'R');
-    $pdf->Cell($colTotal, 5, 'Gesamt',       0, 1, 'R');
-
-    $pdf->SetFont('Helvetica', '', 9);
-
-    $lineHeight = 5.0;
-    $maxY = $r['y'] + $r['h'];
-
-    $idx = $startIndex;
-    $n   = count($rows);
-
-    while ($idx < $n) {
-        $row = $rows[$idx];
-
-        if ($pdf->GetY() + $lineHeight > $maxY) {
-            break;
-        }
-
-        $pdf->SetX($r['x']);
-
-        $pdf->Cell($colPos,   $lineHeight, (string)$row['pos'], 0, 0, 'L');
-        $pdf->Cell($colDesc,  $lineHeight, $row['desc'],        0, 0, 'L');
-        $pdf->Cell($colQty,   $lineHeight, rtrim(rtrim(number_format($row['qty'], 2, ',', '.'), '0'), ','), 0, 0, 'R');
-        $pdf->Cell($colPrice, $lineHeight, fmt_money($row['price']), 0, 0, 'R');
-        $pdf->Cell($colTotal, $lineHeight, fmt_money($row['total']), 0, 1, 'R');
-
-        $idx++;
-    }
-
-    return $idx;
-};
 
 // Summen
-$renderTotals = function(
-    array $invoice,
-    array $zoneTotals,
-    Fpdi $pdf
-) use ($pageWidthMm, $pageHeightMm) {
-    if (!$zoneTotals) return;
+$headerSum = new TradeSettlementHeaderMonetarySummation();
+$headerSum->lineTotalAmount = Amount::create(
+    number_format($totalNet, 2, '.', ''),
+    CurrencyCode::EUR
+);
+$headerSum->taxBasisTotalAmount = [
+    Amount::create(
+        number_format($totalNet, 2, '.', ''),
+        CurrencyCode::EUR
+    ),
+];
+$headerSum->taxTotalAmount = [
+    Amount::create(
+        number_format($totalTax, 2, '.', ''),
+        CurrencyCode::EUR
+    ),
+];
+$headerSum->grandTotalAmount = [
+    Amount::create(
+        number_format($totalGross, 2, '.', ''),
+        CurrencyCode::EUR
+    ),
+];
+$headerSum->duePayableAmount = Amount::create(
+    number_format($totalGross, 2, '.', ''),
+    CurrencyCode::EUR
+);
 
-    $r = zone_to_mm($zoneTotals, $pageWidthMm, $pageHeightMm);
-    $pdf->SetXY($r['x'], $r['y']);
+$settlement->specifiedTradeSettlementHeaderMonetarySummation = $headerSum;
 
-    $net   = (float)($invoice['total_net']   ?? 0);
-    $vat   = (float)($invoice['total_vat']   ?? 0);
-    $gross = (float)($invoice['total_gross'] ?? ($net + $vat));
+// Zahlungsziel
+if (!empty($invoice['due_date'])) {
+    $terms       = new TradePaymentTerms();
+    $due         = date('Ymd', strtotime((string)$invoice['due_date']));
+    $terms->dueDate = CiiDateTime::create(102, $due);
+    $settlement->specifiedTradePaymentTerms = $terms;
+}
 
-    $pdf->SetFont('Helvetica', '', 9);
+$tradeTransaction->applicableHeaderTradeSettlement = $settlement;
 
-    $labelWidth = $r['w'] * 0.5;
-    $valWidth   = $r['w'] * 0.5;
+// Zeilen
+$tradeTransaction->lineItems = [];
+$lineNumber = 0;
+foreach ($items as $r) {
+    $lineNumber++;
 
-    $pdf->Cell($labelWidth, 5, 'Zwischensumme (netto)', 0, 0, 'L');
-    $pdf->Cell($valWidth,   5, fmt_money($net) . ' €',   0, 1, 'R');
+    $lineItem = new SupplyChainTradeLineItem();
+    $lineItem->associatedDocumentLineDocument = DocumentLineDocument::create((string)$lineNumber);
 
-    $pdf->Cell($labelWidth, 5, 'Umsatzsteuer',          0, 0, 'L');
-    $pdf->Cell($valWidth,   5, fmt_money($vat) . ' €',  0, 1, 'R');
+    $product       = new TradeProduct();
+    $product->name = (string)($r['description'] ?? ('Pos. ' . $lineNumber));
+    $lineItem->specifiedTradeProduct = $product;
 
-    $pdf->SetFont('Helvetica', 'B', 9);
-    $pdf->Cell($labelWidth, 6, 'Gesamtbetrag',          0, 0, 'L');
-    $pdf->Cell($valWidth,   6, fmt_money($gross) . ' €',0, 1, 'R');
-};
+    $lineAgreement = new LineTradeAgreement();
 
-// Seitenzahl
-$renderPageNumber = function(
-    int $page,
-    ?int $total,
-    array $zonePage,
-    Fpdi $pdf
-) use ($pageWidthMm, $pageHeightMm) {
-    if (!$zonePage) return;
-    $r = zone_to_mm($zonePage, $pageWidthMm, $pageHeightMm);
-    $pdf->SetFont('Helvetica', '', 8);
-    $pdf->SetXY($r['x'], $r['y']);
+    $qty       = (float)($r['quantity'] ?? 0);
+    $unitPrice = (float)($r['unit_price'] ?? 0);
 
-    $text = 'Seite ' . $page;
-    if ($total !== null) {
-        $text .= ' von ' . $total;
-    }
-    $pdf->Cell($r['w'], 4, $text, 0, 0, 'R');
-};
+    $price = new TradePrice();
+    $price->chargeAmount = Amount::create(
+        number_format($unitPrice, 2, '.', ''),
+        CurrencyCode::EUR
+    );
 
-// -----------------------------------------------------------------------------
-// 5. Seiten rendern
-// -----------------------------------------------------------------------------
+    $mode     = strtolower((string)($r['entry_mode'] ?? 'qty'));
+    $unitEnum = ($mode === 'auto' || $mode === 'time')
+        ? UnitCode::HUR
+        : UnitCode::C62;
 
-$currentPage = 0;
-$idx         = 0;
-$n           = count($rows);
+    $basisQuantity        = Quantity::create('1', $unitEnum);
+    $price->basisQuantity = $basisQuantity;
 
-while (true) {
-    $isFirst = ($currentPage === 0);
-    $addPage($isFirst);
+    $lineAgreement->netPrice  = $price;
+    $lineItem->tradeAgreement = $lineAgreement;
 
-    if ($isFirst) {
-        $idx = $renderItemsOnPage($rows, $idx, $zItems1, $pdf);
-        if ($idx >= $n) {
-            $renderTotals($invoice, $zTotals1, $pdf);
+    $lineDelivery = new LineTradeDelivery();
+    $lineDelivery->billedQuantity = Quantity::create(
+        number_format($qty, 4, '.', ''),
+        $unitEnum
+    );
+    $lineItem->delivery = $lineDelivery;
+
+    $lineSettlement = new LineTradeSettlement();
+
+    $vatRate = (float)($r['vat_rate'] ?? 0);
+    $lineNet = isset($r['total_net'])
+        ? (float)$r['total_net']
+        : round_half_up($qty * $unitPrice, 2);
+
+    $lineTaxObj = TradeTax::create(
+        'VAT',
+        null,
+        null,
+        null,
+        null,
+        null,
+        $vatRate > 0 ? 'S' : 'Z',
+        number_format($vatRate, 2, '.', '')
+    );
+
+    $lineSettlement->tradeTax = [$lineTaxObj];
+
+    $lineSum              = new TradeSettlementLineMonetarySummation();
+    $lineSum->totalAmount = Amount::create(
+        number_format($lineNet, 2, '.', ''),
+        CurrencyCode::EUR
+    );
+
+    $lineSettlement->monetarySummation      = $lineSum;
+    $lineItem->specifiedLineTradeSettlement = $lineSettlement;
+
+    $tradeTransaction->lineItems[] = $lineItem;
+}
+
+$document->supplyChainTradeTransaction = $tradeTransaction;
+
+// ----------------------------------------------------------
+// Factur-X XML als $dataXml
+// ----------------------------------------------------------
+
+$dataXml = Transformer::create()->transformToXml($document);
+
+// ----------------------------------------------------------
+// settings.xml dynamisch aus invoice_layout_zones
+// ----------------------------------------------------------
+
+$settingsXml = build_settings_xml_from_layout($acct, $invoice);
+// $settingsXml = file_get_contents(__DIR__ . '/speedata/settings.xml');
+
+// Layout laden (dein fertiges layout.xml)
+$layoutPath = __DIR__ . '/speedata/layout.xml';
+if (!is_readable($layoutPath)) {
+    http_response_code(500);
+    header('Content-Type: text/plain; charset=UTF-8');
+    echo 'Layout-Datei nicht lesbar: ' . $layoutPath;
+    exit;
+}
+$layoutXml = file_get_contents($layoutPath);
+if ($layoutXml === false) {
+    http_response_code(500);
+    header('Content-Type: text/plain; charset=UTF-8');
+    echo 'Konnte Layout-Datei nicht einlesen.';
+    exit;
+}
+
+// Briefbogen + Fonts (ggf. Pfade anpassen)
+$letterheadSettingRaw = trim((string)($acct['invoice_letterhead_first_pdf'] ?? ''));
+$letterheadPath       = '';
+
+// Wenn in den Settings ein Wert gesetzt ist:
+if ($letterheadSettingRaw !== '') {
+
+    // Fall 1: Es ist eine URL wie /settings/file.php?path=layout%2Fletterhead_first_....
+    if (strpos($letterheadSettingRaw, 'file.php') !== false) {
+        $urlParts = parse_url($letterheadSettingRaw);
+        $relativePath = '';
+
+        if (!empty($urlParts['query'])) {
+            parse_str($urlParts['query'], $query);
+            if (!empty($query['path'])) {
+                // path-Parameter dekodieren (layout%2Ffoo.pdf → layout/foo.pdf)
+                $relativePath = urldecode($query['path']);
+            }
         }
-        $renderPageNumber($currentPage, $showTotalPages ? null : null, $zPageNo1, $pdf);
+
+        if ($relativePath !== '') {
+            // Sicherheitshalber führende Slashes entfernen
+            $relativePath = ltrim($relativePath, '/');
+            // Deine file.php liest wahrscheinlich aus storage/, also:
+            $letterheadPath = __DIR__ . '/../../storage/' . $relativePath;
+        }
+
+    // Fall 2: Absoluter Pfad im Setting
+    } elseif ($letterheadSettingRaw[0] === '/' || preg_match('~^[A-Za-z]:[\\\\/]~', $letterheadSettingRaw)) {
+        $letterheadPath = $letterheadSettingRaw;
+
+    // Fall 3: Nur Dateiname o. ä. → unter storage/layout/
     } else {
-        $idx = $renderItemsOnPage($rows, $idx, $zItems2, $pdf);
-        if ($idx >= $n) {
-            $renderTotals($invoice, $zTotals2, $pdf);
-        }
-        $renderPageNumber($currentPage, $showTotalPages ? null : null, $zPageNo2, $pdf);
-    }
-
-    if ($idx >= $n) {
-        break;
+        $letterheadPath = __DIR__ . '/../../storage/layout/' . $letterheadSettingRaw;
     }
 }
 
-// -----------------------------------------------------------------------------
-// 6. PDF ausgeben (keine HTML-Ausgabe vorher!)
-// -----------------------------------------------------------------------------
+// Fallback, falls oben nichts Sinnvolles herauskam
+if ($letterheadPath === '') {
+    $letterheadPath = __DIR__ . '/../../storage/layout/letterhead_first_1_1762847651.pdf';
+}
 
-$filename = 'Rechnung-' . ($invoice['number'] ?? $invoice_id) . '.pdf';
+$fontRegular = __DIR__ . '/../../storage/layout/DINPro-Regular.otf';
+$fontMedium  = __DIR__ . '/../../storage/layout/DINPro-Medium.otf';
+
+if (!is_readable($letterheadPath)) {
+    http_response_code(500);
+    header('Content-Type: text/plain; charset=UTF-8');
+    echo 'Briefbogen nicht lesbar: ' . $letterheadPath;
+    exit;
+}
+if (!is_readable($fontRegular) || !is_readable($fontMedium)) {
+    http_response_code(500);
+    header('Content-Type: text/plain; charset=UTF-8');
+    echo 'Schriftdateien nicht lesbar.';
+    exit;
+}
+
+// ----------------------------------------------------------
+// speedata.publish
+// ----------------------------------------------------------
+
+try {
+    $pdf = speedata_publish([
+        'layout.xml'       => $layoutXml,
+        'data.xml'         => $dataXml,
+        'settings.xml'     => $settingsXml,
+        'letterhead.pdf'   => file_get_contents($letterheadPath),
+        'regular_font.otf' => file_get_contents($fontRegular),
+        'medium_font.otf'  => file_get_contents($fontMedium),
+    ]);
+} catch (Throwable $e) {
+    http_response_code(500);
+    header('Content-Type: text/plain; charset=UTF-8');
+    echo "Fehler beim Speedata-Export:\n\n" . $e->getMessage();
+    exit;
+}
+
+// ----------------------------------------------------------
+// PDF ausliefern
+// ----------------------------------------------------------
+
+$filename = 'R-' . preg_replace('~[^A-Za-z0-9_-]+~', '_', (string)($invoice['invoice_number'] ?? $invoice['id'])) . '.pdf';
 
 header('Content-Type: application/pdf');
-header('Content-Disposition: inline; filename="' . addslashes($filename) . '"');
+header('Content-Disposition: attachment; filename="' . $filename . '"');
+header('Content-Length: ' . strlen($pdf));
 
-$pdf->Output('I', $filename);
+echo $pdf;
 exit;
