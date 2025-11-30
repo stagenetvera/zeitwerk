@@ -10,7 +10,7 @@ csrf_check();
 $user       = auth_user();
 $account_id = (int)$user['account_id'];
 
-$err = null; $ok = null;
+$err = null; $ok = null; $warn = null;
 
 $set = get_account_settings($pdo, $account_id);
 
@@ -70,6 +70,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!is_dir($layoutDir)) {
       @mkdir($layoutDir, 0775, true);
     }
+    if (!is_dir($layoutDir) || !is_writable($layoutDir)) {
+      throw new RuntimeException('Upload-Verzeichnis nicht schreibbar: ' . $layoutDir);
+    }
 
     // Vorhandene Pfade als Default übernehmen
     $data['invoice_letterhead_first_pdf']     = $set['invoice_letterhead_first_pdf']     ?? '';
@@ -78,13 +81,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $data['invoice_letterhead_next_preview']  = $set['invoice_letterhead_next_preview']  ?? '';
 
     // -- Upload-Funktion inline, um Dopplung klein zu halten --
-    $handleUpload = function(string $fieldName, string $labelBase, string $oldPdfKey, string $oldPngKey) use (&$data, $layoutDir, $account_id, $set) {
+    $handleUpload = function(string $fieldName, string $labelBase, string $oldPdfKey, string $oldPngKey) use (&$data, $layoutDir, $account_id, $set, &$err, &$warn) {
       if (!isset($_FILES[$fieldName]) || !is_array($_FILES[$fieldName])) {
         return;
       }
       $file = $_FILES[$fieldName];
 
       if ($file['error'] !== UPLOAD_ERR_OK || $file['tmp_name'] === '') {
+        if ($file['error'] !== UPLOAD_ERR_NO_FILE) {
+          $err = 'Upload fehlgeschlagen für '.$labelBase.' (Fehlercode '.$file['error'].').';
+        }
         return;
       }
 
@@ -95,7 +101,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
       // simple Prüfung auf PDF
       if ($mime !== 'application/pdf' && $mime !== 'application/x-pdf') {
-        // Wenn du willst, kannst du hier noch eine Fehlermeldung in $GLOBALS['err'] setzen
+        $err = 'Ungültiges Dateiformat für '.$labelBase.' (nur PDF erlaubt).';
         return;
       }
 
@@ -106,6 +112,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       $pngFsPath = $layoutDir . '/' . $baseName . '.png';
 
       if (!move_uploaded_file($file['tmp_name'], $pdfFsPath)) {
+        $err = 'Upload konnte nicht gespeichert werden ('.$labelBase.').';
         return;
       }
 
@@ -126,6 +133,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $data[$oldPngKey] = '/settings/file.php?path=' . rawurlencode('layout/' . $baseName . '.png');
       } else {
         $data[$oldPngKey] = '';
+        $warn = ($warn ? $warn."\n" : '') . 'Vorschau für '.$labelBase.' konnte nicht erzeugt werden (Imagick fehlt?). PDF wurde trotzdem gespeichert.';
       }
     };
 
@@ -145,6 +153,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       'invoice_letterhead_next_preview'
     );
 
+    // Bei Upload-Fehlern nicht speichern
+    if ($err) {
+      throw new RuntimeException($err);
+    }
+
     // Jetzt alle Settings speichern
     save_account_settings($pdo, $account_id, $data);
     $ok = 'Einstellungen wurden gespeichert.';
@@ -152,7 +165,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // $set für Anzeige aktualisieren
     $set = get_account_settings($pdo, $account_id);
   } catch (Throwable $e) {
-    $err = 'Konnte Einstellungen nicht speichern.';
+    if (!$err) {
+      $err = 'Konnte Einstellungen nicht speichern.';
+    }
   }
 }
 ?>
@@ -161,6 +176,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 </div>
 
 <?php if ($ok): ?><div class="alert alert-success"><?=h($ok)?></div><?php endif; ?>
+<?php if ($warn): ?><div class="alert alert-warning"><?=nl2br(h($warn))?></div><?php endif; ?>
 <?php if ($err): ?><div class="alert alert-danger"><?=h($err)?></div><?php endif; ?>
 
 <form method="post" enctype="multipart/form-data" class="card">

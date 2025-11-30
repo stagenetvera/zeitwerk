@@ -40,9 +40,11 @@ $zonesData = isset($layoutData['zones']) && is_array($layoutData['zones'])
   ? $layoutData['zones']
   : [];
 
-// Briefbogen-Previews
+// Briefbogen-Previews/PDF
 $previewFirst = $set['invoice_letterhead_first_preview'] ?? '';
 $previewNext  = $set['invoice_letterhead_next_preview'] ?? '';
+$pdfFirst     = $set['invoice_letterhead_first_pdf'] ?? '';
+$pdfNext      = $set['invoice_letterhead_next_pdf'] ?? '';
 
 function hurl($s){ return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
 
@@ -88,11 +90,16 @@ $layoutJsonForJs = json_encode($layoutData, JSON_UNESCAPED_UNICODE);
 <?php if ($ok): ?><div class="alert alert-success"><?=h($ok)?></div><?php endif; ?>
 <?php if ($err): ?><div class="alert alert-danger"><?=h($err)?></div><?php endif; ?>
 
-<?php if (!$previewFirst): ?>
+<?php if (!$previewFirst && !$pdfFirst): ?>
   <div class="alert alert-warning">
     Es ist noch kein Briefbogen für die erste Seite hinterlegt.
     Bitte lade zuerst unter <a href="<?= hurl(url('/settings/index.php')) ?>">Einstellungen &raquo; Rechnungen</a>
     einen PDF-Briefbogen hoch. Die PNG-Vorschau wird dann automatisch erzeugt.
+  </div>
+<?php elseif ($pdfFirst && !$previewFirst): ?>
+  <div class="alert alert-warning">
+    Briefbogen-PDF ist vorhanden, aber keine Vorschau wurde erzeugt (evtl. fehlt Imagick). Die Layout-Zonen können ohne Vorschau nicht bearbeitet werden.
+    Datei: <a href="<?= hurl(url($pdfFirst)) ?>" target="_blank" rel="noopener">öffnen</a>
   </div>
 <?php else: ?>
   <form method="post" class="card" id="layout-form">
