@@ -110,9 +110,9 @@ if (!isset($return_to) || $return_to === null || $return_to === '') {
               <?php
                 $st = $inv['status'] ?? 'in_vorbereitung';
                 $has_no_number = empty($inv['invoice_number']);
-                $can_delete = ($st === 'in_vorbereitung' && $has_no_number);
+                // Löschen-Button aktiv, solange Status in_vorbereitung (hart wenn keine Nummer, soft wenn Nummer vorhanden)
+                $can_delete = ($st === 'in_vorbereitung');
                 $can_cancel = in_array($st, ['gestellt','gemahnt','bezahlt', 'ausgebucht'], true); // „storniert“ schon storniert → deaktivieren
-
               ?>
               <form method="post" action="<?= url('/invoices/cancel.php') ?>" class="d-inline"
                     onsubmit="return confirm('Rechnung wirklich stornieren?');">

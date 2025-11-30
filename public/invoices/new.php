@@ -594,41 +594,21 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && ($_POST['a
         exit;
       }
 
-      // --- Abschluss / Nummernvergabe / Statuswechsel
+      // --- Abschluss (Status bleibt in_vorbereitung)
+      $pdo->commit();
+
+      if (function_exists('flash') && !empty($flash_backattach)) {
+        $cnt = array_sum($flash_backattach);
+        $msg = $cnt." Zeit-Einträge an Fixpreis-Entwürfe/alte Rechnungen angehängt.";
+        flash($msg, 'info');
+      }
+
       if (($_POST['action'] ?? '') === 'save_and_issue') {
-        // 1) Rechnungsnummer vergeben
-        $number = assign_invoice_number_if_needed($pdo, $account_id, (int)$invoice_id, $issue_date);
-
-        // 2) Status auf "gestellt"
-        $pdo->prepare("UPDATE invoices SET status='gestellt', invoice_number=? WHERE id=? AND account_id=?")
-            ->execute([$number, (int)$invoice_id, $account_id]);
-
-        // 3) Alle dieser Rechnung zugeordneten Zeiten -> 'abgerechnet'
-        set_times_status_for_invoice($pdo, $account_id, (int)$invoice_id, 'abgerechnet');
-
-        $pdo->commit();
-
-        if (function_exists('flash') && !empty($flash_backattach)) {
-          $cnt = array_sum($flash_backattach);
-          $msg = $cnt." Zeit-Einträge an bereits abgerechnete Fixpreis-Positionen früherer Rechnungen angehängt.";
-          flash($msg, 'info');
-        }
-
         redirect(url('/invoices/pdf.php?id='.(int)$invoice_id));
-        exit;
-
       } else {
-        // nur gespeichert (Entwurf)
-        $pdo->commit();
-
-        if (function_exists('flash') && !empty($flash_backattach)) {
-          $cnt = array_sum($flash_backattach);
-          $msg = $cnt." Zeit-Einträge an Fixpreis-Entwürfe/alte Rechnungen angehängt.";
-          flash($msg, 'info');
-        }
-
         redirect_to_return_to(url('/companies/show.php').'?id='.$company_id);
       }
+      exit;
 
     } catch (Throwable $e) {
       $pdo->rollBack();

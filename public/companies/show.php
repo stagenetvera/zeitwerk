@@ -591,7 +591,7 @@ $running_time_id = $has_running ? (int)$__running['id'] : 0;
 <?php
 // --- Rechnungen: Filter + Pagination + Liste ---
 
-$allowed_inv_status = ['in_vorbereitung','gestellt','gemahnt','bezahlt','ausgebucht','storniert'];
+$allowed_inv_status = ['in_vorbereitung','gestellt','gemahnt','bezahlt','ausgebucht','storniert','gelöscht'];
 $has_isf = isset($_GET['isf']); // invoice status filter flag
 $inv_status = [];
 if (isset($_GET['inv_status']) && is_array($_GET['inv_status'])) {

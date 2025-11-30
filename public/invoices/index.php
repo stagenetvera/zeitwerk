@@ -12,7 +12,7 @@ function fmt_money($v){ return number_format((float)$v, 2, ',', '.'); }
 
 // --- Filter-Inputs ---
 $company_id   = isset($_GET['company_id']) && $_GET['company_id'] !== '' ? (int)$_GET['company_id'] : 0;
-$allowed_stat = ['in_vorbereitung','gestellt','gemahnt','bezahlt','storniert','ausgebucht'];
+$allowed_stat = ['in_vorbereitung','gestellt','gemahnt','bezahlt','storniert','ausgebucht','gelöscht'];
 $isf          = isset($_GET['isf']); // Flag: Filter aktiv gesetzt?
 
 $status = [];

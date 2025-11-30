@@ -25,10 +25,7 @@ try {
   $inv = $st->fetch();
   if (!$inv) throw new RuntimeException('Rechnung nicht gefunden.');
 
-  // Nur löschen, wenn noch keine Rechnungsnummer (und z.B. Status in_vorbereitung)
-  if (!empty($inv['invoice_number'])) {
-    throw new RuntimeException('Rechnung hat bereits eine Nummer und kann nicht gelöscht werden. Bitte stornieren.');
-  }
+  $hasNumber = !empty($inv['invoice_number']);
   if (($inv['status'] ?? '') !== 'in_vorbereitung') {
     throw new RuntimeException('Nur Rechnungen im Status „in_vorbereitung“ dürfen gelöscht werden.');
   }
@@ -88,19 +85,23 @@ try {
   $pdo->prepare("DELETE FROM recurring_item_ledger WHERE account_id=? AND invoice_id=?")
       ->execute([$account_id, $invoice_id]);
 
-  // 5) Positionen löschen
-  $pdo->prepare("DELETE FROM invoice_items WHERE account_id=? AND invoice_id=?")
-      ->execute([$account_id, $invoice_id]);
-
-  // 6) Rechnung löschen
-  $pdo->prepare("DELETE FROM invoices WHERE account_id=? AND id=?")
-      ->execute([$account_id, $invoice_id]);
-
-
-
-
-  $pdo->commit();
-  flash('Rechnung gelöscht. Verknüpfte Zeiten sind wieder offen.', 'success');
+  if ($hasNumber) {
+    // Soft-Delete: Positionen kappen, Rechnung behalten
+    $pdo->prepare("DELETE FROM invoice_items WHERE account_id=? AND invoice_id=?")
+        ->execute([$account_id, $invoice_id]);
+    $pdo->prepare("UPDATE invoices SET status='gelöscht', total_net=0.00, total_gross=0.00 WHERE account_id=? AND id=?")
+        ->execute([$account_id, $invoice_id]);
+    $pdo->commit();
+    flash('Rechnung als gelöscht markiert. Verknüpfte Zeiten sind wieder offen.', 'success');
+  } else {
+    // Hard-Delete ohne Nummer
+    $pdo->prepare("DELETE FROM invoice_items WHERE account_id=? AND invoice_id=?")
+        ->execute([$account_id, $invoice_id]);
+    $pdo->prepare("DELETE FROM invoices WHERE account_id=? AND id=?")
+        ->execute([$account_id, $invoice_id]);
+    $pdo->commit();
+    flash('Rechnung gelöscht. Verknüpfte Zeiten sind wieder offen.', 'success');
+  }
 } catch (Throwable $e) {
   $pdo->rollBack();
   flash('Löschen fehlgeschlagen: '.$e->getMessage(), 'danger');

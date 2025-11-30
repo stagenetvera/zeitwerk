@@ -551,6 +551,7 @@ require __DIR__ . '/../../src/layout/header.php';
           <option value="bezahlt" <?=$st==='bezahlt'?'selected':''?>>bezahlt</option>
           <option value="storniert" <?=$st==='storniert'?'selected':''?>>storniert</option>
           <option value="ausgebucht" <?=$st==='ausgebucht'?'selected':''?>>ausgebucht</option>
+          <option value="gelöscht" <?=$st==='gelöscht'?'selected':''?>>gelöscht</option>
         </select>
       </div>
 
