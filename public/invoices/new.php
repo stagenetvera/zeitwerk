@@ -199,9 +199,22 @@ if ($default_manual_rate <= 0 && !empty($groups) && !empty($groups[0]['rows'])) 
 
 // --- Preview wiederkehrende Positionen
 $issue_for_preview = $_POST['issue_date'] ?? $issue_default;
-$recurring_preview = [];
+$recurring_runs = [];
+$recurring_items_prefill = [];
 if ($company_id) {
-  $recurring_preview = ri_compute_due_runs($pdo, $account_id, $company_id, $issue_for_preview);
+  $recurring_runs = ri_compute_due_runs($pdo, $account_id, $company_id, $issue_for_preview);
+  foreach ($recurring_runs as $r) {
+    $scheme = (string)($r['tax_scheme'] ?? $DEFAULT_SCHEME);
+    $recurring_items_prefill[] = [
+      'entry_mode'  => 'qty',
+      'description' => (string)$r['description'],
+      'quantity'    => (float)$r['quantity'],
+      'hourly_rate' => (float)$r['unit_price'],
+      'tax_scheme'  => $scheme,
+      'vat_rate'    => ($scheme === 'standard') ? (float)($r['vat_rate'] ?? 0.0) : 0.0,
+      'ri_key'      => (string)$r['key'],
+    ];
+  }
 }
 
 // --- Effektive Default-Texte
@@ -253,7 +266,6 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && ($_POST['a
   }
 
   $itemsForm = $_POST['items'] ?? [];
-  $ri_selected_keys = array_keys($_POST['ri_pick'] ?? []);
 
   // Muss es überhaupt Positionen geben?
   if (!$err) {
@@ -268,12 +280,12 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && ($_POST['a
         if ($desc !== '') { $hasAnyItem = true; break; }
       } else if ($tids || $desc !== '' || ($qty > 0 && $rate >= 0)) { $hasAnyItem = true; break; }
     }
-    if (!$hasAnyItem && !$ri_selected_keys) {
+    if (!$hasAnyItem) {
       $err = 'Keine Position ausgewählt.';
     }
   }
 
-  // Pflichtprüfung Steuerbegründung, falls Non-Standard in Items oder Recurring-Auswahl
+  // Pflichtprüfung Steuerbegründung, falls Non-Standard in Items
   $hasNonStandard = false;
   if (!$err) {
     foreach ((array)$itemsForm as $row) {
@@ -281,9 +293,6 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && ($_POST['a
       $vat    = ($scheme === 'standard') ? dec($row['vat_rate'] ?? $DEFAULT_TAX) : 0.0;
       if ($scheme !== 'standard' || $vat <= 0.0) { $hasNonStandard = true; break; }
     }
-    // Recurring-Vorschau für das tatsächlich gepostete Datum
-    $due_all = ri_compute_due_runs($pdo, $account_id, $company_id, $issue_date);
-    if (ri_selected_has_nonstandard($due_all, $ri_selected_keys)) $hasNonStandard = true;
 
     if ($hasNonStandard && $tax_reason === '') {
       $err = 'Bitte Begründung für die Steuerbefreiung angeben.';
@@ -345,8 +354,9 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && ($_POST['a
       $insLink = $pdo->prepare("INSERT IGNORE INTO invoice_item_times (account_id, invoice_item_id, time_id) VALUES (?,?,?)");
       $setTimeStatus = $pdo->prepare("UPDATE times SET status=? WHERE account_id=? AND id IN (%s)");
 
-      $pos = 1; $sum_net = 0.00;
+      $pos = 1; $sum_net = 0.00; $sum_gross = 0.00;
       $flash_backattach = []; // [task_id => count]
+      $ri_keys_used = [];
 
       // Hilfsfunktionen
       $getTask = $pdo->prepare("SELECT id, account_id, project_id, billing_mode, fixed_price_cents, billed_in_invoice_id FROM tasks WHERE account_id=? AND id=?");
@@ -365,6 +375,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && ($_POST['a
         $scheme  = $row['tax_scheme'] ?? $DEFAULT_SCHEME;
         $vat     = ($scheme === 'standard') ? (float)dec($row['vat_rate'] ?? $DEFAULT_TAX) : 0.0;
         $vat     = max(0.0, min(100.0, $vat));
+        $ri_key  = trim((string)($row['ri_key'] ?? ''));
 
         $task_id  = (int)($row['task_id'] ?? 0);
         $time_ids = array_values(array_filter(array_map('intval', (array)($row['time_ids'] ?? [])), fn($v)=>$v>0));
@@ -404,6 +415,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && ($_POST['a
               $qty, $rate, $vat, $net, $gross, $pos++, $scheme, 'fixed', 0
             ]);
             $visible_count++;
+            if ($ri_key !== '') { $ri_keys_used[$ri_key] = true; }
             $item_id = (int)$pdo->lastInsertId();
 
             // Zeiten verlinken + auf 'in_abrechnung'
@@ -516,6 +528,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && ($_POST['a
             $qty, $rate, $vat, $net, $gross, $pos++, $scheme, 'auto', 0
           ]);
           $visible_count++;
+          if ($ri_key !== '') { $ri_keys_used[$ri_key] = true; }
           $item_id = (int)$pdo->lastInsertId();
 
           foreach ($time_ids as $tid) { $insLink->execute([$account_id, $item_id, (int)$tid]); }
@@ -553,20 +566,14 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && ($_POST['a
           $qty, $rate, $vat, $net, $gross, $pos++, $scheme, $mode, 0
         ]);
         $visible_count++;
+        if ($ri_key !== '') { $ri_keys_used[$ri_key] = true; }
         $sum_net  += $net;
         $sum_gross+= $gross;
       }
 
-      // Wiederkehrende Positionen (nur die angehakten Keys)
-      if ($ri_selected_keys) {
-        $pos_before = $pos;
-        list($ri_net, $ri_gross, $pos) = ri_attach_due_items(
-          $pdo, $account_id, $company_id, $invoice_id, $issue_date, $pos, $ri_selected_keys
-        );
-
-        $visible_count += max(0, $pos - $pos_before);
-        $sum_net   += $ri_net;
-        $sum_gross += $ri_gross;
+      if (!empty($ri_keys_used)) {
+        $due_runs = ri_compute_due_runs($pdo, $account_id, $company_id, $issue_date);
+        ri_mark_runs_linked($pdo, $account_id, $company_id, $invoice_id, $due_runs, array_keys($ri_keys_used));
       }
 
       // Summen aktualisieren
@@ -629,16 +636,26 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && ($_POST['a
     }
   } else {
     // Bei Fehler: Preview für das gepostete Datum anzeigen
-    $recurring_preview = ri_compute_due_runs($pdo, $account_id, $company_id, $issue_date);
+    $recurring_runs = ri_compute_due_runs($pdo, $account_id, $company_id, $issue_date);
+    $recurring_items_prefill = [];
+    foreach ($recurring_runs as $r) {
+      $scheme = (string)($r['tax_scheme'] ?? $DEFAULT_SCHEME);
+      $recurring_items_prefill[] = [
+        'entry_mode'  => 'qty',
+        'description' => (string)$r['description'],
+        'quantity'    => (float)$r['quantity'],
+        'hourly_rate' => (float)$r['unit_price'],
+        'tax_scheme'  => $scheme,
+        'vat_rate'    => ($scheme === 'standard') ? (float)($r['vat_rate'] ?? 0.0) : 0.0,
+        'ri_key'      => (string)$r['key'],
+      ];
+    }
   }
 }
 // ---------- View ----------
 require __DIR__ . '/../../src/layout/header.php';
 $return_to = pick_return_to('/companies/show.php?id='.$company_id);
 
-// Für das UI: welche Recurring-Keys waren angehakt?
-$ri_selected_keys_post = array_keys($_POST['ri_pick'] ?? []);
-$ri_selected_set = array_flip($ri_selected_keys_post);
 $tax_reason_value = isset($_POST['tax_exemption_reason']) ? (string)$_POST['tax_exemption_reason'] : '';
 ?>
 <div class="d-flex justify-content-between align-items-center mb-3">
@@ -740,64 +757,6 @@ $tax_reason_value = isset($_POST['tax_exemption_reason']) ? (string)$_POST['tax_
           placeholder="<?= h($eff_intro) ?>"
         ><?= h($prefill_intro) ?></textarea>
       </div>
-    </div>
-  </div>
-
-  <!-- Fällige wiederkehrende Positionen -->
-  <div class="card mb-3">
-    <div class="card-body">
-      <h5 class="card-title">Fällige wiederkehrende Positionen</h5>
-      <?php if (!$recurring_preview): ?>
-        <div class="text-muted">Für das Datum <?php echo h($issue_for_preview) ?> sind keine wiederkehrenden Positionen fällig.</div>
-      <?php else: ?>
-        <div class="table-responsive">
-          <table class="table table-sm align-middle mb-0">
-            <thead>
-              <tr>
-                <th style="width:36px"></th>
-                <th>Bezeichnung</th>
-                <th class="text-end">Menge</th>
-                <th class="text-end">Einzelpreis</th>
-                <th class="text-end">Steuerart</th>
-                <th class="text-end">MwSt %</th>
-                <th class="text-end">Netto</th>
-                <th class="text-end">Brutto</th>
-                <th>Zeitraum</th>
-              </tr>
-            </thead>
-            <tbody>
-              <?php foreach ($recurring_preview as $r):
-                $qty   = (float)$r['quantity'];
-                $price = (float)$r['unit_price'];
-                $scheme= (string)$r['tax_scheme'];
-                $vat   = ($scheme === 'standard') ? (float)$r['vat_rate'] : 0.0;
-                $net   = round($qty * $price, 2);
-                $gross = round($net * (1 + $vat/100), 2);
-                $checked = empty($_POST) ? true : isset($ri_selected_set[$r['key']]);
-              ?>
-                <tr class="ri-row" data-scheme="<?php echo h($scheme) ?>" data-vat="<?php echo h(number_format($vat,2,'.','')) ?>">
-                  <td>
-                    <input type="checkbox" class="form-check-input"
-                           name="ri_pick[<?php echo h($r['key']) ?>]" value="1" <?php echo $checked ? 'checked' : '' ?>>
-                  </td>
-                  <td><?php echo h($r['description']) ?></td>
-                  <td class="text-end"><?php echo h(number_format($qty,3,',','.')) ?></td>
-                  <td class="text-end"><?php echo h(number_format($price,2,',','.')) ?></td>
-                  <td class="text-end"><?php echo h($scheme) ?></td>
-                  <td class="text-end"><?php echo h(number_format($vat,2,',','.')) ?></td>
-                  <td class="text-end"><?php echo h(number_format($net,2,',','.')) ?></td>
-                  <td class="text-end"><?php echo h(number_format($gross,2,',','.')) ?></td>
-                  <td><?php echo h(_fmt_dmy($r['from'])) ?> – <?php echo h(_fmt_dmy($r['to'])) ?></td>
-                </tr>
-              <?php endforeach; ?>
-            </tbody>
-          </table>
-        </div>
-        <div class="form-text mt-2">
-          Das Vorschau-Datum ist das Rechnungsdatum. Wenn du das Rechnungsdatum änderst, wird die tatsächliche Auswahl beim Speichern
-          automatisch für dieses Datum neu berechnet.
-        </div>
-      <?php endif; ?>
     </div>
   </div>
 

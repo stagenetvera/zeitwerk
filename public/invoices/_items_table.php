@@ -48,6 +48,7 @@ $__DEFAULT_SCHEME = isset($DEFAULT_SCHEME) ? (string)$DEFAULT_SCHEME : 'standard
 $__DEFAULT_TAX    = isset($DEFAULT_TAX) ? (float)$DEFAULT_TAX : (isset($DEFAULT_VAT) ? (float)$DEFAULT_VAT : 19.0);
 $__ROUND_UNIT     = isset($ROUND_UNIT_MINS) ? (int)$ROUND_UNIT_MINS : 0;
 $allow_edit = isset($allow_edit) ? (bool)$allow_edit : true;
+$recurring_items_prefill = isset($recurring_items_prefill) ? (array)$recurring_items_prefill : [];
 
 $theadCols = [
   '',            // toggler/drag-handle
@@ -429,6 +430,88 @@ else:
             </tbody>
           </table>
         </div>
+      </td>
+    </tr>
+  <?php
+  endforeach;
+
+  // Wiederkehrende Items (als manuelle qty-Positionen)
+  foreach ((array)$recurring_items_prefill as $ri):
+    $rowIndex++;
+    $desc   = (string)($ri['description'] ?? '');
+    $qty    = round((float)($ri['quantity'] ?? 0.0), 3);
+    $rate   = (float)($ri['hourly_rate'] ?? 0.0);
+    $scheme = (string)($ri['tax_scheme'] ?? $__DEFAULT_SCHEME);
+    if (!in_array($scheme, ['standard','tax_exempt','reverse_charge'], true)) $scheme = 'standard';
+    $vat    = ($scheme === 'standard') ? (float)($ri['vat_rate'] ?? $__DEFAULT_TAX) : 0.0;
+    $net    = round($qty * $rate, 2);
+    $ri_key = isset($ri['ri_key']) ? (string)$ri['ri_key'] : '';
+    ?>
+    <tr class="inv-item-row"
+        data-row="<?= $rowIndex ?>"
+        data-mode="qty"
+        aria-expanded="false">
+      <td class="text-center">
+        <div class="d-flex justify-content-center gap-1">
+          <span class="row-reorder-handle" draggable="true" aria-label="Position verschieben" title="Ziehen zum Sortieren">
+            <svg class="grip" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+              <path d="M5 4h2v2H5V4Zm4 0h2v2H9V4ZM5 8h2v2H5V8ZM9 8h2v2H9V8ZM5 12h2v2H5v-2ZM9 12h2v2H9v-2Z" fill="currentColor"/>
+            </svg>
+          </span>
+        </div>
+        <input type="hidden" class="entry-mode" name="<?= $rowName.'['.$rowIndex.'][entry_mode]' ?>" value="qty">
+        <?php if ($ri_key !== ''): ?>
+          <input type="hidden" name="<?= $rowName.'['.$rowIndex.'][ri_key]' ?>" value="<?= htmlspecialchars($ri_key, ENT_QUOTES, 'UTF-8') ?>">
+        <?php endif; ?>
+      </td>
+
+      <td>
+        <input type="text" class="form-control form-control-sm"
+               name="<?= $rowName.'['.$rowIndex.'][description]' ?>"
+               value="<?= htmlspecialchars($desc) ?>"
+               <?php if (!$allow_edit): ?>disabled<?php endif;?>>
+      </td>
+
+      <td class="text-end">
+        <input type="number" class="form-control form-control-sm text-end quantity no-spin"
+               name="<?= $rowName.'['.$rowIndex.'][quantity]' ?>"
+               value="<?= _fmt_qty($qty) ?>" min="0" step="0.001" <?php if (!$allow_edit): ?>disabled<?php endif;?>>
+      </td>
+
+      <td class="text-end">
+        <input type="number" class="form-control form-control-sm text-end rate no-spin"
+               name="<?= $rowName.'['.$rowIndex.'][hourly_rate]' ?>"
+               value="<?= _fmt_money_input($rate) ?>" min="0" <?php if (!$allow_edit): ?>disabled<?php endif;?>>
+      </td>
+
+      <td class="text-end">
+        <select name="<?= $rowName.'['.$rowIndex.'][tax_scheme]' ?>" class="form-select form-select-sm inv-tax-sel"
+                data-rate-standard="<?= number_format($__DEFAULT_TAX,2,'.','') ?>"
+                data-rate-tax-exempt="0.00"
+                data-rate-reverse-charge="0.00"
+                <?php if (!$allow_edit): ?>disabled<?php endif;?>>
+          <option value="standard" <?= $scheme==='standard'?'selected':'' ?>>standard (mit MwSt)</option>
+          <option value="tax_exempt" <?= $scheme==='tax_exempt'?'selected':'' ?>>steuerfrei</option>
+          <option value="reverse_charge" <?= $scheme==='reverse_charge'?'selected':'' ?>>Reverse-Charge</option>
+        </select>
+      </td>
+
+      <td class="text-end">
+        <input type="number" min="0" max="100" step="0.01"
+               class="form-control form-control-sm text-end inv-vat-input no-spin"
+               name="<?= $rowName.'['.$rowIndex.'][vat_rate]' ?>"
+               value="<?= number_format($vat,2,'.','') ?>"
+               <?php if (!$allow_edit): ?>disabled<?php endif;?>>
+      </td>
+
+      <td class="text-end"><span class="net"><?= _fmt_money($net) ?></span></td>
+
+      <td class="text-end text-nowrap">
+        <?php if ($allow_edit): ?>
+          <button type="button" class="btn btn-sm btn-outline-danger btn-remove-item">
+            <i class="bi bi-trash"></i>
+          </button>
+        <?php endif; ?>
       </td>
     </tr>
   <?php
