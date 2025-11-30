@@ -889,10 +889,11 @@ require __DIR__ . '/../../src/layout/header.php';
          </td>
 
          <td class="text-end"><span class="net">0,00</span></td>
-         <td class="text-end"><span class="gross">0,00</span></td>
 
          <td class="text-end text-nowrap">
-           <button type="button" class="btn btn-sm btn-outline-danger btn-remove-item">Entfernen</button>
+           <button type="button" class="btn btn-sm btn-outline-danger btn-remove-item" title="Position entfernen">
+             <i class="bi bi-trash" aria-hidden="true"></i><span class="visually-hidden">Entfernen</span>
+           </button>
          </td>`;
 
       insertBeforeGrand(tr);
