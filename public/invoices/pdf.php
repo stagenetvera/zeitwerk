@@ -21,14 +21,22 @@ function _pdf_fail(string $msg, int $httpCode = 500, ?Throwable $e = null): void
         $logMsg .= " | Exception: " . $e->getMessage() . "\n" . $e->getTraceAsString();
     }
     if ($__pdf_log_dir) {
-        @file_put_contents($__pdf_log_dir . '/pdf_export.log', $logMsg . "\n", FILE_APPEND);
+        if (@file_put_contents($__pdf_log_dir . '/pdf_export.log', $logMsg . "\n", FILE_APPEND) === false) {
+            error_log($logMsg);
+        }
+    } else {
+        error_log($logMsg);
     }
     http_response_code($httpCode);
     header('Content-Type: text/plain; charset=UTF-8');
     echo $msg;
     exit;
 }
-set_exception_handler(function($e){ _pdf_fail('Interner Fehler beim PDF-Export. Bitte Admin informieren.', 500, $e instanceof Throwable ? $e : null); });
+set_exception_handler(function($e){
+    $e = $e instanceof Throwable ? $e : null;
+    $detail = $e ? (' Details: ' . $e->getMessage()) : '';
+    _pdf_fail('Interner Fehler beim PDF-Export. Bitte Admin informieren.' . $detail, 500, $e);
+});
 
 require_login();
 
@@ -805,7 +813,15 @@ $dataXml = Transformer::create()->transformToXml($document);
 // ----------------------------------------------------------
 
 $settingsXml = build_settings_xml_from_layout($acct, $invoice);
-// $settingsXml = file_get_contents(__DIR__ . '/speedata/settings.xml');
+
+// // Debug: settings.xml temporär ablegen
+// $tmpDir = __DIR__ . '/../../storage/logs';
+// if (!is_dir($tmpDir)) { @mkdir($tmpDir, 0775, true); }
+// if (is_dir($tmpDir) && is_writable($tmpDir)) {
+//     $tmpName = $tmpDir . '/settings_xml_' . (int)($invoice['id'] ?? 0) . '_' . time() . '.xml';
+//     @file_put_contents($tmpName, $settingsXml);
+// }
+
 
 // Layout laden (dein fertiges layout.xml)
 $layoutPath = __DIR__ . '/speedata/layout.xml';

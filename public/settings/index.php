@@ -11,6 +11,7 @@ $user       = auth_user();
 $account_id = (int)$user['account_id'];
 
 $err = null; $ok = null; $warn = null;
+$__lh_preview_err = null;
 
 $set = get_account_settings($pdo, $account_id);
 
@@ -24,10 +25,26 @@ function hurl($s){ return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
  * @return bool
  */
 function generate_letterhead_preview($pdfPath, $pngPath): bool {
+  global $__lh_preview_err;
+  $__lh_preview_err = null;
+  $logDir  = __DIR__ . '/../../storage/logs';
+  $logFile = $logDir.'/letterhead_preview.log';
+  if (!is_dir($logDir)) { @mkdir($logDir, 0775, true); }
+  $log = function(string $msg) use ($logFile) {
+    $line = '['.date('c').'] '.$msg."\n";
+    if (@file_put_contents($logFile, $line, FILE_APPEND) === false) {
+      error_log('letterhead_preview: '.$line);
+    }
+  };
+  $log('Starte Preview: pdf='.$pdfPath.' png='.$pngPath.' exists='.var_export(is_readable($pdfPath),true).' size='.(@filesize($pdfPath)?:0));
   if (!class_exists('Imagick')) {
+    $__lh_preview_err = 'Imagick nicht verfügbar';
+    $log('Abbruch: Imagick-Klasse fehlt');
     return false;
   }
   try {
+    $pdfSupport = Imagick::queryFormats('PDF');
+    $log('Imagick-Version='.json_encode(Imagick::getVersion()) . ' PDF-Support=' . json_encode($pdfSupport));
     $im = new Imagick();
     // Auflösung etwas höher, damit die Preview nicht matschig ist
     $im->setResolution(150, 150);
@@ -39,8 +56,11 @@ function generate_letterhead_preview($pdfPath, $pngPath): bool {
     $im->writeImage($pngPath);
     $im->clear();
     $im->destroy();
+    $log('Preview OK, file='.var_export(is_readable($pngPath),true).' size='.(@filesize($pngPath)?:0));
     return true;
   } catch (Throwable $e) {
+    $__lh_preview_err = $e->getMessage();
+    $log('Fehler: '.$e->getMessage());
     return false;
   }
 }
@@ -146,7 +166,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
           $data[$oldPngKey] = '/settings/file.php?path=' . rawurlencode('layout/' . $baseName . '.png');
         } else {
           $data[$oldPngKey] = '';
-          $warn = ($warn ? $warn."\n" : '') . 'Vorschau für '.$labelBase.' konnte nicht erzeugt werden (Imagick fehlt?). Datei wurde gespeichert.';
+          $reason = $GLOBALS['__lh_preview_err'] ?? 'Imagick/Delegate nicht verfügbar';
+          $warn = ($warn ? $warn."\n" : '') . 'Vorschau für '.$labelBase.' konnte nicht erzeugt werden ('.$reason.'). Datei wurde gespeichert.';
         }
       }
     };

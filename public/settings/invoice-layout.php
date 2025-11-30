@@ -16,6 +16,78 @@ $ok  = null;
 
 $set = get_account_settings($pdo, $account_id);
 
+// Helper: Pfad aus Setting nach storage/ auflösen
+function _resolve_storage_path_for_setting(string $val): string {
+  $val = trim($val);
+  if ($val === '') return '';
+
+  // file.php?path=layout%2F...
+  if (strpos($val, 'file.php') !== false) {
+    $parts = parse_url($val);
+    if (!empty($parts['query'])) {
+      parse_str($parts['query'], $q);
+      if (!empty($q['path'])) {
+        $rel = ltrim(urldecode($q['path']), '/');
+        return realpath(__DIR__ . '/../../storage/' . $rel) ?: (__DIR__ . '/../../storage/' . $rel);
+      }
+    }
+  }
+
+  // Absolutpfad
+  if ($val !== '' && ($val[0] === '/' || preg_match('~^[A-Za-z]:[\\\\/]~', $val))) {
+    return $val;
+  }
+
+  // Sonst unter storage/layout
+  $fname = basename($val);
+  return __DIR__ . '/../../storage/layout/' . $fname;
+}
+
+// Preview ggf. on-the-fly erzeugen, wenn PDF vorhanden, Preview aber fehlt
+function _ensure_preview_for_pdf(string $pdfPath, string $targetPng): bool {
+  $logDir = __DIR__ . '/../../storage/logs';
+  if (!is_dir($logDir)) { @mkdir($logDir, 0775, true); }
+  $logLine = '['.date('c').'] invoice-layout preview pdf='.$pdfPath.' png='.$targetPng.' ';
+  if (!class_exists('Imagick')) {
+    @file_put_contents($logDir.'/letterhead_preview.log', $logLine.'Imagick fehlt'."\n", FILE_APPEND);
+    return false;
+  }
+  try {
+    $im = new Imagick();
+    $im->setResolution(150, 150);
+    $im->readImage($pdfPath.'[0]');
+    $im->setImageBackgroundColor('white');
+    $im = $im->mergeImageLayers(Imagick::LAYERMETHOD_FLATTEN);
+    $im->setImageFormat('png');
+    $im->writeImage($targetPng);
+    $im->clear();
+    $im->destroy();
+    @file_put_contents($logDir.'/letterhead_preview.log', $logLine.'OK size='.(@filesize($targetPng)?:0)."\n", FILE_APPEND);
+    return true;
+  } catch (Throwable $e) {
+    @file_put_contents($logDir.'/letterhead_preview.log', $logLine.'Fehler: '.$e->getMessage()."\n", FILE_APPEND);
+    return false;
+  }
+}
+
+// Einfaches Logging für Fehlerfälle (z. B. wenn auf Live kein PHP-Errorlog einsehbar ist)
+$__layout_log_dir = __DIR__ . '/../../storage/logs';
+if (!is_dir($__layout_log_dir)) {
+  @mkdir($__layout_log_dir, 0775, true);
+}
+$__layout_log_fn = $__layout_log_dir . '/invoice_layout.log';
+function _layout_log(string $msg): void {
+  global $__layout_log_fn, $account_id;
+  $line = '['.date('c')."] acc_id={$account_id} :: ".$msg."\n";
+  if ($__layout_log_fn) {
+    if (@file_put_contents($__layout_log_fn, $line, FILE_APPEND) === false) {
+      error_log($line);
+    }
+  } else {
+    error_log($line);
+  }
+}
+
 // Layout aus Settings holen
 $layoutJson = $set['invoice_layout_zones'] ?? '';
 $layoutData = [];
@@ -46,6 +118,29 @@ $previewNext  = $set['invoice_letterhead_next_preview'] ?? '';
 $pdfFirst     = $set['invoice_letterhead_first_pdf'] ?? '';
 $pdfNext      = $set['invoice_letterhead_next_pdf'] ?? '';
 
+// Falls PDF vorhanden, aber Preview fehlt: versuchen, jetzt zu generieren
+if ($pdfFirst && !$previewFirst) {
+  $pdfPath = _resolve_storage_path_for_setting($pdfFirst);
+  $pngName = pathinfo($pdfPath, PATHINFO_FILENAME).'.png';
+  $pngPath = __DIR__ . '/../../storage/layout/' . $pngName;
+  if (is_readable($pdfPath) && _ensure_preview_for_pdf($pdfPath, $pngPath)) {
+    $previewFirst = '/settings/file.php?path=' . rawurlencode('layout/'.$pngName);
+    $set['invoice_letterhead_first_preview'] = $previewFirst;
+    save_account_settings($pdo, $account_id, ['invoice_letterhead_first_preview' => $previewFirst]);
+  }
+}
+
+if ($pdfNext && !$previewNext) {
+  $pdfPath = _resolve_storage_path_for_setting($pdfNext);
+  $pngName = pathinfo($pdfPath, PATHINFO_FILENAME).'.png';
+  $pngPath = __DIR__ . '/../../storage/layout/' . $pngName;
+  if (is_readable($pdfPath) && _ensure_preview_for_pdf($pdfPath, $pngPath)) {
+    $previewNext = '/settings/file.php?path=' . rawurlencode('layout/'.$pngName);
+    $set['invoice_letterhead_next_preview'] = $previewNext;
+    save_account_settings($pdo, $account_id, ['invoice_letterhead_next_preview' => $previewNext]);
+  }
+}
+
 function hurl($s){ return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -60,6 +155,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
       $json = json_encode($decoded, JSON_UNESCAPED_UNICODE);
       $data = ['invoice_layout_zones' => $json];
+      _layout_log('Speichere invoice_layout_zones, Länge=' . strlen($json));
       save_account_settings($pdo, $account_id, $data);
 
       $ok = 'Rechnungslayout wurde gespeichert.';
@@ -72,9 +168,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         : [];
     } else {
       $err = 'Es wurden keine Layout-Daten übertragen.';
+      _layout_log('POST ohne layout_json');
     }
   } catch (Throwable $e) {
-    $err = 'Konnte Rechnungslayout nicht speichern.';
+    $err = 'Konnte Rechnungslayout nicht speichern. ' . $e->getMessage();
+    _layout_log('Fehler: ' . $e->getMessage());
   }
 }
 
