@@ -468,8 +468,7 @@
 					<Td align="right">
 						<Paragraph>
 							<Value select="$ApplicableHeaderTradeSettlement/ram:SpecifiedTradeSettlementHeaderMonetarySummation/ram:LineTotalAmount" />
-							<Value>&#xa0;</Value>
-							<Value select="$currencyCode" />
+
 						</Paragraph>
 					</Td>
 				</Tr>
@@ -483,8 +482,6 @@
 						<Td align="right">
 							<Paragraph>
 								<Value select="ram:CalculatedAmount" />
-								<Value>&#xa0;</Value>
-								<Value select="$currencyCode" />
 							</Paragraph>
 						</Td>
 					</Tr>
@@ -498,8 +495,6 @@
 					<Td align="right">
 						<Paragraph>
 							<Value select="$ApplicableHeaderTradeSettlement/ram:SpecifiedTradeSettlementHeaderMonetarySummation/ram:GrandTotalAmount" />
-							<Value>&#xa0;</Value>
-							<Value select="$currencyCode" />
 						</Paragraph>
 					</Td>
 				</Tr>
