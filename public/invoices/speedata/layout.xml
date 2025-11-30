@@ -18,6 +18,7 @@
 		<SetVariable variable="letterhead" select="bc:letterhead" />
 		<SetVariable variable="region_invoice_info" select="$letterhead/bc:regions/bc:region[@kind = 'invoice_info']" />
 		<SetVariable variable="region_main" select="$letterhead/bc:regions/bc:region[@kind = 'main_area']" />
+		<SetVariable variable="region_main_area_page_2" select="$letterhead/bc:regions/bc:region[@kind = 'main_area_page_2']" />
 		<SetVariable variable="region_addressee" select="$letterhead/bc:regions/bc:region[@kind = 'addressee']" />
 
         <Switch>
@@ -36,6 +37,7 @@
 		<Pageformat height="{$page_ht}cm" width="{$page_wd}cm" />
 
 		<SetVariable variable="pdfPath" select="$letterhead/bc:pdfPath" />
+		<SetVariable variable="pdfPath2" select="$letterhead/bc:pdfPath2" />
 		<LoadFontfile name="regular" filename="texgyreheros-regular.otf" />
 		<LoadFontfile name="bold" filename="texgyreheros-bold.otf" />
 		<LoadFontfile name="italic" filename="texgyreheros-italic.otf" />
@@ -77,12 +79,12 @@
 			</AtPageCreation>
 		</Pagetype>
 		<Switch>
-			<Case test="$region_main/bc:hasPage2 = 'true'">
+			<Case test="count($region_main_area_page_2/*) > 1 ">
 				<Pagetype name="otherpages" test="sd:current-page() > 1">
-					<Margin top="{$region_main/bc:y2Cm}cm" bottom="{$page_ht - $region_main/bc:y2Cm - $region_main/bc:height2Cm}cm" left="{$region_main/bc:x2Cm}cm" right="{$page_wd - $region_main/bc:x2Cm - $region_main/bc:width2Cm}cm" />
+					<Margin top="{$region_main_area_page_2/bc:yCm}cm" bottom="{$page_ht - $region_main_area_page_2/bc:yCm - $region_main_area_page_2/bc:heightCm}cm" left="{$region_main_area_page_2/bc:xCm}cm" right="{$page_wd - $region_main_area_page_2/bc:xCm - $region_main_area_page_2/bc:widthCm}cm" />
 					<AtPageCreation>
 						<PlaceObject column="0mm" row="0mm">
-							<Image width="{$page_wd}cm" height="{$page_ht}cm" file="{$pdfPath}" page="2"/>
+							<Image width="{$page_wd}cm" height="{$page_ht}cm" file="{$pdfPath2}" page="1"/>
 						</PlaceObject>
 					</AtPageCreation>
 				</Pagetype>
@@ -197,7 +199,7 @@
 	</Function>
 	<Function name="sf:remove-decimal-zeros">
 		<Param name="amount" />
-		<Value select="replace(string($amount), '\.0+$', '')" />
+		<Value select="format-number(number($amount), '0.##')" />
 	</Function>
 	<Function name="sf:format-amount">
 		<Param name="amount" />
@@ -415,7 +417,34 @@
 					<Tr valign="top">
 						<Td align="right">
 							<Paragraph>
-								<Value select="sf:remove-decimal-zeros(ram:SpecifiedLineTradeDelivery/ram:BilledQuantity)" />
+								<Switch>
+									<Case test="ram:SpecifiedLineTradeDelivery/ram:BilledQuantity/@unitCode = 'HUR'">
+										<Value
+											select="
+  concat(
+    format-number(
+      floor(
+        round(number(ram:SpecifiedLineTradeDelivery/ram:BilledQuantity) * 60)
+        div 60
+      ),
+      '0'
+    ),
+    ':',
+    format-number(
+      round(number(ram:SpecifiedLineTradeDelivery/ram:BilledQuantity) * 60)
+      - floor(
+          round(number(ram:SpecifiedLineTradeDelivery/ram:BilledQuantity) * 60)
+          div 60
+        ) * 60,
+      '00'
+    )
+  )
+" />
+									</Case>
+									<Otherwise>
+										<Value select="sf:remove-decimal-zeros(ram:SpecifiedLineTradeDelivery/ram:BilledQuantity)" />
+									</Otherwise>
+								</Switch>
 							</Paragraph>
 						</Td>
 						<Td align="center">

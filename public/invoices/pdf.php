@@ -121,6 +121,8 @@ function build_settings_xml_from_layout(array $acct, array $invoice): string
 {
     $zonesJson = $acct['invoice_layout_zones'] ?? '';
     $layout    = null;
+    $lhFirst   = (string)($acct['invoice_letterhead_first_pdf'] ?? '');
+    $lhNext    = (string)($acct['invoice_letterhead_next_pdf'] ?? '');
 
     if (is_string($zonesJson) && trim($zonesJson) !== '') {
         $decoded = json_decode($zonesJson, true);
@@ -312,6 +314,9 @@ function build_settings_xml_from_layout(array $acct, array $invoice): string
 
     // pdfPath + fonts (Dateinamen müssen zu denen passen, die du an speedata_publish schickst)
     $letterhead->appendChild($dom->createElementNS($ns, 'pdfPath', 'letterhead.pdf'));
+    if ($lhNext !== '') {
+        $letterhead->appendChild($dom->createElementNS($ns, 'pdfPath2', 'letterhead_next.pdf'));
+    }
 
     $fontsEl = $dom->createElementNS($ns, 'fonts');
     $letterhead->appendChild($fontsEl);
@@ -814,13 +819,13 @@ $dataXml = Transformer::create()->transformToXml($document);
 
 $settingsXml = build_settings_xml_from_layout($acct, $invoice);
 
-// // Debug: settings.xml temporär ablegen
-// $tmpDir = __DIR__ . '/../../storage/logs';
-// if (!is_dir($tmpDir)) { @mkdir($tmpDir, 0775, true); }
-// if (is_dir($tmpDir) && is_writable($tmpDir)) {
-//     $tmpName = $tmpDir . '/settings_xml_' . (int)($invoice['id'] ?? 0) . '_' . time() . '.xml';
-//     @file_put_contents($tmpName, $settingsXml);
-// }
+// Debug: settings.xml temporär ablegen
+$tmpDir = __DIR__ . '/../../storage/logs';
+if (!is_dir($tmpDir)) { @mkdir($tmpDir, 0775, true); }
+if (is_dir($tmpDir) && is_writable($tmpDir)) {
+    $tmpName = $tmpDir . '/settings_xml_' . (int)($invoice['id'] ?? 0) . '_' . time() . '.xml';
+    @file_put_contents($tmpName, $settingsXml);
+}
 
 
 // Layout laden (dein fertiges layout.xml)
@@ -840,8 +845,10 @@ if ($layoutXml === false) {
 }
 
 // Briefbogen + Fonts (ggf. Pfade anpassen)
-$letterheadSettingRaw = trim((string)($acct['invoice_letterhead_first_pdf'] ?? ''));
-$letterheadPath       = '';
+$letterheadSettingRaw    = trim((string)($acct['invoice_letterhead_first_pdf'] ?? ''));
+$letterheadNextSettingRaw= trim((string)($acct['invoice_letterhead_next_pdf'] ?? ''));
+$letterheadPath          = '';
+$letterheadPath2         = '';
 
 // Wenn in den Settings ein Wert gesetzt ist:
 if ($letterheadSettingRaw !== '') {
@@ -876,10 +883,30 @@ if ($letterheadSettingRaw !== '') {
     }
 }
 
-// Fallback, falls oben nichts Sinnvolles herauskam
-if ($letterheadPath === '') {
-    $letterheadPath = __DIR__ . '/../../storage/layout/letterhead_first_1_1762847651.pdf';
+// Folgeseiten (optional)
+if ($letterheadNextSettingRaw !== '') {
+    if (strpos($letterheadNextSettingRaw, 'file.php') !== false) {
+        $urlParts = parse_url($letterheadNextSettingRaw);
+        $relativePath = '';
+
+        if (!empty($urlParts['query'])) {
+            parse_str($urlParts['query'], $query);
+            if (!empty($query['path'])) {
+                $relativePath = urldecode($query['path']);
+            }
+        }
+
+        if ($relativePath !== '') {
+            $relativePath = ltrim($relativePath, '/');
+            $letterheadPath2 = __DIR__ . '/../../storage/' . $relativePath;
+        }
+    } elseif ($letterheadNextSettingRaw[0] === '/' || preg_match('~^[A-Za-z]:[\\\\/]~', $letterheadNextSettingRaw)) {
+        $letterheadPath2 = $letterheadNextSettingRaw;
+    } else {
+        $letterheadPath2 = __DIR__ . '/../../storage/layout/' . $letterheadNextSettingRaw;
+    }
 }
+
 
 // Fonts ggf. aus Settings lesen; fallback auf statische Dateien
 $fontRegular = '';
@@ -938,6 +965,9 @@ if ($fontMedium === '' || !is_readable($fontMedium)) {
 if (!is_readable($letterheadPath)) {
     _pdf_fail('Briefbogen nicht lesbar: ' . $letterheadPath, 500);
 }
+if ($letterheadPath2 !== '' && !is_readable($letterheadPath2)) {
+    _pdf_fail('Briefbogen (Folgeseiten) nicht lesbar: ' . $letterheadPath2, 500);
+}
 if (!is_readable($fontRegular) || !is_readable($fontMedium)) {
     _pdf_fail('Schriftdateien nicht lesbar: ' . $fontRegular . ' / ' . $fontMedium, 500);
 }
@@ -952,6 +982,7 @@ try {
         'data.xml'         => $dataXml,
         'settings.xml'     => $settingsXml,
         'letterhead.pdf'   => file_get_contents($letterheadPath),
+        'letterhead_next.pdf' => ($letterheadPath2 !== '') ? file_get_contents($letterheadPath2) : file_get_contents($letterheadPath),
         'regular_font.otf' => file_get_contents($fontRegular),
         'medium_font.otf'  => file_get_contents($fontMedium),
     ]);
