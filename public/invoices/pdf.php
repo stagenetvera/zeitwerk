@@ -8,6 +8,28 @@ require_once __DIR__ . '/../../src/lib/settings.php';
 require_once __DIR__ . '/../../src/lib/speedata.php';
 require_once __DIR__ . '/../../src/lib/invoice_number.php';
 
+// Robustere Fehlerausgabe + Logging (hilfreich auf Live, wenn 500er ohne Details auftreten)
+$__pdf_log_dir = __DIR__ . '/../../storage/logs';
+if (!is_dir($__pdf_log_dir)) {
+    @mkdir($__pdf_log_dir, 0775, true);
+}
+function _pdf_fail(string $msg, int $httpCode = 500, ?Throwable $e = null): void {
+    global $__pdf_log_dir, $account_id, $id;
+    $id = $id ?? (int)($_GET['id'] ?? 0);
+    $logMsg = '[' . date('c') . "] invoice_id={$id} acc_id={$account_id} :: " . $msg;
+    if ($e) {
+        $logMsg .= " | Exception: " . $e->getMessage() . "\n" . $e->getTraceAsString();
+    }
+    if ($__pdf_log_dir) {
+        @file_put_contents($__pdf_log_dir . '/pdf_export.log', $logMsg . "\n", FILE_APPEND);
+    }
+    http_response_code($httpCode);
+    header('Content-Type: text/plain; charset=UTF-8');
+    echo $msg;
+    exit;
+}
+set_exception_handler(function($e){ _pdf_fail('Interner Fehler beim PDF-Export. Bitte Admin informieren.', 500, $e instanceof Throwable ? $e : null); });
+
 require_login();
 
 use easybill\eInvoicing\CII\Documents\CrossIndustryInvoice;
@@ -843,20 +865,65 @@ if ($letterheadPath === '') {
     $letterheadPath = __DIR__ . '/../../storage/layout/letterhead_first_1_1762847651.pdf';
 }
 
-$fontRegular = __DIR__ . '/../../storage/layout/DINPro-Regular.otf';
-$fontMedium  = __DIR__ . '/../../storage/layout/DINPro-Medium.otf';
+// Fonts ggf. aus Settings lesen; fallback auf statische Dateien
+$fontRegular = '';
+$fontMedium  = '';
+
+$fontSettingRegular = trim((string)($acct['invoice_font_regular'] ?? ''));
+$fontSettingBold    = trim((string)($acct['invoice_font_bold'] ?? ''));
+
+if ($fontSettingRegular !== '') {
+    // Wenn als /settings/file.php?... hinterlegt, dekodieren
+    if (strpos($fontSettingRegular, 'file.php') !== false) {
+        $parts = parse_url($fontSettingRegular);
+        $rel = '';
+        if (!empty($parts['query'])) {
+            parse_str($parts['query'], $q);
+            if (!empty($q['path'])) {
+                $rel = urldecode($q['path']);
+                $rel = ltrim($rel, '/');
+                $fontRegular = __DIR__ . '/../../storage/' . $rel;
+            }
+        }
+    } elseif ($fontSettingRegular[0] === '/' || preg_match('~^[A-Za-z]:[\\\\/]~', $fontSettingRegular)) {
+        $fontRegular = $fontSettingRegular;
+    } else {
+        $fontRegular = __DIR__ . '/../../storage/layout/' . $fontSettingRegular;
+    }
+}
+
+if ($fontSettingBold !== '') {
+    if (strpos($fontSettingBold, 'file.php') !== false) {
+        $parts = parse_url($fontSettingBold);
+        $rel = '';
+        if (!empty($parts['query'])) {
+            parse_str($parts['query'], $q);
+            if (!empty($q['path'])) {
+                $rel = urldecode($q['path']);
+                $rel = ltrim($rel, '/');
+                $fontMedium = __DIR__ . '/../../storage/' . $rel;
+            }
+        }
+    } elseif ($fontSettingBold[0] === '/' || preg_match('~^[A-Za-z]:[\\\\/]~', $fontSettingBold)) {
+        $fontMedium = $fontSettingBold;
+    } else {
+        $fontMedium = __DIR__ . '/../../storage/layout/' . $fontSettingBold;
+    }
+}
+
+// Fallback auf statische Fonts, falls nichts gesetzt oder nicht lesbar
+if ($fontRegular === '' || !is_readable($fontRegular)) {
+    $fontRegular = __DIR__ . '/../../storage/layout/DINPro-Regular.otf';
+}
+if ($fontMedium === '' || !is_readable($fontMedium)) {
+    $fontMedium  = __DIR__ . '/../../storage/layout/DINPro-Medium.otf';
+}
 
 if (!is_readable($letterheadPath)) {
-    http_response_code(500);
-    header('Content-Type: text/plain; charset=UTF-8');
-    echo 'Briefbogen nicht lesbar: ' . $letterheadPath;
-    exit;
+    _pdf_fail('Briefbogen nicht lesbar: ' . $letterheadPath, 500);
 }
 if (!is_readable($fontRegular) || !is_readable($fontMedium)) {
-    http_response_code(500);
-    header('Content-Type: text/plain; charset=UTF-8');
-    echo 'Schriftdateien nicht lesbar.';
-    exit;
+    _pdf_fail('Schriftdateien nicht lesbar: ' . $fontRegular . ' / ' . $fontMedium, 500);
 }
 
 // ----------------------------------------------------------
