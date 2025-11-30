@@ -319,7 +319,7 @@ else:
 
     // Wenn bereits an ENTWURF gekoppelt → Preis in dieser neuen Rechnung = 0.00
     $rate = $isFixed
-      ? ($isLockedToDraft ? 0.00 : $fixedPriceDec)
+      ? (($isLockedToDraft || $isAlreadyBilled) ? 0.00 : $fixedPriceDec)
       : (float)($taskRow['hourly_rate'] ?? 0.0);
 
     // Netto/Brutto (fixed: Menge = 1, Preis = $rate)

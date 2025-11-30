@@ -97,12 +97,6 @@ $q = $pdo->prepare("
     AND ta.billable  = 1
     AND t.status     = 'offen'
     AND t.minutes IS NOT NULL
-    /* ⬇︎ Wenn Task an eine gestellte/bezahlt Rechnung hängt, keine neuen Zeiten hier anzeigen */
-     AND NOT (
-       ta.billing_mode = 'fixed'
-       AND ta.billed_in_invoice_id IS NOT NULL
-       AND inv_lock.status IN ('gestellt','bezahlt')
-  )
   ORDER BY ta.id, t.started_at
 ");
 $q->execute([':acc'=>$account_id, ':cid'=>$company_id]);
@@ -436,7 +430,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && ($_POST['a
             continue;
 
           } else {
-            // BEREITS ABGERECHNET oder in anderem Entwurf → neue Zeiten an alte Fixposition anhängen
+            // BEREITS ABGERECHNET oder in anderem Entwurf → neue Zeiten an alte Fixposition anhängen (kein weiterer Betrag)
             $getInv->execute([$boundInvId, $account_id]);
             $inv = $getInv->fetch();
             if (!$inv) {
