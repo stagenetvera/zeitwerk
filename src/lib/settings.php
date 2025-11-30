@@ -26,6 +26,8 @@ function settings_defaults(): array {
     'invoice_letterhead_next_pdf'      => '',
     'invoice_letterhead_next_preview'  => '',
     'invoice_layout_zones'             => '',
+    'invoice_font_regular'             => '',
+    'invoice_font_bold'                => '',
   ];
 }
 
@@ -66,9 +68,11 @@ function get_account_settings(PDO $pdo, int $account_id): array {
           invoice_letterhead_first_preview,
           invoice_letterhead_next_pdf,
           invoice_letterhead_next_preview,
-          invoice_layout_zones
+          invoice_layout_zones,
+          invoice_font_regular,
+          invoice_font_bold
         )
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ');
     $ins->execute([
       $account_id,
@@ -94,6 +98,8 @@ function get_account_settings(PDO $pdo, int $account_id): array {
       $defs['invoice_letterhead_next_pdf'],
       $defs['invoice_letterhead_next_preview'],
       $defs['invoice_layout_zones'],
+      $defs['invoice_font_regular'],
+      $defs['invoice_font_bold'],
     ]);
 
     // Nach Insert erneut lesen
@@ -297,6 +303,18 @@ function save_account_settings(PDO $pdo, int $account_id, array $in): void {
     $layoutZones = (string)$current['invoice_layout_zones'];
   }
 
+  // Fonts
+  if (array_key_exists('invoice_font_regular', $in)) {
+    $fontRegular = (string)$in['invoice_font_regular'];
+  } else {
+    $fontRegular = (string)$current['invoice_font_regular'];
+  }
+  if (array_key_exists('invoice_font_bold', $in)) {
+    $fontBold = (string)$in['invoice_font_bold'];
+  } else {
+    $fontBold = (string)$current['invoice_font_bold'];
+  }
+
   // --- UPDATE (Datensatz existiert durch get_account_settings immer) ---
   $upd = $pdo->prepare('
     UPDATE account_settings
@@ -321,7 +339,9 @@ function save_account_settings(PDO $pdo, int $account_id, array $in): void {
            invoice_letterhead_first_preview = ?,
            invoice_letterhead_next_pdf      = ?,
            invoice_letterhead_next_preview  = ?,
-           invoice_layout_zones             = ?
+           invoice_layout_zones             = ?,
+           invoice_font_regular             = ?,
+           invoice_font_bold                = ?
      WHERE account_id = ?
   ');
 
@@ -348,6 +368,8 @@ function save_account_settings(PDO $pdo, int $account_id, array $in): void {
     $lhNextPdf,
     $lhNextPrev,
     $layoutZones,
+    $fontRegular,
+    $fontBold,
     $account_id,
   ]);
 }

@@ -99,16 +99,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       $mime  = finfo_file($finfo, $file['tmp_name']);
       finfo_close($finfo);
 
-      // simple Prüfung auf PDF
-      if ($mime !== 'application/pdf' && $mime !== 'application/x-pdf') {
+      // simple Prüfung auf PDF oder OpenType/TrueType für Fonts
+      $isPdf   = ($mime === 'application/pdf' || $mime === 'application/x-pdf');
+      $isFont  = in_array($mime, ['font/otf','font/ttf','application/vnd.ms-opentype','application/font-sfnt','application/octet-stream'], true);
+      $isLetterhead = str_starts_with($labelBase, 'letterhead_');
+      $isFontUpload = str_starts_with($labelBase, 'invoice_font_');
+
+      if ($isLetterhead && !$isPdf) {
         $err = 'Ungültiges Dateiformat für '.$labelBase.' (nur PDF erlaubt).';
+        return;
+      }
+      if ($isFontUpload && !$isFont) {
+        $err = 'Ungültiges Dateiformat für '.$labelBase.' (nur OTF/TTF erlaubt).';
         return;
       }
 
       $timestamp = time();
       $baseName  = $labelBase . '_' . $account_id . '_' . $timestamp;
 
-      $pdfFsPath = $layoutDir . '/' . $baseName . '.pdf';
+      $pdfFsPath = $layoutDir . '/' . $baseName . ($isPdf ? '.pdf' : '.otf');
       $pngFsPath = $layoutDir . '/' . $baseName . '.png';
 
       if (!move_uploaded_file($file['tmp_name'], $pdfFsPath)) {
@@ -116,8 +125,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         return;
       }
 
-      // Preview generieren
-      $previewOk = generate_letterhead_preview($pdfFsPath, $pngFsPath);
+      // Preview generieren nur für Letterhead-PDF
+      $previewOk = false;
+      if ($isLetterhead) {
+        $previewOk = generate_letterhead_preview($pdfFsPath, $pngFsPath);
+      }
 
       // alte Dateien löschen
       if (!empty($set[$oldPdfKey])) {
@@ -128,12 +140,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       }
 
       // URL-Pfade in Settings speichern (relativ zum Webroot)
-      $data[$oldPdfKey] = '/settings/file.php?path=' . rawurlencode('layout/' . $baseName . '.pdf');
-      if ($previewOk) {
-        $data[$oldPngKey] = '/settings/file.php?path=' . rawurlencode('layout/' . $baseName . '.png');
-      } else {
-        $data[$oldPngKey] = '';
-        $warn = ($warn ? $warn."\n" : '') . 'Vorschau für '.$labelBase.' konnte nicht erzeugt werden (Imagick fehlt?). PDF wurde trotzdem gespeichert.';
+      $data[$oldPdfKey] = '/settings/file.php?path=' . rawurlencode('layout/' . basename($pdfFsPath));
+      if ($isLetterhead) {
+        if ($previewOk) {
+          $data[$oldPngKey] = '/settings/file.php?path=' . rawurlencode('layout/' . $baseName . '.png');
+        } else {
+          $data[$oldPngKey] = '';
+          $warn = ($warn ? $warn."\n" : '') . 'Vorschau für '.$labelBase.' konnte nicht erzeugt werden (Imagick fehlt?). Datei wurde gespeichert.';
+        }
       }
     };
 
@@ -151,6 +165,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       'letterhead_next',
       'invoice_letterhead_next_pdf',
       'invoice_letterhead_next_preview'
+    );
+
+    // Schriftdateien (optional)
+    $handleUpload(
+      'invoice_font_regular_upload',
+      'invoice_font_regular',
+      'invoice_font_regular',
+      'invoice_font_regular' // kein Preview, gleicher Key
+    );
+    $handleUpload(
+      'invoice_font_bold_upload',
+      'invoice_font_bold',
+      'invoice_font_bold',
+      'invoice_font_bold' // kein Preview, gleicher Key
     );
 
     // Bei Upload-Fehlern nicht speichern
@@ -413,6 +441,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <div class="small text-muted">
               Aktueller Briefbogen:
             </div>
+            <div class="small">
+              <a href="<?= hurl(url($set['invoice_letterhead_first_pdf'])) ?>" target="_blank" rel="noopener">
+                PDF anzeigen/herunterladen
+              </a>
+            </div>
           </div>
         <?php endif; ?>
 
@@ -445,6 +478,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <div class="small text-muted">
               Aktueller Briefbogen (Folgeseiten):
             </div>
+            <div class="small">
+              <a href="<?= hurl(url($set['invoice_letterhead_next_pdf'])) ?>" target="_blank" rel="noopener">
+                PDF anzeigen/herunterladen
+              </a>
+            </div>
           </div>
         <?php endif; ?>
 
@@ -462,6 +500,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       <a href="<?= hurl(url("/settings/invoice-layout.php")) ?>" target="_blank" rel="noopener">
         PDF-Bereiche definieren
       </a>
+
+      <hr class="my-3">
+      <h5 class="mb-3">Eigene Schriftarten (optional)</h5>
+      <div class="col-md-6">
+        <label class="form-label">Regular Font (OTF/TTF)</label>
+        <input
+          type="file"
+          class="form-control"
+          name="invoice_font_regular_upload"
+          accept=".otf,.ttf,application/x-font-ttf,application/x-font-otf,font/ttf,font/otf,application/vnd.ms-opentype,application/font-sfnt"
+        >
+        <?php if (!empty($set['invoice_font_regular'])): ?>
+          <div class="mt-2 small text-muted">
+            Aktuell: <a href="<?= hurl(url($set['invoice_font_regular'])) ?>" target="_blank" rel="noopener">Download</a>
+          </div>
+        <?php endif; ?>
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label">Bold Font (OTF/TTF)</label>
+        <input
+          type="file"
+          class="form-control"
+          name="invoice_font_bold_upload"
+          accept=".otf,.ttf,application/x-font-ttf,application/x-font-otf,font/ttf,font/otf,application/vnd.ms-opentype,application/font-sfnt"
+        >
+        <?php if (!empty($set['invoice_font_bold'])): ?>
+          <div class="mt-2 small text-muted">
+            Aktuell: <a href="<?= hurl(url($set['invoice_font_bold'])) ?>" target="_blank" rel="noopener">Download</a>
+          </div>
+        <?php endif; ?>
+      </div>
 
     </div>
   </div>
