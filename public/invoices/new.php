@@ -614,7 +614,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && ($_POST['a
           flash($msg, 'info');
         }
 
-        redirect(url('/invoices/export_xml.php?id='.(int)$invoice_id));
+        redirect(url('/invoices/pdf.php?id='.(int)$invoice_id));
         exit;
 
       } else {

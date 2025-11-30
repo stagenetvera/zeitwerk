@@ -6,6 +6,7 @@ require __DIR__ . '/../../src/bootstrap.php';
 require_once __DIR__ . '/../../src/utils.php';
 require_once __DIR__ . '/../../src/lib/settings.php';
 require_once __DIR__ . '/../../src/lib/speedata.php';
+require_once __DIR__ . '/../../src/lib/invoice_number.php';
 
 require_login();
 
@@ -360,6 +361,17 @@ $invoice = $inv->fetch(PDO::FETCH_ASSOC);
 if (!$invoice) {
     http_response_code(404);
     exit('Invoice not found');
+}
+
+// Falls noch keine Rechnungsnummer vergeben ist, jetzt erzeugen
+if (empty($invoice['invoice_number'] ?? '')) {
+    $issueDate = (string)($invoice['issue_date'] ?? date('Y-m-d'));
+    $invoice['invoice_number'] = assign_invoice_number_if_needed(
+        $pdo,
+        $account_id,
+        (int)$invoice['id'],
+        $issueDate
+    );
 }
 
 // ----------------------------------------------------------

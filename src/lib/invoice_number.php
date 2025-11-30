@@ -8,9 +8,8 @@
  * Rückgabe: Array mit gelesenen Feldern; 'invoice_seq_pad' ist gesetzt, wenn vorhanden.
  */
 function load_account_settings(PDO $pdo, int $account_id): array {
-  // HINWEIS: Erwartet laufende Transaktion (FOR UPDATE)!
-  $sel = $pdo->prepare("
-    SELECT
+  // Festes Schema (kein Legacy mehr)
+  $cols = "
       account_id,
       invoice_number_pattern,
       invoice_seq_pad,
@@ -18,15 +17,30 @@ function load_account_settings(PDO $pdo, int $account_id): array {
       default_vat_rate,
       default_tax_scheme,
       default_due_days,
+      invoice_round_minutes,
       invoice_intro_text,
       invoice_outro_text,
       bank_iban,
       bank_bic,
-      sender_address
+      sender_name,
+      sender_street,
+      sender_postcode,
+      sender_city,
+      sender_country,
+      sender_vat_id,
+      invoice_letterhead_first_pdf,
+      invoice_letterhead_first_preview,
+      invoice_letterhead_next_pdf,
+      invoice_letterhead_next_preview,
+      invoice_layout_zones
+  ";
+
+  // HINWEIS: Erwartet laufende Transaktion (FOR UPDATE)!
+  $sel = $pdo->prepare("SELECT
+      $cols
     FROM account_settings
     WHERE account_id = ?
-    FOR UPDATE
-  ");
+    FOR UPDATE");
   $sel->execute([$account_id]);
   $row = $sel->fetch();
 
@@ -34,21 +48,35 @@ function load_account_settings(PDO $pdo, int $account_id): array {
 
   // Kein Datensatz vorhanden → mit Defaults anlegen
   $ins = $pdo->prepare("
-    INSERT INTO account_settings
-      (account_id,
-       invoice_number_pattern,
-       invoice_seq_pad,
-       invoice_next_seq,
-       default_vat_rate,
-       default_tax_scheme,
-       default_due_days,
-       invoice_intro_text,
-       invoice_outro_text,
-       bank_iban,
-       bank_bic,
-       sender_address)
-    VALUES
-      (?, '{YYYY}-{SEQ}', 5, 1, 19.00, 'standard', 14, NULL, NULL, NULL, NULL, NULL)
+    INSERT INTO account_settings (
+      account_id,
+      invoice_number_pattern,
+      invoice_seq_pad,
+      invoice_next_seq,
+      default_vat_rate,
+      default_tax_scheme,
+      default_due_days,
+      invoice_round_minutes,
+      invoice_intro_text,
+      invoice_outro_text,
+      bank_iban,
+      bank_bic,
+      sender_name,
+      sender_street,
+      sender_postcode,
+      sender_city,
+      sender_country,
+      sender_vat_id,
+      invoice_letterhead_first_pdf,
+      invoice_letterhead_first_preview,
+      invoice_letterhead_next_pdf,
+      invoice_letterhead_next_preview,
+      invoice_layout_zones
+    ) VALUES (
+      ?, '{YYYY}-{SEQ}', 5, 1, 19.00, 'standard', 14, 0, NULL, NULL, NULL, NULL,
+      NULL, NULL, NULL, NULL, 'DE', NULL,
+      NULL, NULL, NULL, NULL, NULL
+    )
   ");
   $ins->execute([$account_id]);
 
