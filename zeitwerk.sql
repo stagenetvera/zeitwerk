@@ -3,19 +3,13 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: localhost
--- Erstellungszeit: 04. Nov 2025 um 08:55
+-- Erstellungszeit: 30. Nov 2025 um 09:28
 -- Server-Version: 9.0.1
 -- PHP-Version: 8.3.14
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
 START TRANSACTION;
 SET time_zone = "+00:00";
-
-
-/*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;
-/*!40101 SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS */;
-/*!40101 SET @OLD_COLLATION_CONNECTION=@@COLLATION_CONNECTION */;
-/*!40101 SET NAMES utf8mb4 */;
 
 --
 -- Datenbank: `zeitwerk`
@@ -29,9 +23,9 @@ SET time_zone = "+00:00";
 
 CREATE TABLE `accounts` (
   `id` bigint UNSIGNED NOT NULL,
-  `name` varchar(190) NOT NULL,
+  `name` varchar(190) COLLATE utf8mb4_unicode_ci NOT NULL,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
 
@@ -41,19 +35,29 @@ CREATE TABLE `accounts` (
 
 CREATE TABLE `account_settings` (
   `account_id` int NOT NULL,
-  `invoice_number_pattern` varchar(255) NOT NULL DEFAULT '{YYYY}-{SEQ}',
+  `invoice_number_pattern` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '{YYYY}-{SEQ}',
   `invoice_seq_pad` tinyint UNSIGNED NOT NULL DEFAULT '5',
   `invoice_next_seq` int NOT NULL DEFAULT '1',
   `default_vat_rate` decimal(5,2) DEFAULT '19.00',
-  `default_tax_scheme` enum('standard','tax_exempt','reverse_charge') DEFAULT 'standard',
+  `default_tax_scheme` enum('standard','tax_exempt','reverse_charge') COLLATE utf8mb4_unicode_ci DEFAULT 'standard',
   `default_due_days` int DEFAULT '14',
   `invoice_round_minutes` tinyint UNSIGNED NOT NULL DEFAULT '0',
-  `invoice_intro_text` text,
-  `invoice_outro_text` text,
-  `bank_iban` varchar(34) DEFAULT NULL,
-  `bank_bic` varchar(11) DEFAULT NULL,
-  `sender_address` text
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+  `invoice_intro_text` text COLLATE utf8mb4_unicode_ci,
+  `invoice_outro_text` text COLLATE utf8mb4_unicode_ci,
+  `bank_iban` varchar(34) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `bank_bic` varchar(11) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `sender_name` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `sender_street` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `sender_postcode` varchar(16) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `sender_city` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `sender_country` char(2) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'DE',
+  `sender_vat_id` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `invoice_letterhead_first_pdf` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `invoice_letterhead_first_preview` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `invoice_letterhead_next_pdf` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `invoice_letterhead_next_preview` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `invoice_layout_zones` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
 
@@ -64,17 +68,23 @@ CREATE TABLE `account_settings` (
 CREATE TABLE `companies` (
   `id` bigint UNSIGNED NOT NULL,
   `account_id` bigint UNSIGNED NOT NULL,
-  `name` varchar(190) NOT NULL,
-  `address` text,
-  `invoice_intro_text` text,
-  `invoice_outro_text` text,
+  `name` varchar(190) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `address` text COLLATE utf8mb4_unicode_ci,
+  `address_line1` varchar(190) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `address_line2` varchar(190) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `address_line3` varchar(190) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `postal_code` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `city` varchar(190) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `country_code` char(2) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'DE',
+  `invoice_intro_text` text COLLATE utf8mb4_unicode_ci,
+  `invoice_outro_text` text COLLATE utf8mb4_unicode_ci,
   `hourly_rate` decimal(10,2) DEFAULT NULL,
-  `default_tax_scheme` enum('standard','tax_exempt','reverse_charge') DEFAULT NULL,
+  `default_tax_scheme` enum('standard','tax_exempt','reverse_charge') COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `default_vat_rate` decimal(5,2) DEFAULT NULL,
-  `vat_id` varchar(128) DEFAULT NULL,
-  `status` enum('aktiv','abgeschlossen') NOT NULL DEFAULT 'aktiv',
+  `vat_id` varchar(128) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `status` enum('aktiv','abgeschlossen') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'aktiv',
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
 
@@ -86,17 +96,17 @@ CREATE TABLE `contacts` (
   `id` bigint UNSIGNED NOT NULL,
   `account_id` bigint UNSIGNED NOT NULL,
   `company_id` bigint UNSIGNED NOT NULL,
-  `email` varchar(190) DEFAULT NULL,
-  `salutation` enum('frau','herr','div') DEFAULT NULL,
-  `first_name` varchar(150) NOT NULL DEFAULT '',
-  `last_name` varchar(150) NOT NULL DEFAULT '',
-  `department` varchar(120) DEFAULT NULL,
-  `greeting_line` varchar(255) DEFAULT NULL,
+  `email` varchar(190) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `salutation` enum('frau','herr','div') COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `first_name` varchar(150) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '',
+  `last_name` varchar(150) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '',
+  `department` varchar(120) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `greeting_line` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `is_invoice_addressee` tinyint(1) NOT NULL DEFAULT '0',
-  `phone` varchar(64) DEFAULT NULL,
-  `phone_alt` varchar(64) DEFAULT NULL,
+  `phone` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `phone_alt` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
 
@@ -108,17 +118,17 @@ CREATE TABLE `invoices` (
   `id` bigint UNSIGNED NOT NULL,
   `account_id` bigint UNSIGNED NOT NULL,
   `company_id` bigint UNSIGNED NOT NULL,
-  `invoice_number` varchar(190) DEFAULT NULL,
-  `status` enum('in_vorbereitung','gestellt','gemahnt','bezahlt','storniert','ausgebucht') CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL DEFAULT 'in_vorbereitung',
+  `invoice_number` varchar(190) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `status` enum('in_vorbereitung','gestellt','bezahlt','storniert') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'in_vorbereitung',
   `issue_date` date NOT NULL,
   `due_date` date NOT NULL,
-  `tax_exemption_reason` text,
-  `invoice_intro_text` text,
-  `invoice_outro_text` text,
+  `tax_exemption_reason` text COLLATE utf8mb4_unicode_ci,
+  `invoice_intro_text` text COLLATE utf8mb4_unicode_ci,
+  `invoice_outro_text` text COLLATE utf8mb4_unicode_ci,
   `total_net` decimal(12,2) NOT NULL DEFAULT '0.00',
   `total_gross` decimal(12,2) NOT NULL DEFAULT '0.00',
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
 
@@ -132,17 +142,18 @@ CREATE TABLE `invoice_items` (
   `invoice_id` bigint UNSIGNED NOT NULL,
   `project_id` bigint UNSIGNED DEFAULT NULL,
   `task_id` bigint UNSIGNED DEFAULT NULL,
-  `description` text NOT NULL,
-  `quantity` decimal(10,3) NOT NULL DEFAULT '0.000',
+  `description` text COLLATE utf8mb4_unicode_ci NOT NULL,
+  `quantity` decimal(10,4) NOT NULL DEFAULT '0.0000',
   `unit_price` decimal(12,2) NOT NULL DEFAULT '0.00',
   `vat_rate` decimal(5,2) NOT NULL DEFAULT '19.00',
   `total_net` decimal(12,2) NOT NULL DEFAULT '0.00',
   `total_gross` decimal(12,2) NOT NULL DEFAULT '0.00',
   `position` int DEFAULT NULL,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
-  `tax_scheme` enum('standard','tax_exempt','reverse_charge') DEFAULT NULL,
-  `entry_mode` enum('auto','time','qty') NOT NULL DEFAULT 'auto'
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+  `tax_scheme` enum('standard','tax_exempt','reverse_charge') COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `entry_mode` enum('auto','time','qty','fixed') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'qty',
+  `is_hidden` tinyint(1) NOT NULL DEFAULT '0'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
 
@@ -155,7 +166,24 @@ CREATE TABLE `invoice_item_times` (
   `invoice_item_id` bigint UNSIGNED NOT NULL,
   `time_id` bigint UNSIGNED NOT NULL,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Tabellenstruktur für Tabelle `invoice_sources`
+--
+
+CREATE TABLE `invoice_sources` (
+  `id` bigint UNSIGNED NOT NULL,
+  `invoice_id` bigint UNSIGNED NOT NULL,
+  `invoice_line_id` bigint UNSIGNED NOT NULL,
+  `source_type` enum('task') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'task',
+  `source_id` bigint UNSIGNED NOT NULL,
+  `portion_percent` decimal(5,2) NOT NULL DEFAULT '100.00',
+  `amount_cents` bigint NOT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
 
@@ -168,11 +196,11 @@ CREATE TABLE `projects` (
   `account_id` bigint UNSIGNED NOT NULL,
   `company_id` bigint UNSIGNED NOT NULL,
   `contact_id` bigint UNSIGNED DEFAULT NULL,
-  `title` varchar(190) NOT NULL,
-  `status` enum('offen','abgeschlossen','angeboten') NOT NULL DEFAULT 'offen',
+  `title` varchar(190) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `status` enum('offen','abgeschlossen','angeboten') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'offen',
   `hourly_rate` decimal(10,2) DEFAULT NULL,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
 
@@ -184,12 +212,12 @@ CREATE TABLE `recurring_items` (
   `id` int NOT NULL,
   `account_id` int NOT NULL,
   `company_id` int NOT NULL,
-  `description_tpl` varchar(255) NOT NULL,
+  `description_tpl` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
   `quantity` decimal(10,3) NOT NULL DEFAULT '1.000',
   `unit_price` decimal(10,2) NOT NULL DEFAULT '0.00',
-  `tax_scheme` enum('standard','tax_exempt','reverse_charge') NOT NULL DEFAULT 'standard',
+  `tax_scheme` enum('standard','tax_exempt','reverse_charge') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'standard',
   `vat_rate` decimal(5,2) NOT NULL DEFAULT '0.00',
-  `interval_unit` enum('day','week','month','quarter','year') NOT NULL DEFAULT 'month',
+  `interval_unit` enum('day','week','month','quarter','year') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'month',
   `interval_count` int NOT NULL DEFAULT '1',
   `start_date` date NOT NULL,
   `end_date` date DEFAULT NULL,
@@ -197,7 +225,7 @@ CREATE TABLE `recurring_items` (
   `active` tinyint(1) NOT NULL DEFAULT '1',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
 
@@ -214,7 +242,7 @@ CREATE TABLE `recurring_item_ledger` (
   `period_to` date NOT NULL,
   `invoice_id` bigint UNSIGNED DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
 
@@ -226,14 +254,17 @@ CREATE TABLE `tasks` (
   `id` bigint UNSIGNED NOT NULL,
   `account_id` bigint UNSIGNED NOT NULL,
   `project_id` bigint UNSIGNED NOT NULL,
-  `description` text NOT NULL,
+  `billing_mode` enum('time','fixed') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'time',
+  `fixed_price_cents` bigint DEFAULT NULL,
+  `billed_in_invoice_id` bigint UNSIGNED DEFAULT NULL,
+  `description` text COLLATE utf8mb4_unicode_ci NOT NULL,
   `planned_minutes` int DEFAULT NULL,
-  `priority` enum('low','medium','high') NOT NULL DEFAULT 'medium',
+  `priority` enum('low','medium','high') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'medium',
   `deadline` date DEFAULT NULL,
-  `status` enum('angeboten','offen','warten','abgeschlossen') NOT NULL DEFAULT 'offen',
+  `status` enum('angeboten','offen','warten','abgeschlossen') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'offen',
   `billable` tinyint(1) NOT NULL DEFAULT '1',
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
 
@@ -245,7 +276,7 @@ CREATE TABLE `task_ordering_global` (
   `account_id` int NOT NULL,
   `task_id` int NOT NULL,
   `position` int NOT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
 
@@ -262,9 +293,9 @@ CREATE TABLE `times` (
   `ended_at` datetime DEFAULT NULL,
   `minutes` int DEFAULT NULL,
   `billable` tinyint(1) NOT NULL DEFAULT '1',
-  `status` enum('offen','in_abrechnung','abgerechnet') NOT NULL DEFAULT 'offen',
+  `status` enum('offen','in_abrechnung','abgerechnet') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'offen',
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
 -- Trigger `times`
@@ -345,12 +376,12 @@ DELIMITER ;
 CREATE TABLE `users` (
   `id` bigint UNSIGNED NOT NULL,
   `account_id` bigint UNSIGNED NOT NULL,
-  `name` varchar(190) NOT NULL,
-  `email` varchar(190) NOT NULL,
-  `password_hash` varchar(255) NOT NULL,
+  `name` varchar(190) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `email` varchar(190) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `password_hash` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
   `is_admin` tinyint(1) NOT NULL DEFAULT '0',
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
 -- Indizes der exportierten Tabellen
@@ -367,6 +398,7 @@ ALTER TABLE `accounts`
 --
 ALTER TABLE `account_settings`
   ADD PRIMARY KEY (`account_id`);
+ALTER TABLE `account_settings` ADD FULLTEXT KEY `invoice_letterhead_first_pdf` (`invoice_letterhead_first_pdf`,`invoice_letterhead_first_preview`,`invoice_letterhead_next_pdf`,`invoice_letterhead_next_preview`,`invoice_layout_zones`);
 
 --
 -- Indizes für die Tabelle `companies`
@@ -414,16 +446,25 @@ ALTER TABLE `invoice_items`
   ADD KEY `task_id` (`task_id`),
   ADD KEY `idx_items_invoice_acc` (`account_id`,`invoice_id`),
   ADD KEY `idx_items_project_acc` (`account_id`,`project_id`),
-  ADD KEY `idx_items_task_acc` (`account_id`,`task_id`);
+  ADD KEY `idx_items_task_acc` (`account_id`,`task_id`),
+  ADD KEY `idx_invoice_items_task_fixed` (`task_id`,`entry_mode`);
 
 --
 -- Indizes für die Tabelle `invoice_item_times`
 --
 ALTER TABLE `invoice_item_times`
   ADD PRIMARY KEY (`account_id`,`invoice_item_id`,`time_id`),
+  ADD UNIQUE KEY `uq_iit_account_time` (`account_id`,`time_id`),
   ADD KEY `idx_iit_item` (`invoice_item_id`),
   ADD KEY `idx_iit_time` (`time_id`),
   ADD KEY `fk_iit_time_acc` (`account_id`,`time_id`);
+
+--
+-- Indizes für die Tabelle `invoice_sources`
+--
+ALTER TABLE `invoice_sources`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_invoice_sources_src` (`source_type`,`source_id`);
 
 --
 -- Indizes für die Tabelle `projects`
@@ -459,7 +500,9 @@ ALTER TABLE `tasks`
   ADD UNIQUE KEY `uq_tasks_account_id_id` (`account_id`,`id`),
   ADD KEY `project_id` (`project_id`),
   ADD KEY `account_id` (`account_id`,`project_id`,`status`),
-  ADD KEY `idx_tasks_acc_proj_stat_prio_dead` (`account_id`,`project_id`,`status`,`priority`,`deadline`);
+  ADD KEY `idx_tasks_acc_proj_stat_prio_dead` (`account_id`,`project_id`,`status`,`priority`,`deadline`),
+  ADD KEY `idx_tasks_billing_mode` (`billing_mode`),
+  ADD KEY `idx_tasks_billed_invoice` (`billed_in_invoice_id`);
 
 --
 -- Indizes für die Tabelle `task_ordering_global`
@@ -520,6 +563,12 @@ ALTER TABLE `invoices`
 -- AUTO_INCREMENT für Tabelle `invoice_items`
 --
 ALTER TABLE `invoice_items`
+  MODIFY `id` bigint UNSIGNED NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT für Tabelle `invoice_sources`
+--
+ALTER TABLE `invoice_sources`
   MODIFY `id` bigint UNSIGNED NOT NULL AUTO_INCREMENT;
 
 --
@@ -614,6 +663,7 @@ ALTER TABLE `projects`
 -- Constraints der Tabelle `tasks`
 --
 ALTER TABLE `tasks`
+  ADD CONSTRAINT `fk_tasks_billed_invoice` FOREIGN KEY (`billed_in_invoice_id`) REFERENCES `invoices` (`id`) ON DELETE SET NULL ON UPDATE CASCADE,
   ADD CONSTRAINT `fk_tasks_project_acc` FOREIGN KEY (`account_id`,`project_id`) REFERENCES `projects` (`account_id`, `id`) ON DELETE RESTRICT ON UPDATE CASCADE,
   ADD CONSTRAINT `tasks_ibfk_1` FOREIGN KEY (`account_id`) REFERENCES `accounts` (`id`) ON DELETE CASCADE,
   ADD CONSTRAINT `tasks_ibfk_2` FOREIGN KEY (`project_id`) REFERENCES `projects` (`id`) ON DELETE CASCADE;
@@ -632,7 +682,3 @@ ALTER TABLE `times`
 ALTER TABLE `users`
   ADD CONSTRAINT `users_ibfk_1` FOREIGN KEY (`account_id`) REFERENCES `accounts` (`id`) ON DELETE CASCADE;
 COMMIT;
-
-/*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;
-/*!40101 SET CHARACTER_SET_RESULTS=@OLD_CHARACTER_SET_RESULTS */;
-/*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
