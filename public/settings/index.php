@@ -72,11 +72,20 @@ function generate_letterhead_preview($pdfPath, $pngPath): bool {
  */
 function delete_setting_file(?string $urlPath): void {
   if (!$urlPath) return;
-  // Annahme: public/ ist Webroot, also "../.." zurück zum Projekt
-  $fsPath = realpath(__DIR__ . '/../../storage/layout/' . basename($urlPath));
-  if (is_file($fsPath)) {
-    @unlink($fsPath);
+  $rel = '';
+  if (strpos($urlPath, 'file.php') !== false) {
+    $parts = parse_url($urlPath);
+    if (!empty($parts['query'])) {
+      parse_str($parts['query'], $q);
+      if (!empty($q['path'])) $rel = urldecode($q['path']);
+    }
+  } else {
+    $rel = $urlPath;
   }
+  $rel = ltrim($rel, '/');
+  $fsPath = realpath(__DIR__ . '/../../storage/' . $rel);
+  if (!$fsPath) $fsPath = __DIR__ . '/../../storage/' . $rel;
+  if (is_file($fsPath)) { @unlink($fsPath); }
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -84,9 +93,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Basis: vorhandene Settings übernehmen, damit wir vorhandene Pfade weiterreichen können
     $data = $_POST;
 
-    // Upload-Verzeichnis vorbereiten
+    // Upload-Verzeichnis vorbereiten (account-spezifisch)
     $baseStorageDir = __DIR__ . '/../../storage';
-    $layoutDir      = $baseStorageDir . '/layout';
+    $layoutDir      = $baseStorageDir . '/layout/' . $account_id;
     if (!is_dir($layoutDir)) {
       @mkdir($layoutDir, 0775, true);
     }
@@ -160,10 +169,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       }
 
       // URL-Pfade in Settings speichern (relativ zum Webroot)
-      $data[$oldPdfKey] = '/settings/file.php?path=' . rawurlencode('layout/' . basename($pdfFsPath));
+      $data[$oldPdfKey] = '/settings/file.php?path=' . rawurlencode('layout/' . $account_id . '/' . basename($pdfFsPath));
       if ($isLetterhead) {
         if ($previewOk) {
-          $data[$oldPngKey] = '/settings/file.php?path=' . rawurlencode('layout/' . $baseName . '.png');
+          $data[$oldPngKey] = '/settings/file.php?path=' . rawurlencode('layout/' . $account_id . '/' . $baseName . '.png');
         } else {
           $data[$oldPngKey] = '';
           $reason = $GLOBALS['__lh_preview_err'] ?? 'Imagick/Delegate nicht verfügbar';

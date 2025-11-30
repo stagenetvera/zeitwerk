@@ -122,9 +122,11 @@ $pdfNext      = $set['invoice_letterhead_next_pdf'] ?? '';
 if ($pdfFirst && !$previewFirst) {
   $pdfPath = _resolve_storage_path_for_setting($pdfFirst);
   $pngName = pathinfo($pdfPath, PATHINFO_FILENAME).'.png';
-  $pngPath = __DIR__ . '/../../storage/layout/' . $pngName;
+  $pngPath = dirname($pdfPath) . '/' . $pngName;
   if (is_readable($pdfPath) && _ensure_preview_for_pdf($pdfPath, $pngPath)) {
-    $previewFirst = '/settings/file.php?path=' . rawurlencode('layout/'.$pngName);
+    // Versuche relativen Pfad ab storage/ zu konstruieren
+    $rel = str_replace(realpath(__DIR__.'/../../storage/').'/', '', realpath($pngPath));
+    $previewFirst = '/settings/file.php?path=' . rawurlencode($rel);
     $set['invoice_letterhead_first_preview'] = $previewFirst;
     save_account_settings($pdo, $account_id, ['invoice_letterhead_first_preview' => $previewFirst]);
   }
@@ -133,9 +135,10 @@ if ($pdfFirst && !$previewFirst) {
 if ($pdfNext && !$previewNext) {
   $pdfPath = _resolve_storage_path_for_setting($pdfNext);
   $pngName = pathinfo($pdfPath, PATHINFO_FILENAME).'.png';
-  $pngPath = __DIR__ . '/../../storage/layout/' . $pngName;
+  $pngPath = dirname($pdfPath) . '/' . $pngName;
   if (is_readable($pdfPath) && _ensure_preview_for_pdf($pdfPath, $pngPath)) {
-    $previewNext = '/settings/file.php?path=' . rawurlencode('layout/'.$pngName);
+    $rel = str_replace(realpath(__DIR__.'/../../storage/').'/', '', realpath($pngPath));
+    $previewNext = '/settings/file.php?path=' . rawurlencode($rel);
     $set['invoice_letterhead_next_preview'] = $previewNext;
     save_account_settings($pdo, $account_id, ['invoice_letterhead_next_preview' => $previewNext]);
   }
