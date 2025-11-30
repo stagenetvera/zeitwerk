@@ -145,7 +145,7 @@
           <li class="nav-item"><a class="nav-link" href="<?php echo url('/dashboard/index.php') ?>">Dashboard</a></li>
           <li class="nav-item"><a class="nav-link" href="<?php echo url('/companies/index.php') ?>">Firmen</a></li>
         <li class="nav-item"><a class="nav-link" href="<?php echo url('/times/index.php') ?>">Zeiten</a></li>
-        <li class="nav-item"><a class="nav-link" href="<?php echo url('/offers/index.php') ?>">Angebote</a></li>
+        <!-- <li class="nav-item"><a class="nav-link" href="<?php echo url('/offers/index.php') ?>">Angebote</a></li> -->
         <li class="nav-item"><a class="nav-link" href="<?php echo url('/invoices/index.php') ?>">Rechnungen</a></li>
         <li class="nav-item"><a class="nav-link" href="<?php echo url('/settings/index.php') ?>">Einstellungen</a></li>
 
