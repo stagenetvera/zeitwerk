@@ -240,6 +240,7 @@ require __DIR__ . '/../../src/layout/header.php';
 
         $line1  = trim((string)($company['address_line1'] ?? ''));
         $line2  = trim((string)($company['address_line2'] ?? ''));
+        $line3  = trim((string)($company['address_line3'] ?? ''));
         $postal = trim((string)($company['postal_code']   ?? ''));
         $city   = trim((string)($company['city']          ?? ''));
         $cc     = strtoupper((string)($company['country_code'] ?? ''));
@@ -249,6 +250,9 @@ require __DIR__ . '/../../src/layout/header.php';
         }
         if ($line2 !== '') {
             $addrLines[] = $line2;
+        }
+        if ($line3 !== '') {
+            $addrLines[] = $line3;
         }
 
         $cityLine = trim($postal . ' ' . $city);

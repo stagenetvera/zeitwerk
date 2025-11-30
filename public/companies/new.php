@@ -33,6 +33,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save'
   $name    = trim($_POST['name'] ?? '');
   $address_line1 = trim($_POST['address_line1'] ?? '');
   $address_line2 = trim($_POST['address_line2'] ?? '');
+  $address_line3 = trim($_POST['address_line3'] ?? '');
   $postal_code   = trim($_POST['postal_code']   ?? '');
   $city          = trim($_POST['city']          ?? '');
   $country_code  = strtoupper(trim($_POST['country_code'] ?? 'DE'));
@@ -73,6 +74,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save'
         address,
         address_line1,
         address_line2,
+        address_line3,
         postal_code,
         city,
         country_code,
@@ -89,6 +91,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save'
         ?,          -- address (Textblock)
         ?,          -- address_line1
         ?,          -- address_line2
+        ?,          -- address_line3
         ?,          -- postal_code
         ?,          -- city
         ?,          -- country_code
@@ -107,6 +110,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save'
       $address,
       $address_line1,
       $address_line2,
+      $address_line3,
       $postal_code,
       $city,
       $country_code,
@@ -145,16 +149,22 @@ require __DIR__ . '/../../src/layout/header.php';
                 value="<?= $val('name') ?>" required>
         </div>
 
-        <div class="col-md-8">
-          <label class="form-label">Straße & Hausnummer</label>
+        <div class="col-12">
+          <label class="form-label">Adresszeile 1 (Straße & Hausnummer)</label>
           <input type="text" name="address_line1" class="form-control"
                 value="<?= $val('address_line1') ?>">
         </div>
 
-        <div class="col-md-4">
-          <label class="form-label">Adresszusatz</label>
+        <div class="col-12">
+          <label class="form-label">Adresszeile 2</label>
           <input type="text" name="address_line2" class="form-control"
                 value="<?= $val('address_line2') ?>">
+        </div>
+
+        <div class="col-12">
+          <label class="form-label">Adresszeile 3</label>
+          <input type="text" name="address_line3" class="form-control"
+                value="<?= $val('address_line3') ?>">
         </div>
 
         <div class="col-md-4">

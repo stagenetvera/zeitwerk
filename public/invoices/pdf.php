@@ -316,6 +316,7 @@ $inv = $pdo->prepare('
     c.name          AS company_name,
     c.address_line1 AS company_address_line1,
     c.address_line2 AS company_address_line2,
+    c.address_line3 AS company_address_line3,
     c.postal_code   AS company_postal_code,
     c.city          AS company_city,
     c.country_code  AS company_country_code,
@@ -495,16 +496,10 @@ if ($hasStandardRatedLines && $seller['vat_id'] === '') {
 $buyerName = (string)($invoice['company_name'] ?? '');
 
 // Straße = address_line1 [+ address_line2]
-$streetParts = [];
-$line1 = trim((string)($invoice['company_address_line1'] ?? ''));
-$line2 = trim((string)($invoice['company_address_line2'] ?? ''));
-if ($line1 !== '') {
-    $streetParts[] = $line1;
-}
-if ($line2 !== '') {
-    $streetParts[] = $line2;
-}
-$buyerStreet = trim(implode(' ', $streetParts));
+$buyerLine1 = trim((string)($invoice['company_address_line1'] ?? ''));
+$buyerLine2 = trim((string)($invoice['company_address_line2'] ?? ''));
+$buyerLine3 = trim((string)($invoice['company_address_line3'] ?? ''));
+$buyerStreet = trim(implode(' ', array_filter([$buyerLine1, $buyerLine2, $buyerLine3])));
 
 $buyerZip     = trim((string)($invoice['company_postal_code'] ?? ''));
 $buyerCity    = trim((string)($invoice['company_city'] ?? ''));
@@ -573,7 +568,9 @@ $agreement->buyerTradeParty       = new TradeParty();
 $agreement->buyerTradeParty->name = $buyerName ?: $buyerStreet ?: $buyerCity ?: $buyerAddress;
 
 $buyerAddr           = new TradeAddress();
-$buyerAddr->lineOne  = $buyerStreet ?: null;
+$buyerAddr->lineOne  = $buyerLine1 !== '' ? $buyerLine1 : null;
+$buyerAddr->lineTwo  = $buyerLine2 !== '' ? $buyerLine2 : null;
+$buyerAddr->lineThree= $buyerLine3 !== '' ? $buyerLine3 : null;
 $buyerAddr->postcode = $buyerZip ?: null;
 $buyerAddr->city     = $buyerCity ?: null;
 

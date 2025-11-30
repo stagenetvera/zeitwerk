@@ -40,6 +40,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
   $address_line1 = trim($_POST['address_line1'] ?? '');
   $address_line2 = trim($_POST['address_line2'] ?? '');
+  $address_line3 = trim($_POST['address_line3'] ?? '');
   $postal_code   = trim($_POST['postal_code']   ?? '');
   $city          = trim($_POST['city']          ?? '');
   $country_code  = strtoupper(trim($_POST['country_code'] ?? 'DE'));
@@ -87,6 +88,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             address          = ?,      -- Textblock (weitergeführt)
             address_line1    = ?,      -- NEU
             address_line2    = ?,      -- NEU
+            address_line3    = ?,      -- NEU
             postal_code      = ?,      -- NEU
             city             = ?,      -- NEU
             country_code     = ?,      -- NEU
@@ -104,6 +106,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $address,
         $address_line1,
         $address_line2,
+        $address_line3,
         $postal_code,
         $city,
         $country_code,
@@ -164,28 +167,34 @@ $acct_vat_js = number_format((float)$settings['default_vat_rate'], 2, '.', ''); 
       <div class="row g-3">
 
 
-        <div class="col-md-8">
-          <label class="form-label">Straße & Hausnummer</label>
+        <div class="col-12">
+          <label class="form-label">Adresszeile 1 (Straße & Hausnummer)</label>
           <input type="text" name="address_line1" class="form-control"
-                value="<?= h($company['address_line1']) ?>">
+                value="<?= h((string)($company['address_line1'] ?? '')) ?>">
         </div>
 
-        <div class="col-md-4">
-          <label class="form-label">Adresszusatz</label>
+        <div class="col-12">
+          <label class="form-label">Adresszeile 2</label>
           <input type="text" name="address_line2" class="form-control"
-                value="<?= h($company['address_line2']) ?>">
+                value="<?= h((string)($company['address_line2'] ?? '')) ?>">
+        </div>
+
+        <div class="col-12">
+          <label class="form-label">Adresszeile 3</label>
+          <input type="text" name="address_line3" class="form-control"
+                value="<?= h((string)($company['address_line3'] ?? '')) ?>">
         </div>
 
         <div class="col-md-4">
           <label class="form-label">PLZ</label>
           <input type="text" name="postal_code" class="form-control"
-                value="<?= h($company['postal_code']) ?>">
+                value="<?= h((string)($company['postal_code'] ?? '')) ?>">
         </div>
 
         <div class="col-md-8">
           <label class="form-label">Ort</label>
           <input type="text" name="city" class="form-control"
-                value="<?= h($company['city']) ?>">
+                value="<?= h((string)($company['city'] ?? '')) ?>">
         </div>
 
         <div class="col-md-4">
