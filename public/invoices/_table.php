@@ -107,6 +107,16 @@ if (!isset($return_to) || $return_to === null || $return_to === '') {
               </form>
 
               <a class="btn btn-sm btn-outline-secondary" href="<?= h(url('/invoices/pdf.php?id=' . $inv['id'])) ?>">PDF</a>
+              <?php $can_issue = ($inv['status'] === 'in_vorbereitung'); ?>
+              <form method="post" action="<?= url('/invoices/issue_and_pdf.php') ?>" class="d-inline"
+                    onsubmit="return confirm('Rechnung jetzt stellen und PDF öffnen?');">
+                <?= csrf_field() ?>
+                <input type="hidden" name="id" value="<?= (int)$inv['id'] ?>">
+                <input type="hidden" name="return_to" value="<?= h($return_to) ?>">
+                <button class="btn btn-sm btn-outline-primary" <?= $can_issue ? '' : 'disabled' ?> title="Stellen & PDF">
+                  <i class="bi bi-envelope-paper"></i>
+                </button>
+              </form>
               <?php
                 $st = $inv['status'] ?? 'in_vorbereitung';
                 $has_no_number = empty($inv['invoice_number']);
