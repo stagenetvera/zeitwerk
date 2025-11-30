@@ -354,6 +354,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         </div>
       </div>
 
+      <div class="col-md-3">
+        <label class="form-label">Aufgaben-Fortschritt: Gelb ab (%)</label>
+        <input type="number" step="1" min="0" class="form-control"
+               name="task_progress_warn_pct"
+               value="<?= h((float)($set['task_progress_warn_pct'] ?? 90)) ?>">
+        <div class="form-text">Verhältnis Verbrauch/Plan in % – ab diesem Wert wird der Balken gelb.</div>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Aufgaben-Fortschritt: Rot ab (%)</label>
+        <input type="number" step="1" min="0" class="form-control"
+               name="task_progress_alert_pct"
+               value="<?= h((float)($set['task_progress_alert_pct'] ?? 110)) ?>">
+        <div class="form-text">Ab diesem Wert wird der Balken rot (sollte ≥ Gelb-Grenze sein).</div>
+      </div>
+
       <div class="mb-3">
         <label class="form-label">Standard-Einleitungstext</label>
         <textarea class="form-control" name="invoice_intro_text" rows="3"><?= h($set['invoice_intro_text'] ?? '') ?></textarea>

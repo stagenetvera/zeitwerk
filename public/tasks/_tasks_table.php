@@ -21,6 +21,12 @@ $show_company = !empty($show_company);
 $is_sortable = $is_sortable ?? false;
 
 
+// Progress-Schwellen sicherstellen (Fallback auf Settings)
+if (!isset($progress_warn_pct) || !isset($progress_alert_pct)) {
+  $progress_warn_pct  = $progress_warn_pct  ?? 90.0;
+  $progress_alert_pct = $progress_alert_pct ?? 100.0;
+}
+
 ?>
 <?php
     $table_body_id = $table_body_id ?? 'dashTaskBody';
@@ -36,8 +42,7 @@ $is_sortable = $is_sortable ?? false;
         <th>Priorität</th>
         <th>Status</th>
         <th>Deadline</th>
-        <th>Geschätzt</th>
-        <th>Zeit</th>
+        <th>Zeit / Fortschritt</th>
         <th class="text-end">Aktionen</th>
       </tr>
     </thead>
@@ -46,13 +51,24 @@ $is_sortable = $is_sortable ?? false;
         <?php
           $planned = $r['planned_minutes'] !== null ? (int)$r['planned_minutes'] : 0;
           $total   = (int)($r['spent_minutes'] ?? 0);
+          $billing = $r['billing_mode'] ?? 'time';
+          $fixedC  = isset($r['fixed_price_cents']) ? (int)$r['fixed_price_cents'] : 0;
+          $effRate = isset($r['effective_rate']) ? (float)$r['effective_rate'] : 0.0;
+
+          // Für Fixpreis ohne Schätzung: fiktive Plan-Minuten aus Preis/Rate
+          if ($planned <= 0 && $billing === 'fixed' && $fixedC > 0 && $effRate > 0) {
+            $planned = (int)round(($fixedC / 100.0) / $effRate * 60); // Preis / Satz = Stunden -> Minuten
+          }
 
           $badge = '';
+          $warnPct  = isset($progress_warn_pct)  ? (float)$progress_warn_pct  : 90.0;
+          $alertPct = isset($progress_alert_pct) ? (float)$progress_alert_pct : 100.0;
           if ($planned > 0) {
             $ratio = $total / $planned;
-            if ($ratio >= 1.0)      $badge = 'badge bg-danger';
-            elseif ($ratio >= 0.8)  $badge = 'badge bg-warning text-dark';
-            else                    $badge = 'badge bg-success';
+            $pct   = $ratio * 100.0;
+            if ($pct >= $alertPct)     $badge = 'bg-danger';
+            elseif ($pct >= $warnPct)  $badge = 'bg-warning text-dark';
+            else                       $badge = 'bg-success';
           }
 
           $badge_deadline = '';
@@ -116,10 +132,24 @@ $is_sortable = $is_sortable ?? false;
                 <?= !empty($r['deadline']) ? h(_fmt_dmy($r['deadline'])) : '—' ?>
             <?php endif; ?>
             </td>
-          <td><?= $planned ? fmt_minutes($planned) : '—' ?></td>
           <td>
-            <?php if ($badge): ?>
-              <span class="<?= $badge ?>"><?= fmt_minutes($total) ?></span>
+            <?php if ($planned > 0): ?>
+              <?php
+                $ratio = $planned > 0 ? ($total / $planned) : 0;
+                $width = min(150, round($ratio * 100)); // bis 150%
+              ?>
+              <div class="progress" style="height: 0.6rem; background-color: #e9ecef;">
+                <div class="progress-bar <?= $badge ?><?= $badge ? '' : ' bg-secondary' ?>"
+                     role="progressbar"
+                     style="width: <?= $width ?>%;"
+                     aria-valuenow="<?= (int)round($ratio*100) ?>"
+                     aria-valuemin="0"
+                     aria-valuemax="150">
+                </div>
+              </div>
+              <div class="small text-muted">
+                <?= fmt_minutes($total) ?> / <?= fmt_minutes($planned) ?>
+              </div>
             <?php else: ?>
               <?= fmt_minutes($total) ?>
             <?php endif; ?>

@@ -28,6 +28,8 @@ function settings_defaults(): array {
     'invoice_layout_zones'             => '',
     'invoice_font_regular'             => '',
     'invoice_font_bold'                => '',
+    'task_progress_warn_pct'           => 90.0,  // grün -> gelb
+    'task_progress_alert_pct'          => 100.0, // gelb -> rot
   ];
 }
 
@@ -70,9 +72,11 @@ function get_account_settings(PDO $pdo, int $account_id): array {
           invoice_letterhead_next_preview,
           invoice_layout_zones,
           invoice_font_regular,
-          invoice_font_bold
+          invoice_font_bold,
+          task_progress_warn_pct,
+          task_progress_alert_pct
         )
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ');
     $ins->execute([
       $account_id,
@@ -100,6 +104,8 @@ function get_account_settings(PDO $pdo, int $account_id): array {
       $defs['invoice_layout_zones'],
       $defs['invoice_font_regular'],
       $defs['invoice_font_bold'],
+      $defs['task_progress_warn_pct'],
+      $defs['task_progress_alert_pct'],
     ]);
 
     // Nach Insert erneut lesen
@@ -303,6 +309,12 @@ function save_account_settings(PDO $pdo, int $account_id, array $in): void {
     $layoutZones = (string)$current['invoice_layout_zones'];
   }
 
+  // Task-Progress-Grenzen
+  $warnPct  = array_key_exists('task_progress_warn_pct', $in) ? (float)$in['task_progress_warn_pct'] : (float)$current['task_progress_warn_pct'];
+  $alertPct = array_key_exists('task_progress_alert_pct', $in) ? (float)$in['task_progress_alert_pct'] : (float)$current['task_progress_alert_pct'];
+  if ($warnPct < 0) $warnPct = 0;
+  if ($alertPct < $warnPct) $alertPct = $warnPct;
+
   // Fonts
   if (array_key_exists('invoice_font_regular', $in)) {
     $fontRegular = (string)$in['invoice_font_regular'];
@@ -341,7 +353,9 @@ function save_account_settings(PDO $pdo, int $account_id, array $in): void {
            invoice_letterhead_next_preview  = ?,
            invoice_layout_zones             = ?,
            invoice_font_regular             = ?,
-           invoice_font_bold                = ?
+           invoice_font_bold                = ?,
+           task_progress_warn_pct           = ?,
+           task_progress_alert_pct          = ?
      WHERE account_id = ?
   ');
 
@@ -370,6 +384,8 @@ function save_account_settings(PDO $pdo, int $account_id, array $in): void {
     $layoutZones,
     $fontRegular,
     $fontBold,
+    $warnPct,
+    $alertPct,
     $account_id,
   ]);
 }

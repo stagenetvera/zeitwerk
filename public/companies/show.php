@@ -219,6 +219,7 @@ $company_id = $id;
 
 // -------- view --------
 require __DIR__ . '/../../src/layout/header.php';
+require_once __DIR__ . '/../../src/lib/settings.php';
 
 ?>
 <div class="d-flex justify-content-between align-items-center mb-3">
@@ -486,7 +487,9 @@ $tasks_pages = max(1, (int)ceil($tasks_total / $task_per_page));
 // Daten laden
 $sqlTasks = "SELECT
     t.id AS task_id, t.description, t.deadline, t.planned_minutes, t.priority, t.status,
+    t.billing_mode, t.fixed_price_cents,
     p.id AS project_id, p.title AS project_title,
+    COALESCE(p.hourly_rate, 0) AS effective_rate,
     COALESCE((
       SELECT SUM(tt.minutes) FROM times tt
       WHERE tt.account_id = t.account_id AND tt.user_id = :uid AND tt.task_id = t.id AND tt.minutes IS NOT NULL
@@ -578,6 +581,10 @@ $running_time_id = $has_running ? (int)$__running['id'] : 0;
     <?php
       // In companies/show: ohne Firmen-Spalte
       $show_company = false;
+      $settings = get_account_settings($pdo, $account_id);
+      $progress_warn_pct  = (float)($settings['task_progress_warn_pct']  ?? 90.0);
+      $progress_alert_pct = (float)($settings['task_progress_alert_pct'] ?? 100.0);
+
       require __DIR__ . '/../tasks/_tasks_table.php';
 
     ?>

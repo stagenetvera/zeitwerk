@@ -1,6 +1,7 @@
 <?php
 // public/dashboard/index_filters_v2.php
 require __DIR__ . '/../../src/layout/header.php';
+require_once __DIR__ . '/../../src/lib/settings.php';
 require_login();
 
 $user = auth_user();
@@ -89,11 +90,14 @@ $sql = "SELECT
     ta.deadline,
     ta.status,
     ta.planned_minutes,
+    ta.billing_mode,
+    ta.fixed_price_cents,
     p.id    AS project_id,
     p.title AS project_title,
     c.id    AS company_id,
     c.name  AS company_name,
-    COALESCE(tsum.sum_minutes, 0) AS spent_minutes
+    COALESCE(tsum.sum_minutes, 0) AS spent_minutes,
+    COALESCE(p.hourly_rate, 0) AS effective_rate
   FROM tasks ta
   JOIN projects p ON p.id = ta.project_id AND p.account_id = ta.account_id
   JOIN companies c ON c.id = p.company_id AND c.account_id = p.account_id
@@ -194,6 +198,10 @@ $keep = [
       $running_time_id  = $running ? (int)$running['id'] : 0;
       $table_body_id = 'dashTaskBody';
       $is_sortable = !$has_filters;
+      $settings = get_account_settings($pdo, $account_id);
+      $progress_warn_pct  = (float)($settings['task_progress_warn_pct']  ?? 90.0);
+      $progress_alert_pct = (float)($settings['task_progress_alert_pct'] ?? 100.0);
+
       require __DIR__ . '/../tasks/_tasks_table.php';
     ?>
 
