@@ -424,8 +424,19 @@
 					</Tr>
 					<Tablerule />
 				</Tablehead>
+				<Tablefoot page="all">
+					<Tablerule></Tablerule>
+					<Tr>
+						<Td colspan="{$ncolumns}" align="right">
+							<Paragraph>
+								<Value>...</Value>
+							</Paragraph>
+						</Td>
+					</Tr>
+				</Tablefoot>
+				<Tablefoot page="last"/>
 				<ForAll select="rsm:SupplyChainTradeTransaction/ram:IncludedSupplyChainTradeLineItem">
-					<Tr valign="top">
+					<Tr valign="top" break-below="{if ( position() = last() ) then 'no' else 'yes'}">
 						<Td align="right">
 							<Paragraph>
 								<Switch>
@@ -497,9 +508,9 @@
 						</Td>
 					</Tr>
 				</ForAll>
-				<Tablerule />
-				<Tablerule rulewidth="3pt" color="-" />
-				<Tr>
+				<Tablerule break-below="no" />
+				<Tablerule rulewidth="3pt" color="-" break-below="no" />
+				<Tr break-below="no">
 					<Td colspan="{$ncolumns - 1 }" align="left">
 						<Paragraph>
 							<B>
@@ -516,7 +527,7 @@
 					</Td>
 				</Tr>
 				<ForAll select="$ApplicableHeaderTradeSettlement/ram:ApplicableTradeTax">
-					<Tr valign="top">
+					<Tr valign="top" break-below="no">
 						<Td colspan="{$ncolumns - 1 }" align="left">
 							<Paragraph>
 								<Value select="sf:tax-category-code-to-text(ram:CategoryCode, sf:remove-decimal-zeros(ram:RateApplicablePercent), ram:ExemptionReason)" />
@@ -536,9 +547,9 @@
 						</Td>
 					</Tr>
 				</ForAll>
-				<Tablerule />
-				<Tablerule rulewidth="3pt" color="-" />
-				<Tr>
+				<Tablerule break-below="no" />
+				<Tablerule rulewidth="3pt" color="-"  break-below="no"/>
+				<Tr break-below="no">
 					<Td colspan="{$ncolumns - 1 }" align="left">
 						<Paragraph>
 							<B>
@@ -568,50 +579,42 @@
 						</Tr>
 					</Case>
 				</Switch>
+				<Switch>
+					<Case test="sd:variable-exists('closing')">
+						<Tr break-below="no">
+							<Td colspan="{$ncolumns}" padding-top="24pt"> 
+								<Paragraph>
+									<Value select="sd:decode-html($closing)" />
+								</Paragraph>
+							</Td>
+						</Tr>
+					</Case>
+				</Switch>
+				<Switch>
+					<Case test="sd:variable-exists('noteAAK')">
+						<Tr>
+							<Td colspan="{$ncolumns}">
+								<Paragraph>
+									<Value select="$noteAAK" />
+								</Paragraph>
+							</Td>
+						</Tr>
+					</Case>
+				</Switch>
+				<Switch>
+					<Case test="not(string($PaymentTerms/ram:Description) = '')">
+						<Tr>
+							<Td colspan="{$ncolumns}">
+								<Paragraph>
+									<Value select="$PaymentTerms/ram:Description" />
+								</Paragraph>
+							</Td>
+						</Tr>
+					</Case>
+				</Switch>
 
 			</Table>
 		</PlaceObject>
-		<Switch>
-			<Case test="sd:variable-exists('closing')">
-				<NextRow rows="3" />
-				<PlaceObject>
-					<Textblock>
-						<Paragraph>
-							<Value select="sd:decode-html($closing)" />
-						</Paragraph>
-					</Textblock>
-				</PlaceObject>
-			</Case>
-			<Otherwise>
-				<PlaceObject>
-					<Box height="1" width="{sd:number-of-columns()}" background-color="-" />
-				</PlaceObject>
-			</Otherwise>
-		</Switch>
-		<Switch>
-			<Case test="sd:variable-exists('noteAAK')">
-				<NextRow rows="2" />
-				<PlaceObject>
-					<Textblock>
-						<Paragraph>
-							<Value select="$noteAAK" />
-						</Paragraph>
-					</Textblock>
-				</PlaceObject>
-			</Case>
-		</Switch>
-		<Switch>
-			<Case test="not(string($PaymentTerms/ram:Description) = '')">
-				<NextRow rows="2" />
-				<PlaceObject>
-					<Textblock>
-						<Paragraph>
-							<Value select="$PaymentTerms/ram:Description" />
-						</Paragraph>
-					</Textblock>
-				</PlaceObject>
-			</Case>
-		</Switch>
 	</Record>
 
 	<Record element="rsm:ExchangedDocument">
