@@ -381,7 +381,7 @@
 							<Paragraph>
 								<B>
 									<Value>Einheit</Value>
-									
+
 								</B>
 							</Paragraph>
 						</Td>
@@ -520,6 +520,13 @@
 						<Td colspan="{$ncolumns - 1 }" align="left">
 							<Paragraph>
 								<Value select="sf:tax-category-code-to-text(ram:CategoryCode, sf:remove-decimal-zeros(ram:RateApplicablePercent), ram:ExemptionReason)" />
+								<Switch>
+									<Case test="ram:CategoryCode = 'K'">
+										<Br />
+										<Value>USt-ID des Emfängers: </Value>
+										<Value select="$BuyerTradeParty/ram:SpecifiedTaxRegistration/ram:ID[@schemeID = 'VA']" />
+									</Case>
+								</Switch>
 							</Paragraph>
 						</Td>
 						<Td align="right">
@@ -547,6 +554,21 @@
 						</Paragraph>
 					</Td>
 				</Tr>
+				<Switch>
+					<Case test="not($ApplicableHeaderTradeSettlement/ram:BillingSpecifiedPeriod/ram:StartDateTime/udt:DateTimeString = '')">
+						<Tr break-below="no">
+							<Td padding-top="10pt" colspan="{$ncolumns}">
+								<Paragraph>
+									<Value>Leistungszeitraum: </Value>
+									<Value select="sf:format-date($ApplicableHeaderTradeSettlement/ram:BillingSpecifiedPeriod/ram:StartDateTime/udt:DateTimeString)" />
+									<Value> bis </Value>
+									<Value select="sf:format-date($ApplicableHeaderTradeSettlement/ram:BillingSpecifiedPeriod/ram:EndDateTime/udt:DateTimeString)" />
+								</Paragraph>
+							</Td>
+						</Tr>
+					</Case>
+				</Switch>
+
 			</Table>
 		</PlaceObject>
 		<Switch>
