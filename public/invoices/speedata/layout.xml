@@ -162,6 +162,9 @@
 			<Case test="$code = 'E'">
 				<Value select="$exemption" />
 			</Case>
+			<Case test="$code = 'K'">
+				<Value select="$exemption" />
+			</Case>
 			<Otherwise>
 				<Value select="$code" />
 			</Otherwise>
@@ -353,7 +356,7 @@
 		<PlaceObject>
 			<Table stretch="max" columndistance="5pt" padding="2pt" fontfamily="main">
 				<Columns>
-					<Column width="1.5cm" />
+					<Column width="1.4cm" />
 					<Column width="2cm" />
 					<Column width="1*" />
 					<Switch>
@@ -362,52 +365,60 @@
 						</Case>
 					</Switch>
 					<Column width="2.5cm" />
-					<Column width="2.7cm" />
+					<Column width="2.8cm" />
 				</Columns>
 				<Tablehead>
 					<Tablerule />
 					<Tr valign="top" align="center">
 						<Td align="right">
 							<Paragraph>
-								<Value>Menge</Value>
-
+								<B>
+									<Value>Menge</Value>
+								</B>
 							</Paragraph>
 						</Td>
 						<Td align="center">
 							<Paragraph>
-								<Value>Einheit</Value>
-
+								<B>
+									<Value>Einheit</Value>
+									
+								</B>
 							</Paragraph>
 						</Td>
 						<Td>
 							<Paragraph>
-								<Value>Leistung</Value>
-
+								<B>
+									<Value>Leistung</Value>
+								</B>
 							</Paragraph>
 						</Td>
 						<Switch>
 							<Case test="$hasDifferentTax">
 								<Td align="right">
 									<Paragraph>
+										<B>
 											<Value>Steuer</Value>
+										</B>
 									</Paragraph>
 								</Td>
 							</Case>
 						</Switch>
 						<Td align="right">
 							<Paragraph>
+								<B>
 									<Value>Einzelpreis (</Value>
 									<Value select="$currencyCode" />
 									<Value>)</Value>
-
+								</B>
 							</Paragraph>
 						</Td>
 						<Td align="right" padding-right="4pt">
 							<Paragraph>
+								<B>
 									<Value>Gesamtpreis (</Value>
 									<Value select="$currencyCode" />
 									<Value>)</Value>
-
+								</B>
 							</Paragraph>
 						</Td>
 					</Tr>
@@ -489,21 +500,24 @@
 				<Tablerule />
 				<Tablerule rulewidth="3pt" color="-" />
 				<Tr>
-					<Td colspan="{$ncolumns - 1 }" align="right">
+					<Td colspan="{$ncolumns - 1 }" align="left">
 						<Paragraph>
-							<Value>Nettosumme</Value>
+							<B>
+								<Value>Nettosumme</Value>
+							</B>
 						</Paragraph>
 					</Td>
 					<Td align="right">
 						<Paragraph>
-							<Value select="$ApplicableHeaderTradeSettlement/ram:SpecifiedTradeSettlementHeaderMonetarySummation/ram:LineTotalAmount" />
-
+							<B>
+								<Value select="$ApplicableHeaderTradeSettlement/ram:SpecifiedTradeSettlementHeaderMonetarySummation/ram:LineTotalAmount" />
+							</B>
 						</Paragraph>
 					</Td>
 				</Tr>
 				<ForAll select="$ApplicableHeaderTradeSettlement/ram:ApplicableTradeTax">
 					<Tr valign="top">
-						<Td colspan="{$ncolumns - 1 }" align="right">
+						<Td colspan="{$ncolumns - 1 }" align="left">
 							<Paragraph>
 								<Value select="sf:tax-category-code-to-text(ram:CategoryCode, sf:remove-decimal-zeros(ram:RateApplicablePercent), ram:ExemptionReason)" />
 							</Paragraph>
@@ -515,15 +529,21 @@
 						</Td>
 					</Tr>
 				</ForAll>
+				<Tablerule />
+				<Tablerule rulewidth="3pt" color="-" />
 				<Tr>
-					<Td colspan="{$ncolumns - 1 }" align="right">
+					<Td colspan="{$ncolumns - 1 }" align="left">
 						<Paragraph>
-							<Value>Gesamtbetrag</Value>
+							<B>
+								<Value>Gesamtbetrag</Value>
+							</B>
 						</Paragraph>
 					</Td>
 					<Td align="right">
 						<Paragraph>
-							<Value select="$ApplicableHeaderTradeSettlement/ram:SpecifiedTradeSettlementHeaderMonetarySummation/ram:GrandTotalAmount" />
+							<B>
+								<Value select="$ApplicableHeaderTradeSettlement/ram:SpecifiedTradeSettlementHeaderMonetarySummation/ram:GrandTotalAmount" />
+							</B>
 						</Paragraph>
 					</Td>
 				</Tr>

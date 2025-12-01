@@ -462,10 +462,12 @@ $span = $spanStmt->fetch(PDO::FETCH_ASSOC) ?: ['min_start' => null, 'max_end' =>
 // Summen für Factur-X
 // ----------------------------------------------------------
 
-$totalNet   = 0.0;
-$totalTax   = 0.0;
-$totalGross = 0.0;
-$byVatRate  = []; // [rate => ['net' => ..., 'tax' => ...]]
+$totalNet          = 0.0;
+$totalTax          = 0.0;
+$totalGross        = 0.0;
+$byVatRate         = []; // [rate => ['net' => ..., 'tax' => ...]]
+$nonStandardBasis  = 0.0; // Summe der steuerfreien/Reverse-Charge-Zeilen
+$exemptionReason   = trim((string)($invoice['tax_exemption_reason'] ?? ''));
 
 foreach ($items as $r) {
     $scheme  = (string)($r['tax_scheme'] ?? 'standard');
@@ -482,6 +484,9 @@ foreach ($items as $r) {
             $byVatRate[$vatRate] = ['net' => 0.0, 'tax' => 0.0];
         }
         $byVatRate[$vatRate]['net'] += $lineNet;
+    } else {
+        // steuerfrei oder Reverse-Charge
+        $nonStandardBasis += $lineNet;
     }
 }
 
@@ -515,6 +520,7 @@ $seller = [
 
 $byVatRateNonZero       = array_filter(array_keys($byVatRate), fn($r) => $r > 0);
 $hasStandardRatedLines  = !empty($byVatRateNonZero);
+$hasNonStandardLines    = $nonStandardBasis > 0;
 
 // Falls Standard steuerpflichtige Zeilen existieren, muss Seller-VAT gesetzt sein
 if ($hasStandardRatedLines && $seller['vat_id'] === '') {
@@ -539,6 +545,7 @@ $buyerStreet = trim(implode(' ', array_filter([$buyerLine1, $buyerLine2, $buyerL
 $buyerZip     = trim((string)($invoice['company_postal_code'] ?? ''));
 $buyerCity    = trim((string)($invoice['company_city'] ?? ''));
 $buyerCountry = strtoupper((string)($invoice['company_country_code'] ?? 'DE') ?: 'DE');
+$sellerCountry = strtoupper($seller['country'] ?? 'DE');
 
 // Für Fallbacks (z.B. Name, falls kein Name gesetzt)
 $addressLines = [];
@@ -645,6 +652,10 @@ $tradeTransaction->applicableHeaderTradeAgreement = $agreement;
 
 // Delivery
 $delivery = new HeaderTradeDelivery();
+$needsShipToParty = ($hasNonStandardLines && $sellerCountry !== '' && $buyerCountry !== '' && $sellerCountry !== $buyerCountry);
+if ($needsShipToParty) {
+    $delivery->shipToTradeParty = $agreement->buyerTradeParty;
+}
 
 if (!empty($span['min_start'])) {
     $event = new SupplyChainEvent();
@@ -688,6 +699,27 @@ foreach ($byVatRate as $rate => $sumByRate) {
     );
 
     $settlement->tradeTaxes[] = $tax;
+}
+
+if ($hasNonStandardLines) {
+    $basisAmount = Amount::create(
+        number_format($nonStandardBasis, 2, '.', ''),
+        CurrencyCode::EUR
+    );
+    $calcAmount = Amount::create('0.00', CurrencyCode::EUR);
+    $reason = $exemptionReason !== '' ? $exemptionReason : 'Steuerbefreit / Reverse-Charge';
+
+    $settlement->tradeTaxes[] = TradeTax::create(
+        'VAT',
+        $calcAmount,          // CalculatedAmount
+        $basisAmount,         // BasisAmount
+        null,                 // lineTotalBasisAmount
+        null,                 // allowanceChargeBasisAmount
+        null,                 // applicablePercent
+        'K',                  // CategoryCode
+        '0.00',               // RateApplicablePercent
+        $reason               // ExemptionReason
+    );
 }
 
 // Summen
@@ -780,16 +812,32 @@ foreach ($items as $r) {
         ? (float)$r['total_net']
         : round_half_up($qty * $unitPrice, 2);
 
-    $lineTaxObj = TradeTax::create(
-        'VAT',
-        null,
-        null,
-        null,
-        null,
-        null,
-        $vatRate > 0 ? 'S' : 'Z',
-        number_format($vatRate, 2, '.', '')
-    );
+    $scheme = (string)($r['tax_scheme'] ?? 'standard');
+    $isStandardVat = ($scheme === 'standard' && $vatRate > 0);
+    if ($isStandardVat) {
+        $lineTaxObj = TradeTax::create(
+            'VAT',
+            null,
+            null,
+            null,
+            null,
+            null,
+            'S',
+            number_format($vatRate, 2, '.', '')
+        );
+    } else {
+        $lineTaxObj = TradeTax::create(
+            'VAT',
+            Amount::create('0.00', CurrencyCode::EUR),                        // CalculatedAmount
+            Amount::create(number_format($lineNet, 2, '.', ''), CurrencyCode::EUR), // BasisAmount
+            null,                                                            // lineTotalBasisAmount
+            null,                                                            // allowanceChargeBasisAmount
+            null,                                                            // applicablePercent
+            'K',                                                             // CategoryCode
+            '0.00',                                                          // RateApplicablePercent
+            $exemptionReason !== '' ? $exemptionReason : null                // ExemptionReason
+        );
+    }
 
     $lineSettlement->tradeTax = [$lineTaxObj];
 
