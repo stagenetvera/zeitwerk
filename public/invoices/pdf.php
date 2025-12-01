@@ -469,6 +469,17 @@ $recurringSpanStmt = $pdo->prepare('
 $recurringSpanStmt->execute([$account_id, $id]);
 $recSpan = $recurringSpanStmt->fetch(PDO::FETCH_ASSOC) ?: ['min_from' => null, 'max_to' => null];
 
+// Leistungszeitraum bestimmen (frühestes/letztes Datum aus Zeiten + Recurring)
+$serviceStart = $span['min_start'] ?? null;
+$serviceEnd   = $span['max_end'] ?? null;
+if (!empty($recSpan['min_from'])) {
+    $serviceStart = ($serviceStart === null) ? $recSpan['min_from'] : min($serviceStart, $recSpan['min_from']);
+}
+if (!empty($recSpan['max_to'])) {
+    $serviceEnd = ($serviceEnd === null) ? $recSpan['max_to'] : max($serviceEnd, $recSpan['max_to']);
+}
+if ($serviceStart === null && $serviceEnd !== null) { $serviceStart = $serviceEnd; }
+
 // ----------------------------------------------------------
 // Summen für Factur-X
 // ----------------------------------------------------------
@@ -680,7 +691,8 @@ if ($needsShipToParty) {
 
 if (!empty($span['min_start'])) {
     $event = new SupplyChainEvent();
-    $deliveryDate = date('Ymd', strtotime($span['min_start']));
+    $deliveryBase = $serviceEnd ?? $span['max_end'] ?? $span['min_start'];
+    $deliveryDate = date('Ymd', strtotime($deliveryBase));
     $event->date  = CiiDateTime::create(102, $deliveryDate);
     $delivery->chainEvent = $event;
 }
@@ -690,18 +702,10 @@ $tradeTransaction->applicableHeaderTradeDelivery = $delivery;
 // Settlement
 $settlement = new HeaderTradeSettlement();
 $settlement->invoiceCurrency = CurrencyCode::EUR;
-$settlement->taxCurrency     = CurrencyCode::EUR;
+// TaxCurrency nur setzen, wenn abweichend; hier identisch -> weglassen, sonst BR-53
+$settlement->taxCurrency     = null;
 
 // Leistungszeitraum (BillingSpecifiedPeriod)
-$serviceStart = $span['min_start'] ?? null;
-$serviceEnd   = $span['max_end'] ?? null;
-if (!empty($recSpan['min_from'])) {
-    $serviceStart = ($serviceStart === null) ? $recSpan['min_from'] : min($serviceStart, $recSpan['min_from']);
-}
-if (!empty($recSpan['max_to'])) {
-    $serviceEnd = ($serviceEnd === null) ? $recSpan['max_to'] : max($serviceEnd, $recSpan['max_to']);
-}
-if ($serviceStart === null && $serviceEnd !== null) { $serviceStart = $serviceEnd; }
 if ($serviceStart === null) { $serviceStart = $issueDate; }
 if ($serviceEnd === null)   { $serviceEnd   = $serviceStart; }
 
