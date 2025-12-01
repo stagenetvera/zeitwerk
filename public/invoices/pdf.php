@@ -65,6 +65,7 @@ use easybill\eInvoicing\CII\Models\TradePaymentTerms;
 use easybill\eInvoicing\CII\Models\Quantity;
 use easybill\eInvoicing\CII\Models\TradeSettlementLineMonetarySummation;
 use easybill\eInvoicing\CII\Models\DocumentLineDocument;
+use easybill\eInvoicing\CII\Models\Period;
 
 use easybill\eInvoicing\Transformer;
 use easybill\eInvoicing\Enums\DocumentType;
@@ -458,6 +459,15 @@ $spanStmt = $pdo->prepare('
 $spanStmt->execute([$account_id, $id]);
 $span = $spanStmt->fetch(PDO::FETCH_ASSOC) ?: ['min_start' => null, 'max_end' => null];
 
+// Wiederkehrende Items: Perioden aus recurring_item_ledger berücksichtigen
+$recurringSpanStmt = $pdo->prepare('
+  SELECT MIN(period_from) AS min_from, MAX(period_to) AS max_to
+    FROM recurring_item_ledger
+   WHERE account_id = ? AND invoice_id = ?
+');
+$recurringSpanStmt->execute([$account_id, $id]);
+$recSpan = $recurringSpanStmt->fetch(PDO::FETCH_ASSOC) ?: ['min_from' => null, 'max_to' => null];
+
 // ----------------------------------------------------------
 // Summen für Factur-X
 // ----------------------------------------------------------
@@ -574,6 +584,7 @@ $document->exchangedDocument                               = new ExchangedDocume
 $document->exchangedDocument->id                           = (string)($invoice['invoice_number'] ?? $invoice['id']);
 $document->exchangedDocument->typeCode                     = DocumentType::COMMERCIAL_INVOICE;
 $issueDate                                                 = (string)($invoice['issue_date'] ?? date('Y-m-d'));
+$issueDateYmd                                              = date('Ymd', strtotime($issueDate));
 $document->exchangedDocument->issueDateTime                = CiiDateTime::create(102, date('Ymd', strtotime($issueDate)));
 
 // TradeTransaction
@@ -670,6 +681,28 @@ $tradeTransaction->applicableHeaderTradeDelivery = $delivery;
 $settlement = new HeaderTradeSettlement();
 $settlement->invoiceCurrency = CurrencyCode::EUR;
 $settlement->taxCurrency     = CurrencyCode::EUR;
+
+// Leistungszeitraum (BillingSpecifiedPeriod)
+$serviceStart = $span['min_start'] ?? null;
+$serviceEnd   = $span['max_end'] ?? null;
+if (!empty($recSpan['min_from'])) {
+    $serviceStart = ($serviceStart === null) ? $recSpan['min_from'] : min($serviceStart, $recSpan['min_from']);
+}
+if (!empty($recSpan['max_to'])) {
+    $serviceEnd = ($serviceEnd === null) ? $recSpan['max_to'] : max($serviceEnd, $recSpan['max_to']);
+}
+if ($serviceStart === null && $serviceEnd !== null) { $serviceStart = $serviceEnd; }
+if ($serviceStart === null) { $serviceStart = $issueDate; }
+if ($serviceEnd === null)   { $serviceEnd   = $serviceStart; }
+
+try {
+    $period = new Period();
+    $period->startDatetime = CiiDateTime::create(102, date('Ymd', strtotime((string)$serviceStart)));
+    $period->endDatetime   = CiiDateTime::create(102, date('Ymd', strtotime((string)$serviceEnd)));
+    $settlement->billingSpecifiedPeriod = $period;
+} catch (\Throwable $e) {
+    // Falls Parsing fehlschlägt, ignorieren wir den Leistungszeitraum, damit der Export nicht platzt.
+}
 
 // TradeTaxes
 $settlement->tradeTaxes = [];
