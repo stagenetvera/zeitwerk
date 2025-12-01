@@ -179,6 +179,13 @@ if (($mode ?? 'new') === 'edit'):
             <i class="bi bi-chevron-down" aria-hidden="true"></i>
             <span class="visually-hidden">Details umschalten</span>
           </button>
+          <?php if ($allow_edit && in_array($modeVal, ['auto','fixed'], true)): ?>
+            <span class="row-merge-handle" draggable="true" aria-label="Position in andere Zeile verschieben" title="Zeiten in andere Position zusammenführen">
+              <svg class="grip" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+                <path d="M3 7h5V5l5 3-5 3V9H3V7Zm10 6V3h-2v10h2Z" fill="currentColor"/>
+              </svg>
+            </span>
+          <?php endif; ?>
           <span class="row-reorder-handle" <?= $allow_edit ? 'draggable="true"' : '' ?> aria-label="Position verschieben" title="Ziehen zum Sortieren">
             <svg class="grip" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
               <path d="M5 4h2v2H5V4Zm4 0h2v2H9V4ZM5 8h2v2H5V8ZM9 8h2v2H9V8ZM5 12h2v2H5v-2ZM9 12h2v2H9v-2Z" fill="currentColor"/>
@@ -341,6 +348,13 @@ else:
             <i class="bi bi-chevron-down" aria-hidden="true"></i>
             <span class="visually-hidden">Details umschalten</span>
           </button>
+          <?php if ($allow_edit): ?>
+            <span class="row-merge-handle" draggable="true" aria-label="Position in andere Zeile verschieben" title="Zeiten in andere Position zusammenführen">
+              <svg class="grip" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+                <path d="M3 7h5V5l5 3-5 3V9H3V7Zm10 6V3h-2v10h2Z" fill="currentColor"/>
+              </svg>
+            </span>
+          <?php endif; ?>
           <span class="row-reorder-handle" draggable="true" aria-label="Position verschieben" title="Ziehen zum Sortieren">
             <svg class="grip" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
               <path d="M5 4h2v2H5V4Zm4 0h2v2H9V4ZM5 8h2v2H5V8ZM9 8h2v2H9V8ZM5 12h2v2H5v-2ZM9 12h2v2H9v-2Z" fill="currentColor"/>

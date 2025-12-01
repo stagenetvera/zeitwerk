@@ -992,6 +992,13 @@ $tax_reason_value = ($tax_reason_value === '') ? $company_tax_ex_reason : $tax_r
     });
   }
 
+  function clearMergeIndicators(){
+    root.querySelectorAll('tr.inv-item-row').forEach(function(r){
+      r.classList.remove('merge-indicator');
+      r.classList.remove('table-active');
+    });
+  }
+
   function removeSourceItemIfEmpty(sourceRow){
     if (!sourceRow) return;
     var rowId = sourceRow.getAttribute('data-row');
@@ -1021,7 +1028,7 @@ $tax_reason_value = ($tax_reason_value === '') ? $company_tax_ex_reason : $tax_r
   }
 
   /* ---------- DnD ---------- */
-  var dragData = null; // {kind:'time'|'task'|'reorder', fromRowId, timeId?}
+  var dragData = null; // {kind:'time'|'reorder'|'merge-item', fromRowId, timeId?}
 
   // Nur Details-TBodies sind Drop-Ziele für Zeiten
   function markDropTargets(on){
@@ -1071,10 +1078,77 @@ $tax_reason_value = ($tax_reason_value === '') ? $company_tax_ex_reason : $tax_r
     });
   });
 
+  // Merge-Handle: komplette Position auf andere Position ziehen
+  root.querySelectorAll('.row-merge-handle').forEach(function(handle){
+    var row = handle.closest('tr.inv-item-row');
+    if (!row) return;
+    var mode = (row.getAttribute('data-mode') || '').toLowerCase();
+    if (mode === 'qty') return;
+
+    handle.setAttribute('draggable','true');
+    handle.addEventListener('dragstart', function(e){
+      var fromRowId = row.getAttribute('data-row') || '';
+      dragData = { kind:'merge-item', fromRowId:String(fromRowId) };
+      row.classList.add('dnd-dragging');
+      clearMergeIndicators();
+      if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed = 'move';
+        try { e.dataTransfer.setData('text/plain', 'merge:'+fromRowId); } catch(_) {}
+      }
+      if (e.stopPropagation) e.stopPropagation();
+    });
+    handle.addEventListener('dragend', function(e){
+      row.classList.remove('dnd-dragging');
+      dragData = null;
+      clearMergeIndicators();
+      if (e.stopPropagation) e.stopPropagation();
+    });
+  });
+
+  // Komplette Position auf andere Position ziehen (Zeiten mitnehmen)
+  root.querySelectorAll('tr.inv-item-row').forEach(function(row){
+    var mode = (row.getAttribute('data-mode') || '').toLowerCase();
+    var hasDetails = !!getDetailsRowByMain(row);
+    if (!hasDetails || mode === 'qty') return;
+    row.setAttribute('draggable','true');
+
+    row.addEventListener('dragstart', function(e){
+      // Reorder-Handle nutzt eigenes Dragging
+      if (e.target && e.target.closest('.row-reorder-handle')) return;
+      var fromRowId = row.getAttribute('data-row') || '';
+      dragData = { kind:'merge-item', fromRowId:String(fromRowId) };
+      row.classList.add('dnd-dragging');
+      if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed = 'move';
+        try { e.dataTransfer.setData('text/plain', 'merge:'+fromRowId); } catch(_) {}
+      }
+    });
+
+    row.addEventListener('dragend', function(){
+      row.classList.remove('dnd-dragging');
+      dragData = null;
+      clearMergeIndicators();
+    });
+  });
+
   // Reorder-Drop auf Kopfzeilen
   root.querySelectorAll('tr.inv-item-row').forEach(function(targetRow){
     targetRow.addEventListener('dragover', function(e){
-      if (!dragData || dragData.kind !== 'reorder') return;
+      if (!dragData) return;
+
+      if (dragData.kind === 'merge-item') {
+        var targetMode = (targetRow.getAttribute('data-mode') || '').toLowerCase();
+        if (targetMode === 'qty') return;
+        if (!getDetailsRowByMain(targetRow)) return;
+        if ((targetRow.getAttribute('data-row') || '') === dragData.fromRowId) return;
+        e.preventDefault();
+        clearMergeIndicators();
+        targetRow.classList.add('merge-indicator','table-active');
+        if (e.dataTransfer) e.dataTransfer.dropEffect='move';
+        return;
+      }
+
+      if (dragData.kind !== 'reorder') return;
       e.preventDefault();
 
       var rect = targetRow.getBoundingClientRect();
@@ -1090,7 +1164,39 @@ $tax_reason_value = ($tax_reason_value === '') ? $company_tax_ex_reason : $tax_r
     });
 
     targetRow.addEventListener('drop', function(e){
-      if (!dragData || dragData.kind !== 'reorder') return;
+      if (!dragData) return;
+      if (dragData.kind === 'merge-item') {
+        e.preventDefault();
+        clearMergeIndicators();
+        var fromId = dragData.fromRowId;
+        var toId   = targetRow.getAttribute('data-row') || '';
+        if (!fromId || !toId || fromId === toId) return;
+
+        var fromDetails = getDetailsRowById(fromId);
+        var toDetails   = getDetailsRowById(toId);
+        if (!fromDetails || !toDetails) return;
+        var toTbody = toDetails.querySelector('tbody');
+        var fromTbody = fromDetails.querySelector('tbody');
+        if (!toTbody || !fromTbody) return;
+
+        fromTbody.querySelectorAll('tr.time-row').forEach(function(tr){
+          var cb = tr.querySelector('.time-checkbox');
+          if (cb) {
+            cb.name = 'items[' + toId + '][time_ids][]';
+            cb.checked = true;
+          }
+          toTbody.appendChild(tr);
+        });
+
+        var fromRow = root.querySelector('tr.inv-item-row[data-row="'+fromId+'"]');
+        var toRow   = root.querySelector('tr.inv-item-row[data-row="'+toId+'"]');
+        removeSourceItemIfEmpty(fromRow);
+        if (toRow) recalcRow(toRow);
+        recalcTotals(); toggleTaxReason(); updateOrderHidden();
+        return;
+      }
+
+      if (dragData.kind !== 'reorder') return;
       e.preventDefault();
 
       var rect = targetRow.getBoundingClientRect();

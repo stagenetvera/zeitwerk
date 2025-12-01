@@ -668,6 +668,442 @@ require __DIR__ . '/../../src/layout/header.php';
 </div>
 
 <script>
+/* ===== Invoice Items UI (klassisch) — inkl. Merge ganzer Positionen ===== */
+(function(){
+  var root = document.getElementById('invoice-items'); if (!root) return;
+  if (root.getAttribute('data-locked') === '1') return;
+  var roundUnit = parseInt(root.getAttribute('data-round-unit') || '0', 10) || 0;
+
+  /* ---------- Helpers ---------- */
+  function getDetailsRowByMain(mainTr){
+    if (!mainTr) return null;
+    var det = mainTr.nextElementSibling;
+    if (det && det.classList.contains('inv-details') && det.getAttribute('data-row') === mainTr.getAttribute('data-row')) {
+      return det;
+    }
+    var rowId = mainTr.getAttribute('data-row');
+    det = root.querySelector('.inv-details[data-row="'+rowId+'"]');
+    return det || null;
+  }
+  function getDetailsRowById(rowId){
+    return root.querySelector('.inv-details[data-row="'+rowId+'"]') || null;
+  }
+  function getDetailsTbodyById(rowId){
+    var det = getDetailsRowById(rowId);
+    return det ? (det.querySelector('tbody') || det.querySelector('table tbody') || det) : null;
+  }
+  function getAfterPairNode(refMain){
+    var next = refMain.nextElementSibling;
+    if (next && next.classList.contains('inv-details') && next.getAttribute('data-row') === refMain.getAttribute('data-row')) {
+      return next.nextElementSibling;
+    }
+    return next;
+  }
+  function toNumber(str){
+    if (typeof str !== 'string') str = String(str ?? '');
+    str = str.trim(); if (!str) return 0;
+    if (str.indexOf(',') !== -1 && str.indexOf('.') !== -1) { str = str.replace(/\./g,'').replace(',', '.'); }
+    else if (str.indexOf(',') !== -1) { str = str.replace(',', '.'); }
+    var n = parseFloat(str); return isFinite(n) ? n : 0;
+  }
+  function fmt2(n){ return (n||0).toFixed(2).replace('.',','); }
+  function hhmm(min){ min = Math.max(0, parseInt(min||0,10)); var h = Math.floor(min/60), m = min%60; return (h<10?'0':'')+h+':' + (m<10?'0':'')+m; }
+
+  /* ---------- Summen ---------- */
+  function recalcTotals(){
+    var gnet=0, ggross=0;
+    root.querySelectorAll('tr.inv-item-row').forEach(function(tr){
+      gnet  += toNumber(tr.querySelector('.net')?.textContent || '0');
+      ggross+= toNumber(tr.querySelector('.gross')?.textContent || '0');
+    });
+    var gN = document.getElementById('grand-net'); var gG = document.getElementById('grand-gross');
+    if (gN) gN.textContent = fmt2(gnet); if (gG) gG.textContent = fmt2(ggross);
+  }
+
+  function recalcRow(tr){
+    var mode = (tr.getAttribute('data-mode') || tr.querySelector('.entry-mode')?.value || 'qty').toLowerCase();
+    var rate = toNumber(tr.querySelector('.rate')?.value||'0');
+    var vat  = toNumber(tr.querySelector('.inv-vat-input')?.value||'0');
+
+    if (mode === 'auto' || mode === 'fixed') {
+      var minutes = 0;
+      var rowId   = tr.getAttribute('data-row');
+      var details = getDetailsRowById(rowId);
+      if (details) {
+        details.querySelectorAll('.time-checkbox:checked').forEach(function(cb){
+          minutes += parseInt(cb.getAttribute('data-min')||'0',10);
+        });
+      }
+      if (roundUnit > 0 && minutes > 0 && mode === 'auto') {
+        minutes = Math.ceil(minutes / roundUnit) * roundUnit;
+      }
+
+      if (mode === 'auto') {
+        var net   = (minutes/60.0) * rate;
+        var gross = net * (1 + vat/100);
+        var hh    = tr.querySelector('.sum-hhmm'); if (hh)  hh.textContent = hhmm(minutes);
+        var nspan = tr.querySelector('.net');      if (nspan) nspan.textContent = fmt2(net);
+        var gspan = tr.querySelector('.gross');    if (gspan) gspan.textContent = fmt2(gross);
+      } else { // fixed
+        var hhInfo = tr.querySelector('.fixed-hhmm'); if (hhInfo) hhInfo.textContent = '('+hhmm(minutes)+')';
+        var net   = rate * 1.0;
+        var gross = net * (1 + vat/100);
+        var nspan = tr.querySelector('.net');   if (nspan) nspan.textContent = fmt2(net);
+        var gspan = tr.querySelector('.gross'); if (gspan) gspan.textContent = fmt2(gross);
+      }
+      recalcTotals();
+      return;
+    }
+
+    var qtyDec = 0;
+    if (mode === 'time') {
+      var hinp = tr.querySelector('.hours-input');
+      var v = String(hinp ? hinp.value : '0').trim();
+      if (v.includes(':')) { var p=v.split(':'), h=parseInt(p[0]||'0',10)||0, m=parseInt(p[1]||'0',10)||0; qtyDec = h + m/60; }
+      else { qtyDec = toNumber(v); }
+      var qHidden = tr.querySelector('.quantity-dec');
+      if (qHidden) qHidden.value = String((qtyDec||0).toFixed(3));
+    } else {
+      qtyDec = toNumber(tr.querySelector('.quantity')?.value||'0');
+    }
+    var net   = qtyDec * rate;
+    var gross = net * (1 + vat/100);
+    var nspan = tr.querySelector('.net'); if (nspan) nspan.textContent = fmt2(net);
+    var gspan = tr.querySelector('.gross'); if (gspan) gspan.textContent = fmt2(gross);
+    recalcTotals();
+  }
+
+  function toggleTaxReason(){
+    var wrap = document.getElementById('tax-exemption-reason-wrap');
+    if (!wrap) return;
+    var any = false;
+    root.querySelectorAll('.inv-tax-sel').forEach(function(sel){
+      var tr = sel.closest('tr.inv-item-row');
+      var vatEl = tr?.querySelector('.inv-vat-input');
+      var vat = vatEl ? parseFloat(vatEl.value || '0') : 0;
+      if (sel.value !== 'standard' || vat <= 0) any = true;
+    });
+    wrap.style.display = any ? '' : 'none';
+    var ta = document.getElementById('tax-exemption-reason'); if (!any && ta) ta.value = '';
+  }
+
+  function reindexRows(){
+    var pairs = [];
+    root.querySelectorAll('tr.inv-item-row').forEach(function(main){
+      var det = main.nextElementSibling;
+      if (!(det && det.classList.contains('inv-details'))) det = null;
+      pairs.push({ main: main, det: det, oldIdx: String(main.getAttribute('data-row') || '') });
+    });
+
+    pairs.forEach(function(p, i){
+      var newIdx = String(i + 1);
+      var oldIdx = p.oldIdx || newIdx;
+
+      p.main.setAttribute('data-row', newIdx);
+      if (p.det) p.det.setAttribute('data-row', newIdx);
+
+      [p.main, p.det].forEach(function(scope){
+        if (!scope) return;
+        scope.querySelectorAll('[name^="items["]').forEach(function(el){
+          var nm = el.getAttribute('name'); if (!nm) return;
+          var esc = oldIdx.replace(/[-/\\^$*+?.()|[\]{}]/g,'\\$&');
+          var re  = new RegExp('^items\\[' + esc + '\\]');
+          var nn  = nm.replace(re, 'items['+newIdx+']');
+          if (nn !== nm) el.setAttribute('name', nn);
+        });
+      });
+    });
+  }
+
+  function ensurePlaceholder(){
+    var ph = document.getElementById('invoice-reorder-placeholder');
+    if (!ph) {
+      ph = document.createElement('tr');
+      ph.id = 'invoice-reorder-placeholder';
+      ph.className = 'reorder-placeholder';
+      var td = document.createElement('td');
+      td.colSpan = (root.querySelector('thead tr')?.children.length) || 9;
+      ph.appendChild(td);
+    }
+    return ph;
+  }
+  function removePlaceholder(){
+    var ph = document.getElementById('invoice-reorder-placeholder');
+    if (ph && ph.parentNode) ph.parentNode.removeChild(ph);
+  }
+  function clearReorderIndicators(){
+    root.querySelectorAll('tr.inv-item-row').forEach(function(r){
+      r.classList.remove('reorder-indicator-before','reorder-indicator-after');
+    });
+  }
+  function updateOrderHidden(){
+    var box = document.getElementById('invoice-order-tracker'); if (!box) return;
+    box.innerHTML = '';
+    root.querySelectorAll('tr.inv-item-row').forEach(function(r){
+      var itemIdInput = r.querySelector('input[name^="items["][name$="[id]"]');
+      if (itemIdInput && itemIdInput.value) {
+        var i = document.createElement('input'); i.type='hidden'; i.name='item_order[]'; i.value=String(itemIdInput.value); box.appendChild(i);
+      }
+    });
+  }
+
+  function clearMergeIndicators(){
+    root.querySelectorAll('tr.inv-item-row').forEach(function(r){
+      r.classList.remove('merge-indicator');
+      r.classList.remove('table-active');
+    });
+  }
+
+  function removeSourceItemIfEmpty(sourceRow){
+    if (!sourceRow) return;
+    var rowId = sourceRow.getAttribute('data-row');
+    var srcTbody = getDetailsTbodyById(rowId);
+    if (!srcTbody) return;
+    var anyLeft = srcTbody.querySelector('.time-checkbox:checked');
+    if (anyLeft) return;
+
+    var srcItemIdInput = sourceRow.querySelector('input[name^="items["][name$="[id]"]');
+
+    var det = getDetailsRowById(rowId);
+    if (det) det.remove();
+
+    if (srcItemIdInput && srcItemIdInput.value) {
+      var trash = document.getElementById('invoice-hidden-trash');
+      if (trash) {
+        var hidden = document.createElement('input');
+        hidden.type='hidden';
+        hidden.name='items_deleted[]';
+        hidden.value=srcItemIdInput.value;
+        trash.appendChild(hidden);
+      }
+    }
+    sourceRow.remove();
+    reindexRows();
+    updateOrderHidden();
+  }
+
+  /* ---------- DnD ---------- */
+  var dragData = null; // {kind:'time'|'reorder'|'merge-item', fromRowId, timeId?}
+
+  function markDropTargets(on){
+    root.querySelectorAll('.inv-details tbody').forEach(function(tb){
+      tb.classList.toggle('dnd-drop-target', !!on);
+    });
+  }
+
+  // Zeit-Zeilen draggable
+  root.querySelectorAll('.inv-details tbody tr.time-row[draggable="true"]').forEach(function(tr){
+    tr.addEventListener('dragstart', function(e){
+      var detailsTr = tr.closest('tr.inv-details');
+      var fromRowId = detailsTr ? detailsTr.getAttribute('data-row') : (tr.closest('tr.inv-item-row')?.getAttribute('data-row') || '');
+      var timeId = tr.getAttribute('data-time-id') || '';
+      dragData = { kind:'time', timeId:String(timeId), fromRowId:String(fromRowId) };
+      tr.classList.add('dnd-dragging');
+      markDropTargets(true);
+      try { e.dataTransfer.setData('text/plain','time:'+timeId); } catch(_) {}
+      if (e.dataTransfer) e.dataTransfer.effectAllowed='move';
+    });
+    tr.addEventListener('dragend', function(){
+      tr.classList.remove('dnd-dragging');
+      dragData = null; markDropTargets(false);
+    });
+  });
+
+  // Reorder-Handle
+  root.querySelectorAll('tr.inv-item-row').forEach(function(row){
+    var handle = row.querySelector('.row-reorder-handle');
+    if (!handle) return;
+    handle.setAttribute('draggable','true');
+
+    handle.addEventListener('dragstart', function(e){
+      var fromRowId = row.getAttribute('data-row') || '';
+      dragData = { kind:'reorder', fromRowId:String(fromRowId) };
+      row.classList.add('dnd-dragging');
+      if (e.stopPropagation) e.stopPropagation();
+      if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed = 'move';
+        try { e.dataTransfer.setData('text/plain', 'reorder:'+fromRowId); } catch(_) {}
+      }
+    });
+    handle.addEventListener('dragend', function(e){
+      row.classList.remove('dnd-dragging');
+      dragData = null; clearReorderIndicators(); removePlaceholder();
+      if (e.stopPropagation) e.stopPropagation();
+    });
+  });
+
+  // Merge-Handle: komplette Position auf andere Position ziehen
+  root.querySelectorAll('.row-merge-handle').forEach(function(handle){
+    var row = handle.closest('tr.inv-item-row');
+    if (!row) return;
+    var mode = (row.getAttribute('data-mode') || '').toLowerCase();
+    if (mode === 'qty') return;
+
+    handle.setAttribute('draggable','true');
+    handle.addEventListener('dragstart', function(e){
+      var fromRowId = row.getAttribute('data-row') || '';
+      dragData = { kind:'merge-item', fromRowId:String(fromRowId) };
+      row.classList.add('dnd-dragging');
+      clearMergeIndicators();
+      if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed = 'move';
+        try { e.dataTransfer.setData('text/plain', 'merge:'+fromRowId); } catch(_) {}
+      }
+      if (e.stopPropagation) e.stopPropagation();
+    });
+    handle.addEventListener('dragend', function(e){
+      row.classList.remove('dnd-dragging');
+      dragData = null;
+      clearMergeIndicators();
+      if (e.stopPropagation) e.stopPropagation();
+    });
+  });
+
+  // Ganze Position (ohne Merge-Handle) ziehen
+  root.querySelectorAll('tr.inv-item-row').forEach(function(row){
+    var mode = (row.getAttribute('data-mode') || '').toLowerCase();
+    var hasDetails = !!getDetailsRowByMain(row);
+    if (!hasDetails || mode === 'qty') return;
+    row.setAttribute('draggable','true');
+
+    row.addEventListener('dragstart', function(e){
+      if (e.target && e.target.closest('.row-reorder-handle')) return;
+      var fromRowId = row.getAttribute('data-row') || '';
+      dragData = { kind:'merge-item', fromRowId:String(fromRowId) };
+      row.classList.add('dnd-dragging');
+      if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed = 'move';
+        try { e.dataTransfer.setData('text/plain', 'merge:'+fromRowId); } catch(_) {}
+      }
+    });
+
+    row.addEventListener('dragend', function(){
+      row.classList.remove('dnd-dragging');
+      dragData = null;
+      clearMergeIndicators();
+    });
+  });
+
+  // Drop-Handling auf Positionen
+  root.querySelectorAll('tr.inv-item-row').forEach(function(targetRow){
+    targetRow.addEventListener('dragover', function(e){
+      if (!dragData) return;
+
+      if (dragData.kind === 'merge-item') {
+        var targetMode = (targetRow.getAttribute('data-mode') || '').toLowerCase();
+        if (targetMode === 'qty') return;
+        if (!getDetailsRowByMain(targetRow)) return;
+        if ((targetRow.getAttribute('data-row') || '') === dragData.fromRowId) return;
+        e.preventDefault();
+        clearMergeIndicators();
+        targetRow.classList.add('merge-indicator','table-active');
+        if (e.dataTransfer) e.dataTransfer.dropEffect='move';
+        return;
+      }
+
+      if (dragData.kind !== 'reorder') return;
+      e.preventDefault();
+
+      var rect = targetRow.getBoundingClientRect();
+      var after = (e.clientY - rect.top) > (rect.height / 2);
+
+      clearReorderIndicators();
+      targetRow.classList.add(after ? 'reorder-indicator-after' : 'reorder-indicator-before');
+
+      var ph = ensurePlaceholder();
+      var tbody = targetRow.parentNode;
+      var ref   = after ? getAfterPairNode(targetRow) : targetRow;
+      if (ph !== ref) tbody.insertBefore(ph, ref || null);
+    });
+
+    targetRow.addEventListener('drop', function(e){
+      if (!dragData) return;
+      if (dragData.kind === 'merge-item') {
+        e.preventDefault();
+        clearMergeIndicators();
+        var fromId = dragData.fromRowId;
+        var toId   = targetRow.getAttribute('data-row') || '';
+        if (!fromId || !toId || fromId === toId) return;
+
+        var fromDetails = getDetailsRowById(fromId);
+        var toDetails   = getDetailsRowById(toId);
+        if (!fromDetails || !toDetails) return;
+        var toTbody = toDetails.querySelector('tbody');
+        var fromTbody = fromDetails.querySelector('tbody');
+        if (!toTbody || !fromTbody) return;
+
+        fromTbody.querySelectorAll('tr.time-row').forEach(function(tr){
+          var cb = tr.querySelector('.time-checkbox');
+          if (cb) {
+            cb.name = 'items[' + toId + '][time_ids][]';
+            cb.checked = true;
+          }
+          toTbody.appendChild(tr);
+        });
+
+        var fromRow = root.querySelector('tr.inv-item-row[data-row="'+fromId+'"]');
+        var toRow   = root.querySelector('tr.inv-item-row[data-row="'+toId+'"]');
+        removeSourceItemIfEmpty(fromRow);
+        if (toRow) recalcRow(toRow);
+        recalcTotals(); toggleTaxReason(); updateOrderHidden();
+        return;
+      }
+
+      if (dragData.kind !== 'reorder') return;
+      e.preventDefault();
+
+      var rect = targetRow.getBoundingClientRect();
+      var after = (e.clientY - rect.top) > (rect.height / 2);
+
+      (function moveRowPair(fromRowId, targetRowId, placeAfter){
+        if (!fromRowId || !targetRowId || fromRowId === targetRowId) return;
+        var fromMain   = root.querySelector('tr.inv-item-row[data-row="'+fromRowId+'"]');
+        var targetMain = root.querySelector('tr.inv-item-row[data-row="'+targetRowId+'"]');
+        if (!fromMain || !targetMain) return;
+        var fromDet = getDetailsRowById(fromRowId);
+        var tbody = targetMain.parentNode;
+        var refNode = placeAfter ? getAfterPairNode(targetMain) : targetMain;
+        if (refNode) {
+          tbody.insertBefore(fromMain, refNode);
+          if (fromDet) tbody.insertBefore(fromDet, refNode);
+        } else {
+          tbody.appendChild(fromMain);
+          if (fromDet) tbody.appendChild(fromDet);
+        }
+        reindexRows();
+      })(dragData.fromRowId, targetRow.getAttribute('data-row') || '', after);
+
+      removePlaceholder();
+      reindexRows();
+      updateOrderHidden();
+    });
+  });
+
+  root.addEventListener('change', function(e){
+    var sel = e.target.closest && e.target.closest('.inv-tax-sel');
+    if (sel && root.contains(sel)) { toggleTaxReason(); return; }
+    if (e.target.closest && e.target.closest('.time-checkbox')) {
+      var rowTr = e.target.closest('tr.inv-details')?.previousElementSibling;
+      if (rowTr && rowTr.classList.contains('inv-item-row')) recalcRow(rowTr);
+      return;
+    }
+  });
+
+  root.addEventListener('input', function(e){
+    if (e.target.matches && (e.target.matches('.rate') || e.target.matches('.inv-vat-input') || e.target.matches('.quantity') || e.target.matches('.hours-input'))) {
+      var tr = e.target.closest('tr.inv-item-row'); if (tr) recalcRow(tr);
+    }
+  });
+
+  root.querySelectorAll('tr.inv-item-row').forEach(function(tr){
+    recalcRow(tr);
+  });
+  toggleTaxReason();
+  recalcTotals();
+})();
+</script>
+
+<script>
 // Manuelle Zeilen (qty|time) mit ICON-Toggle (auch für bestehende Zeilen)
 (function(){
   const addBtn = document.getElementById('addManualItem');
