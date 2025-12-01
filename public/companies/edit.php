@@ -38,9 +38,9 @@ $err = null;
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   $name  = trim($_POST['name'] ?? '');
 
-  $address_line1 = trim($_POST['address_line1'] ?? '');
-  $address_line2 = trim($_POST['address_line2'] ?? '');
-  $address_line3 = trim($_POST['address_line3'] ?? '');
+$street_no = trim($_POST['street_no'] ?? '');
+$additional_address = trim($_POST['additional_address'] ?? '');
+$additional_company_name = trim($_POST['additional_company_name'] ?? '');
   $postal_code   = trim($_POST['postal_code']   ?? '');
   $city          = trim($_POST['city']          ?? '');
   $country_code  = strtoupper(trim($_POST['country_code'] ?? 'DE'));
@@ -48,7 +48,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       $country_code = 'DE';
   }
 
-  $address = trim($_POST['address'] ?? '');
   $rate    = ($_POST['hourly_rate'] !== '' ? (float)$_POST['hourly_rate'] : null);
   $vat     = trim($_POST['vat_id'] ?? '');
   $status  = $_POST['status'] ?? 'aktiv';
@@ -88,10 +87,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   if (!$err) {
     $upd = $pdo->prepare('UPDATE companies
         SET name             = ?,
-            address          = ?,      -- Textblock (weitergeführt)
-            address_line1    = ?,      -- NEU
-            address_line2    = ?,      -- NEU
-            address_line3    = ?,      -- NEU
+            street_no        = ?,      -- NEU
+            additional_address = ?,
+            additional_company_name = ?,
             postal_code      = ?,      -- NEU
             city             = ?,      -- NEU
             country_code     = ?,      -- NEU
@@ -107,10 +105,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $upd->execute([
         $name,
-        $address,
-        $address_line1,
-        $address_line2,
-        $address_line3,
+        $street_no,
+        $additional_address,
+        $additional_company_name,
         $postal_code,
         $city,
         $country_code,
@@ -131,10 +128,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   } else {
     // Felder für Re-Render füllen
     $company['name']        = $name;
-    $company['address']     = $address;
     $company['hourly_rate'] = $rate;
     $company['vat_id']      = $vat;
     $company['status']      = $status;
+    $company['street_no'] = $street_no;
+    $company['additional_address'] = $additional_address;
+    $company['additional_company_name'] = $additional_company_name;
     $company['default_tax_exemption_reason'] = $tax_ex_reason;
     // Hinweis: $company['default_*'] lässt du wie geladen; Anzeige nutzt unten $co_*.
   }
@@ -166,30 +165,25 @@ $acct_vat_js = number_format((float)$settings['default_vat_rate'], 2, '.', ''); 
                 value="<?= h($company['name']) ?>" required>
         </div>
 
-      <div class="mb-3">
-        <label class="form-label">Adresse (nur solange alle Daten in einzelnen Feldern geprüft sind.)</label>
-        <textarea name="address" class="form-control" rows="3"><?= h($company['address'] ?? '') ?></textarea>
-      </div>
-
       <div class="row g-3">
 
 
         <div class="col-12">
-          <label class="form-label">Adresszeile 1 (Straße & Hausnummer)</label>
-          <input type="text" name="address_line1" class="form-control"
-                value="<?= h((string)($company['address_line1'] ?? '')) ?>">
+          <label class="form-label">Zusatz Firmennamen</label>
+          <input type="text" name="additional_company_name" class="form-control"
+                value="<?= h((string)($company['additional_company_name'] ?? '')) ?>">
         </div>
 
         <div class="col-12">
-          <label class="form-label">Adresszeile 2</label>
-          <input type="text" name="address_line2" class="form-control"
-                value="<?= h((string)($company['address_line2'] ?? '')) ?>">
+          <label class="form-label">Straße, Nummer</label>
+          <input type="text" name="street_no" class="form-control"
+                value="<?= h((string)($company['street_no'] ?? '')) ?>">
         </div>
 
         <div class="col-12">
-          <label class="form-label">Adresszeile 3</label>
-          <input type="text" name="address_line3" class="form-control"
-                value="<?= h((string)($company['address_line3'] ?? '')) ?>">
+          <label class="form-label">Adress-Zusatz</label>
+          <input type="text" name="additional_address" class="form-control"
+                value="<?= h((string)($company['additional_address'] ?? '')) ?>">
         </div>
 
         <div class="col-md-4">

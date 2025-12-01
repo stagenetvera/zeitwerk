@@ -69,7 +69,7 @@ $pages = max(1, (int)ceil($total/$per_page));
 if ($page > $pages) { $page=$pages; $offset=($page-1)*$per_page; }
 
 // rows
-$sql = "SELECT id, name, address, status, hourly_rate
+$sql = "SELECT id, name, status, hourly_rate
         FROM companies
         WHERE $WHERE
         ORDER BY name

@@ -239,9 +239,9 @@ require_once __DIR__ . '/../../src/lib/settings.php';
         // Adresse für Anzeige zusammensetzen (bevorzugt aus den neuen Feldern)
         $addrLines = [];
 
-        $line1  = trim((string)($company['address_line1'] ?? ''));
-        $line2  = trim((string)($company['address_line2'] ?? ''));
-        $line3  = trim((string)($company['address_line3'] ?? ''));
+        $line1  = trim((string)($company['additional_company_name'] ?? ''));
+        $line2  = trim((string)($company['street_no'] ?? ''));
+        $line3  = trim((string)($company['additional_address'] ?? ''));
         $postal = trim((string)($company['postal_code']   ?? ''));
         $city   = trim((string)($company['city']          ?? ''));
         $cc     = strtoupper((string)($company['country_code'] ?? ''));
@@ -266,12 +266,7 @@ require_once __DIR__ . '/../../src/lib/settings.php';
             $addrLines[] = $cc;
         }
 
-        // Fallback: wenn neue Felder leer sind, altes address-Feld nutzen
-        if (!$addrLines && !empty($company['address'])) {
-            $addrDisplay = (string)$company['address'];
-        } else {
-            $addrDisplay = implode("\n", $addrLines);
-        }
+        $addrDisplay = implode("\n", $addrLines);
         ?>
 
         <dl class="row mb-0">

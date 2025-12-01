@@ -582,7 +582,7 @@
 				<Switch>
 					<Case test="sd:variable-exists('closing')">
 						<Tr break-below="no">
-							<Td colspan="{$ncolumns}" padding-top="24pt"> 
+							<Td colspan="{$ncolumns}" padding-top="24pt">
 								<Paragraph>
 									<Value select="sd:decode-html($closing)" />
 								</Paragraph>
@@ -730,6 +730,13 @@
 									<Br />
 								</Case>
 							</Switch>
+							<Switch>
+								<Case test="not(string(ram:PostalTradeAddress/ram:LineThree) = '')">
+									<Value select="sd:decode-html(ram:PostalTradeAddress/ram:LineThree)" />
+									<Br />
+								</Case>
+							</Switch>
+
 							<Value select="ram:PostalTradeAddress/ram:PostcodeCode" />
 							<Value>&#xa0;</Value>
 							<Value select="ram:PostalTradeAddress/ram:CityName" />

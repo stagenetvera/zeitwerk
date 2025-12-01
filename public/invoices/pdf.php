@@ -351,9 +351,9 @@ $inv = $pdo->prepare('
   SELECT
     i.*,
     c.name          AS company_name,
-    c.address_line1 AS company_address_line1,
-    c.address_line2 AS company_address_line2,
-    c.address_line3 AS company_address_line3,
+    c.street_no     AS company_street_no,
+    c.additional_address AS company_additional_address,
+    c.additional_company_name AS company_additional_company_name,
     c.postal_code   AS company_postal_code,
     c.city          AS company_city,
     c.country_code  AS company_country_code,
@@ -565,28 +565,24 @@ if ($hasStandardRatedLines && $seller['vat_id'] === '') {
 // Buyer-Daten aus Invoice (NEU: strukturierte Felder)
 // ----------------------------------------------------------
 
-$buyerName = (string)($invoice['company_name'] ?? '');
+$buyerBaseName = (string)($invoice['company_name'] ?? '');
+$buyerAddCompany = trim((string)($invoice['company_additional_company_name'] ?? ''));
+$buyerName = trim($buyerBaseName . ($buyerAddCompany !== '' ? "\n".$buyerAddCompany : ''));
 
-// Straße = address_line1 [+ address_line2]
-$buyerLine1 = trim((string)($invoice['company_address_line1'] ?? ''));
-$buyerLine2 = trim((string)($invoice['company_address_line2'] ?? ''));
-$buyerLine3 = trim((string)($invoice['company_address_line3'] ?? ''));
-$buyerStreet = trim(implode(' ', array_filter([$buyerLine1, $buyerLine2, $buyerLine3])));
+$buyerStreet = trim((string)($invoice['company_street_no'] ?? ''));
+$buyerAddrAddon = trim((string)($invoice['company_additional_address'] ?? ''));
 
 $buyerZip     = trim((string)($invoice['company_postal_code'] ?? ''));
 $buyerCity    = trim((string)($invoice['company_city'] ?? ''));
 $buyerCountry = strtoupper((string)($invoice['company_country_code'] ?? 'DE') ?: 'DE');
 $sellerCountry = strtoupper($seller['country'] ?? 'DE');
 
-// Für Fallbacks (z.B. Name, falls kein Name gesetzt)
+// Für Fallbacks (z.B. Anzeige-Block)
 $addressLines = [];
-if ($buyerStreet !== '') {
-    $addressLines[] = $buyerStreet;
-}
+if ($buyerStreet !== '') $addressLines[] = $buyerStreet;
+if ($buyerAddrAddon !== '') $addressLines[] = $buyerAddrAddon;
 $cityLine = trim($buyerZip . ' ' . $buyerCity);
-if ($cityLine !== '') {
-    $addressLines[] = $cityLine;
-}
+if ($cityLine !== '') $addressLines[] = $cityLine;
 $buyerAddress = implode("\n", $addressLines);
 
 // ----------------------------------------------------------
@@ -639,12 +635,12 @@ if ($seller['vat_id'] !== '') {
 
 // Buyer
 $agreement->buyerTradeParty       = new TradeParty();
-$agreement->buyerTradeParty->name = $buyerName ?: $buyerStreet ?: $buyerCity ?: $buyerAddress;
+$agreement->buyerTradeParty->name = $buyerName !== '' ? $buyerName : ($buyerStreet ?: $buyerCity ?: $buyerAddress);
 
 $buyerAddr           = new TradeAddress();
-$buyerAddr->lineOne  = $buyerLine1 !== '' ? $buyerLine1 : null;
-$buyerAddr->lineTwo  = $buyerLine2 !== '' ? $buyerLine2 : null;
-$buyerAddr->lineThree= $buyerLine3 !== '' ? $buyerLine3 : null;
+$buyerAddr->lineOne  = $buyerStreet !== '' ? $buyerStreet : null;       // street_no
+$buyerAddr->lineTwo  = $buyerAddrAddon !== '' ? $buyerAddrAddon : null; // additional_address
+$buyerAddr->lineThree= null;
 $buyerAddr->postcode = $buyerZip ?: null;
 $buyerAddr->city     = $buyerCity ?: null;
 
@@ -657,18 +653,15 @@ try {
 
 $agreement->buyerTradeParty->postalTradeAddress = $buyerAddr;
 
-// Beispiel 1: ein kombinierter Name im Invoice-Record
+// Ansprechpartner als DefinedTradeContact
 $contactPersonName = '';
 if (!empty($invoice['contact_person_name'])) {
     $contactPersonName = trim((string)$invoice['contact_person_name']);
 } else {
-    // Beispiel 2: Vor- und Nachname separat im Invoice-Record
     $cpFirst = trim((string)($invoice['contact_first_name'] ?? ''));
     $cpLast  = trim((string)($invoice['contact_last_name'] ?? ''));
     $contactPersonName = trim($cpFirst . ' ' . $cpLast);
 }
-
-// Wenn wir einen Namen haben, als DefinedTradeContact setzen
 if ($contactPersonName !== '') {
     $contact = new TradeContact();
     $contact->personName = $contactPersonName;

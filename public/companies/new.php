@@ -31,9 +31,9 @@ $val = function($key, $default = '') {
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save') {
   $name    = trim($_POST['name'] ?? '');
-  $address_line1 = trim($_POST['address_line1'] ?? '');
-  $address_line2 = trim($_POST['address_line2'] ?? '');
-  $address_line3 = trim($_POST['address_line3'] ?? '');
+$street_no = trim($_POST['street_no'] ?? '');
+$additional_address = trim($_POST['additional_address'] ?? '');
+$additional_company_name = trim($_POST['additional_company_name'] ?? '');
   $postal_code   = trim($_POST['postal_code']   ?? '');
   $city          = trim($_POST['city']          ?? '');
   $country_code  = strtoupper(trim($_POST['country_code'] ?? 'DE'));
@@ -74,10 +74,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save'
       INSERT INTO companies
         (account_id,
         name,
-        address,
-        address_line1,
-        address_line2,
-        address_line3,
+        street_no,
+        additional_address,
+        additional_company_name,
         postal_code,
         city,
         country_code,
@@ -92,10 +91,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save'
       VALUES
         (?,          -- account_id
         ?,          -- name
-        ?,          -- address (Textblock)
-        ?,          -- address_line1
-        ?,          -- address_line2
-        ?,          -- address_line3
+        ?,          -- street_no
+        ?,          -- additional_address
+        ?,          -- additional_company_name
         ?,          -- postal_code
         ?,          -- city
         ?,          -- country_code
@@ -112,10 +110,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save'
   $ins->execute([
       $account_id,
       $name,
-      $address,
-      $address_line1,
-      $address_line2,
-      $address_line3,
+      $street_no,
+      $additional_address,
+      $additional_company_name,
       $postal_code,
       $city,
       $country_code,
@@ -156,21 +153,21 @@ require __DIR__ . '/../../src/layout/header.php';
         </div>
 
         <div class="col-12">
-          <label class="form-label">Adresszeile 1 (Straße & Hausnummer)</label>
-          <input type="text" name="address_line1" class="form-control"
-                value="<?= $val('address_line1') ?>">
+          <label class="form-label">Zusatz Firmennamen</label>
+          <input type="text" name="additional_company_name" class="form-control"
+                value="<?= $val('additional_company_name') ?>">
         </div>
 
         <div class="col-12">
-          <label class="form-label">Adresszeile 2</label>
-          <input type="text" name="address_line2" class="form-control"
-                value="<?= $val('address_line2') ?>">
+          <label class="form-label">Straße, Nummer</label>
+          <input type="text" name="street_no" class="form-control"
+                value="<?= $val('street_no') ?>">
         </div>
 
         <div class="col-12">
-          <label class="form-label">Adresszeile 3</label>
-          <input type="text" name="address_line3" class="form-control"
-                value="<?= $val('address_line3') ?>">
+          <label class="form-label">Adress-Zusatz</label>
+          <input type="text" name="additional_address" class="form-control"
+                value="<?= $val('additional_address') ?>">
         </div>
 
         <div class="col-md-4">
