@@ -146,7 +146,7 @@ function set_times_status_bulk(PDO $pdo, int $account_id, array $time_ids, strin
 }
 
 // ---------- POST ----------
-$err = null; $ok = null;
+$err = null; $ok = null; $warn = null;
 $canEditItems = (($invoice['status'] ?? '') === 'in_vorbereitung');
 $isLockedAll  = !$canEditItems;                       // für UI: alles außer Status sperren
 
@@ -173,11 +173,16 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '')==='save') {
 
   $itemsPosted   = $_POST['items'] ?? [];
   $deletedPosted = $_POST['items_deleted'] ?? []; // aus "Entfernen"-Button
+  $hasNonStandard = false;
 
   if (!$err) {
     $pdo->beginTransaction();
     try {
-      $sum_net = 0.0; $hasNonStandard = false;
+      $sum_net = 0.0;
+      // falls Items gesperrt, nimm vorhandenes Flag
+      if (!$canEditItems) {
+        $hasNonStandard = $invoice_has_nonstandard;
+      }
 
       if ($canEditItems) {
         // 1) Gelöschte Positionen
@@ -314,9 +319,16 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '')==='save') {
           $pos++;
         }
 
+        if ($hasNonStandard && $tax_reason === '' && $new_status === 'gestellt') {
+          throw new Exception('Bitte Begründung für die Steuerbefreiung angeben, bevor die Rechnung gestellt wird.');
+        }
+
         // -----------------------------------------
         // NEU: Kopf & Summen der Rechnung aktualisieren
         // -----------------------------------------
+        if ($hasNonStandard && $tax_reason === '') {
+          $warn = 'Bitte die Begründung für die Steuerbefreiung nachtragen.';
+        }
         $tax_reason_to_save = $hasNonStandard ? $tax_reason : '';
 
         // Netto/Brutto/MwSt je Steuersatz aus der DB neu berechnen
@@ -381,6 +393,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '')==='save') {
         } else {
           flash('Rechnung gespeichert.', 'success');
         }
+        if ($warn) { flash($warn, 'warning'); }
         redirect(url('/invoices/edit.php').'?id='.(int)$invoice['id']);
         exit;
       } else {
@@ -422,6 +435,10 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '')==='save') {
           }
         }
 
+        if ($invoice_has_nonstandard && $tax_reason === '' && $new_status === 'gestellt') {
+          throw new Exception('Bitte Begründung für die Steuerbefreiung angeben, bevor die Rechnung gestellt wird.');
+        }
+
         // Keine Item-/Ledger-/"hängende Zeiten"-Aufräum-Logik hier – es ändert sich ja nichts an den Positionen.
         $pdo->commit();
         flash('Rechnung gespeichert.', 'success');
@@ -447,10 +464,14 @@ $timesByItem = load_times_by_item($pdo, $account_id, $itemIds);
 
 // Für _items_table.php (EDIT-Modus: flach)
 $items  = [];
+$invoice_has_nonstandard = false;
 foreach ($rawItems as $r) {
   if ((int)($r['is_hidden'] ?? 0) === 1) continue; // versteckte Items nicht im UI
   $iid = (int)$r['item_id'];
   $mode = strtolower((string)($r['entry_mode'] ?? 'qty'));
+  $schemeCur = $r['tax_scheme'] ?? 'standard';
+  $vatCur    = (float)($r['vat_rate'] ?? 0);
+  if ($schemeCur !== 'standard' || $vatCur <= 0.0) { $invoice_has_nonstandard = true; }
   $items[] = [
     'id'            => $iid,
     'task_id'       => $r['task_id'] !== null ? (int)$r['task_id'] : null,
@@ -1381,16 +1402,8 @@ require __DIR__ . '/../../src/layout/header.php';
     const need = needsReason();
     if (need) {
       wrap && (wrap.style.display = '');
-      if (reason) {
-        reason.setAttribute('required', 'required');
-        reason.setAttribute('aria-required', 'true');
-      }
     } else {
       wrap && (wrap.style.display = 'none');
-      if (reason) {
-        reason.removeAttribute('required');
-        reason.removeAttribute('aria-required');
-      }
     }
   }
 
@@ -1413,20 +1426,7 @@ require __DIR__ . '/../../src/layout/header.php';
   // Initial
   updateReasonUI();
 
-  if (form) {
-    form.addEventListener('submit', function (e) {
-      if (needsReason()) {
-        if (!reason || !reason.value.trim()) {
-          wrap && (wrap.style.display = '');
-          reason && reason.setAttribute('required', 'required');
-          reason && reason.reportValidity && reason.reportValidity();
-          reason && reason.focus && reason.focus();
-          e.preventDefault();
-          e.stopPropagation();
-        }
-      }
-    });
-  }
+  // Kein clientseitiger Submit-Blocker mehr
 })();
 </script>
 

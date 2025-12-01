@@ -106,10 +106,23 @@ if (!isset($return_to) || $return_to === null || $return_to === '') {
                 <span class="visually-hidden">Ansehen</span>
               </form>
 
-              <a class="btn btn-sm btn-outline-secondary" href="<?= h(url('/invoices/pdf.php?id=' . $inv['id'])) ?>">PDF</a>
-              <?php $can_issue = ($inv['status'] === 'in_vorbereitung'); ?>
+              <?php
+                $needs_reason = ($inv['total_net'] > 0)
+                  && (($inv['status'] ?? '') !== 'storniert')
+                  && (isset($inv['tax_exemption_reason']) ? trim((string)$inv['tax_exemption_reason']) === '' : true)
+                  && (
+                        isset($inv['has_nonstandard']) ? (bool)$inv['has_nonstandard']
+                        : false
+                     );
+                $pdf_url = url('/invoices/pdf.php?id=' . $inv['id']);
+              ?>
+              <a class="btn btn-sm btn-outline-secondary <?= $needs_reason ? 'disabled' : '' ?>"
+                 href="<?= $needs_reason ? '#' : h($pdf_url) ?>"
+                 title="<?= $needs_reason ? 'Bitte Steuerbefreiungs-Begründung nachtragen' : 'PDF' ?>"
+                 <?= $needs_reason ? 'onclick="return false;"' : '' ?>>PDF</a>
+              <?php $can_issue = ($inv['status'] === 'in_vorbereitung') && !$needs_reason; ?>
               <form method="post" action="<?= url('/invoices/issue_and_pdf.php') ?>" class="d-inline"
-                    onsubmit="return confirm('Rechnung jetzt stellen und PDF öffnen?');">
+                    onsubmit="if (<?= $can_issue ? 'false' : 'true' ?>) { alert('Bitte Begründung für Steuerbefreiung eintragen, bevor die Rechnung gestellt wird.'); return false; } return confirm('Rechnung jetzt stellen und PDF öffnen?');">
                 <?= csrf_field() ?>
                 <input type="hidden" name="id" value="<?= (int)$inv['id'] ?>">
                 <input type="hidden" name="return_to" value="<?= h($return_to) ?>">

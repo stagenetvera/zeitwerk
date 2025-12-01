@@ -78,7 +78,14 @@ if ($page>$pages){ $page=$pages; $offset=($page-1)*$per_page; }
 $sql = "SELECT
           i.id, i.invoice_number,
           i.issue_date, i.due_date, i.status, i.total_net, i.total_gross,
-          c.name AS company_name, c.id AS company_id
+          i.tax_exemption_reason,
+          c.name AS company_name, c.id AS company_id,
+          EXISTS (
+            SELECT 1 FROM invoice_items ii
+             WHERE ii.account_id = i.account_id AND ii.invoice_id = i.id
+               AND (ii.tax_scheme <> 'standard' OR ii.vat_rate <= 0)
+             LIMIT 1
+          ) AS has_nonstandard
         FROM invoices i
         JOIN companies c ON c.id = i.company_id AND c.account_id = i.account_id
         WHERE $WHERE

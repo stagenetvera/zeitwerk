@@ -146,7 +146,7 @@ $companies = $cs->fetchAll();
 // geprüfte Firma laden
 $company = null;
 $company_tax_ex_reason = '';
-$err = null; $ok = null;
+$err = null; $ok = null; $warn = null;
 $show_tax_reason = false;
 
 if ($company_id) {
@@ -262,7 +262,7 @@ $prefill_intro = array_key_exists('invoice_intro_text', $_POST) ? (string)$_POST
 $prefill_outro = array_key_exists('invoice_outro_text', $_POST) ? (string)$_POST['invoice_outro_text'] : $eff_outro;
 
 // ---------- Speichern ----------
-if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && ($_POST['action']==='save' || $_POST["action"]==='save_and_issue')) {
+if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['action']==='save') {
   $company_id = (int)($_POST['company_id'] ?? 0);
   $issue_date = $_POST['issue_date'] ?? date('Y-m-d');
   $due_date   = $_POST['due_date']   ?? date('Y-m-d', strtotime('+14 days'));
@@ -280,6 +280,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && ($_POST['a
   }
 
   $itemsForm = $_POST['items'] ?? [];
+  $action = 'save';
 
   // Muss es überhaupt Positionen geben?
   if (!$err) {
@@ -309,11 +310,13 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && ($_POST['a
     }
 
     if ($hasNonStandard && $tax_reason === '') {
-      $err = 'Bitte Begründung für die Steuerbefreiung angeben.';
+      // Hinweis statt Blocker: Nutzer kann speichern, bekommt Warnung
+      $warn = 'Bitte die Begründung für die Steuerbefreiung nachtragen.';
     }
   }
 
   $show_tax_reason = $hasNonStandard || ($tax_reason !== '');
+  if ($warn) { $show_tax_reason = true; }
   if (!$show_tax_reason && $company_tax_ex_reason !== '') {
     $show_tax_reason = true;
   }
@@ -620,11 +623,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && ($_POST['a
         flash($msg, 'info');
       }
 
-      if (($_POST['action'] ?? '') === 'save_and_issue') {
-        redirect(url('/invoices/pdf.php?id='.(int)$invoice_id));
-      } else {
-        redirect_to_return_to(url('/companies/show.php').'?id='.$company_id);
-      }
+      if ($warn && function_exists('flash')) { flash($warn, 'warning'); }
+      redirect_to_return_to(url('/companies/show.php').'?id='.$company_id);
       exit;
 
     } catch (Throwable $e) {
@@ -793,8 +793,7 @@ $tax_reason_value = ($tax_reason_value === '') ? $company_tax_ex_reason : $tax_r
 
   <div class="d-flex justify-content-end gap-2">
     <a class="btn btn-outline-secondary" href="<?php echo h(url($return_to)) ?>">Abbrechen</a>
-    <button class="btn btn-outline-primary" name="action" value="save">Speichern</button>
-    <button class="btn btn-primary" name="action" value="save_and_issue">Speichern & Rechnung generieren</button>
+    <button class="btn btn-primary" name="action" value="save">Speichern</button>
   </div>
 
 </form>

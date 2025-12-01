@@ -7,6 +7,7 @@ require_once __DIR__ . '/../../src/utils.php';
 require_once __DIR__ . '/../../src/lib/settings.php';
 require_once __DIR__ . '/../../src/lib/speedata.php';
 require_once __DIR__ . '/../../src/lib/invoice_number.php';
+require_once __DIR__ . '/../../src/lib/flash.php';
 
 // Robustere Fehlerausgabe + Logging (hilfreich auf Live, wenn 500er ohne Details auftreten)
 $__pdf_log_dir = __DIR__ . '/../../storage/logs';
@@ -509,6 +510,15 @@ unset($group);
 $totalNet   = round_half_up($totalNet, 2);
 $totalTax   = round_half_up($totalTax, 2);
 $totalGross = round_half_up($totalNet + $totalTax, 2);
+
+// Blockiere PDF-Generierung, wenn steuerfrei/RC ohne Begründung
+if ($nonStandardBasis > 0 && $exemptionReason === '') {
+    if (function_exists('flash')) {
+        flash('Bitte Begründung für die Steuerbefreiung eintragen, bevor das PDF erzeugt wird.', 'warning');
+    }
+    redirect(url('/invoices/edit.php').'?id='.(int)$invoice['id']);
+    exit;
+}
 
 // ----------------------------------------------------------
 // Seller-Daten aus account_settings

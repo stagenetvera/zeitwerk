@@ -13,6 +13,10 @@ $account_id = (int)$user['account_id'];
 
 $invoice_id = isset($_POST['id']) ? (int)$_POST['id'] : 0;
 $return_to  = pick_return_to('/invoices/index.php');
+$edit_url   = url('/invoices/edit.php').'?id='.$invoice_id;
+if ($return_to) {
+  $edit_url .= '&return_to=' . urlencode($return_to);
+}
 
 if ($invoice_id <= 0) {
   flash('Ungültige Rechnungs-ID.', 'danger');
@@ -31,6 +35,25 @@ try {
 
   if (($inv['status'] ?? '') !== 'in_vorbereitung') {
     throw new RuntimeException('Nur Rechnungen im Status „in_vorbereitung“ können gestellt werden.');
+  }
+
+  // Prüfen: steuerfrei/Reverse-Charge ohne Begründung → blockieren
+  $reason = trim((string)($inv['tax_exemption_reason'] ?? ''));
+  $hasNonStandard = false;
+  $chk = $pdo->prepare("
+    SELECT EXISTS(
+      SELECT 1 FROM invoice_items
+      WHERE account_id=? AND invoice_id=? AND (tax_scheme <> 'standard' OR vat_rate <= 0)
+      LIMIT 1
+    )
+  ");
+  $chk->execute([$account_id, $invoice_id]);
+  $hasNonStandard = (bool)$chk->fetchColumn();
+
+  if ($hasNonStandard && $reason === '') {
+    $pdo->rollBack();
+    flash('Bitte Begründung für die Steuerbefreiung eintragen, bevor die Rechnung gestellt wird.', 'warning');
+    redirect($edit_url);
   }
 
   // Nummer vergeben, falls nötig
@@ -52,5 +75,5 @@ try {
 } catch (Throwable $e) {
   $pdo->rollBack();
   flash('Konnte Rechnung nicht stellen: '.$e->getMessage(), 'danger');
-  redirect($return_to);
+  redirect($edit_url ?: $return_to);
 }
