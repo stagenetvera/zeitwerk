@@ -14,7 +14,21 @@ function hurl($s){ return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
 // ---------- input ----------
 $company_id = isset($_GET['company_id']) && $_GET['company_id'] !== '' ? (int)$_GET['company_id'] : 0;
 $project_id = isset($_GET['project_id']) && $_GET['project_id'] !== '' ? (int)$_GET['project_id'] : 0;
-$prio       = isset($_GET['priority']) ? trim($_GET['priority']) : '';
+$prio_raw   = $_GET['priority'] ?? ($_GET['priorities'] ?? null);
+$prio_selected = [];
+$prio_default  = ['low','medium','high'];
+if (is_array($prio_raw)) {
+  foreach ($prio_raw as $pr) {
+    if (!is_string($pr)) continue;
+    $pr = trim($pr);
+    if ($pr !== '') $prio_selected[] = $pr;
+  }
+} elseif (is_string($prio_raw) && $prio_raw !== '') {
+  $prio_selected = [trim($prio_raw)];
+}
+if (!$prio_selected) {
+  $prio_selected = $prio_default;
+}
 
 $status_allowed  = ['angeboten','offen','warten'];
 $status_selected = [];
@@ -30,14 +44,25 @@ if (!$status_selected) {
 }
 $status_include_null = in_array('offen', $status_selected, true);
 
-$has_filters = ($company_id !== 0) || ($project_id !== 0) || ($prio !== '') || ($status_selected !== ['offen']);
+$has_filters = ($company_id !== 0)
+  || ($project_id !== 0)
+  || ($status_selected !== ['offen'])
+  || (count(array_diff($prio_selected, $prio_default)) > 0 || count(array_diff($prio_default, $prio_selected)) > 0);
 // ---------- filter options (nur mit tatsächlich vorhandenen Aufgaben) ----------
 
 // Firmen: aus Aufgaben ableiten (Status-/Priority-Filter wie unten), aber OHNE company-Filter.
 // Wenn ein Projekt gewählt ist, wird automatisch auf dessen Firma eingeschränkt.
 $c_where = [ 'ta.account_id = :acc' ];
 $c_params = [':acc' => $account_id];
-if ($prio !== '') { $c_where[] = 'ta.priority = :prio'; $c_params[':prio'] = $prio; }
+if ($prio_selected) {
+  $in = [];
+  foreach ($prio_selected as $i => $pr) {
+    $key = ':cprio'.$i;
+    $in[] = $key;
+    $c_params[$key] = $pr;
+  }
+  $c_where[] = 'ta.priority IN ('.implode(',', $in).')';
+}
 if ($project_id)  { $c_where[] = 'p.id = :pid';        $c_params[':pid']  = $project_id; }
 if ($status_selected) {
   $in = [];
@@ -72,7 +97,15 @@ if ($company_id) {
     'c.id = :cid',
   ];
   $p_params = [':acc'=>$account_id, ':cid'=>$company_id];
-  if ($prio !== '') { $p_where[] = 'ta.priority = :prio'; $p_params[':prio'] = $prio; }
+  if ($prio_selected) {
+    $in = [];
+    foreach ($prio_selected as $i => $pr) {
+      $key = ':pprio'.$i;
+      $in[] = $key;
+      $p_params[$key] = $pr;
+    }
+    $p_where[] = 'ta.priority IN ('.implode(',', $in).')';
+  }
   if ($status_selected) {
     $in = [];
     foreach ($status_selected as $i => $st) {
@@ -122,7 +155,15 @@ if ($status_selected) {
 
 if ($company_id) { $where[] = 'c.id = :cid';  $params[':cid']  = $company_id; }
 if ($project_id) { $where[] = 'p.id = :pid';  $params[':pid']  = $project_id; }
-if ($prio !== ''){ $where[] = 'ta.priority = :prio'; $params[':prio'] = $prio; }
+if ($prio_selected){
+  $in = [];
+  foreach ($prio_selected as $i => $pr) {
+    $key = ':prio'.$i;
+    $in[] = $key;
+    $params[$key] = $pr;
+  }
+  $where[] = 'ta.priority IN ('.implode(',', $in).')';
+}
 
 $WHERE = implode(' AND ', $where);
 
@@ -171,7 +212,7 @@ function qs_keep($base, $keep, $extra = []){
 $keep = [
   'company_id'=>$company_id?:'',
   'project_id'=>$project_id?:'',
-  'priority'=>$prio,
+  'priority'=>$prio_selected,
   'status'=>$status_selected,
 ];
 ?>
@@ -190,8 +231,7 @@ $keep = [
             <option value="<?=$c['id']?>" <?=$company_id===$c['id']?'selected':''?>><?=h($c['name'])?></option>
           <?php endforeach; ?>
         </select>
-      </div>
-      <div class="col-md-4">
+
         <label class="form-label">Projekt</label>
         <select name="project_id" class="form-select" <?=$company_id ? '' : 'disabled'?> onchange="document.getElementById('dashFilter').submit()">
           <option value="">– alle –</option>
@@ -200,16 +240,21 @@ $keep = [
           <?php endforeach; ?>
         </select>
       </div>
-      <div class="col-md-3">
-        <label class="form-label">Priorität</label>
-        <select name="priority" class="form-select" onchange="document.getElementById('dashFilter').submit()">
-          <option value="">– alle –</option>
+      <div class="col-md-4">
+        <label class="form-label mb-1">Priorität</label>
+        <div class="d-flex flex-wrap gap-3">
           <?php foreach ($priorities as $pr): ?>
-            <option value="<?=h($pr)?>" <?=$prio===$pr?'selected':''?>><?=h($pr)?></option>
+            <div class="form-check form-check-inline">
+              <input class="form-check-input" type="checkbox" id="pr-<?=h($pr)?>" name="priority[]" value="<?=h($pr)?>"
+                     <?= in_array($pr, $prio_selected, true) ? 'checked' : '' ?>
+                     onchange="document.getElementById('dashFilter').submit()">
+              <label class="form-check-label" for="pr-<?=h($pr)?>"><?=h($pr)?></label>
+            </div>
           <?php endforeach; ?>
-        </select>
+        </div>
+        <div class="form-text">Standard: low, medium, high.</div>
       </div>
-      <div class="col-md-12">
+      <div class="col-md-4">
         <label class="form-label mb-1">Status</label>
         <div class="d-flex flex-wrap gap-3">
           <?php
