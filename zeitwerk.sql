@@ -81,6 +81,7 @@ CREATE TABLE `companies` (
   `hourly_rate` decimal(10,2) DEFAULT NULL,
   `default_tax_scheme` enum('standard','tax_exempt','reverse_charge') COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `default_vat_rate` decimal(5,2) DEFAULT NULL,
+  `default_tax_exemption_reason` text COLLATE utf8mb4_unicode_ci,
   `vat_id` varchar(128) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `status` enum('aktiv','abgeschlossen') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'aktiv',
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP

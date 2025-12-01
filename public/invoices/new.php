@@ -145,6 +145,7 @@ $companies = $cs->fetchAll();
 
 // geprüfte Firma laden
 $company = null;
+$company_tax_ex_reason = '';
 $err = null; $ok = null;
 $show_tax_reason = false;
 
@@ -154,6 +155,8 @@ if ($company_id) {
   $company = $cchk->fetch();
   if (!$company) {
     $err = 'Ungültige Firma.'; $company_id = 0;
+  } else {
+    $company_tax_ex_reason = trim((string)($company['default_tax_exemption_reason'] ?? ''));
   }
 }
 
@@ -264,6 +267,9 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && ($_POST['a
   $issue_date = $_POST['issue_date'] ?? date('Y-m-d');
   $due_date   = $_POST['due_date']   ?? date('Y-m-d', strtotime('+14 days'));
   $tax_reason = trim($_POST['tax_exemption_reason'] ?? '');
+  if ($tax_reason === '' && $company_tax_ex_reason !== '') {
+    $tax_reason = $company_tax_ex_reason;
+  }
 
   if (!$company_id) {
     $err = 'Bitte eine Firma auswählen.';
@@ -308,6 +314,9 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && ($_POST['a
   }
 
   $show_tax_reason = $hasNonStandard || ($tax_reason !== '');
+  if (!$show_tax_reason && $company_tax_ex_reason !== '') {
+    $show_tax_reason = true;
+  }
 
   $intro_text = (string)($_POST['invoice_intro_text'] ?? '');
   $outro_text = (string)($_POST['invoice_outro_text'] ?? '');
@@ -645,6 +654,7 @@ require __DIR__ . '/../../src/layout/header.php';
 $return_to = pick_return_to('/companies/show.php?id='.$company_id);
 
 $tax_reason_value = isset($_POST['tax_exemption_reason']) ? (string)$_POST['tax_exemption_reason'] : '';
+$tax_reason_value = ($tax_reason_value === '') ? $company_tax_ex_reason : $tax_reason_value;
 ?>
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h3>Neue Rechnung</h3>

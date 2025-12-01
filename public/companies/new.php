@@ -61,6 +61,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save'
     if ($vat_val < 0 || $vat_val > 100) { $vat_val = null; }
   }
 
+  $tax_ex_reason_raw = (string)($_POST['default_tax_exemption_reason'] ?? '');
+  $tax_ex_reason = trim($tax_ex_reason_raw) !== '' ? $tax_ex_reason_raw : null;
+
   if ($name === '') {
     $err = 'Name ist erforderlich.';
   }
@@ -83,6 +86,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save'
         status,
         default_tax_scheme,
         default_vat_rate,
+        default_tax_exemption_reason,
         invoice_intro_text,
         invoice_outro_text)
       VALUES
@@ -100,6 +104,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save'
         ?,          -- status
         ?,          -- default_tax_scheme
         ?,          -- default_vat_rate
+        ?,          -- default_tax_exemption_reason
         ?,          -- invoice_intro_text
         ?)          -- invoice_outro_text
   ');
@@ -119,6 +124,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save'
       $status,
       $tax_scheme,   // kann NULL sein
       $vat_val,      // kann NULL sein
+      $tax_ex_reason,
       $co_intro,     // ggf. '' oder NULL, je nach deinem Code
       $co_outro,
   ]);
@@ -275,6 +281,18 @@ require __DIR__ . '/../../src/layout/header.php';
         <div class="col-md-4 mb-3">
           <label class="form-label">USt-ID</label>
           <input type="text" name="vat_id" class="form-control" value="<?=$val('vat_id')?>">
+        </div>
+        <div class="col-12 mb-3">
+          <label class="form-label">Standard-Begründung für Steuerbefreiung</label>
+          <textarea
+            name="default_tax_exemption_reason"
+            class="form-control"
+            rows="2"
+            placeholder="z. B. § 19 UStG (Kleinunternehmer) / Reverse-Charge nach § 13b UStG / Art. 196 MwStSystRL"
+          ><?= $val('default_tax_exemption_reason') ?></textarea>
+          <div class="form-text">
+            Wird für neue Rechnungen dieser Firma vorbefüllt, wenn eine steuerfreie oder Reverse-Charge-Rechnung erstellt wird.
+          </div>
         </div>
 
         <div class="col-md-4 mb-3">
