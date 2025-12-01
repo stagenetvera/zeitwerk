@@ -157,6 +157,20 @@ if ($company_id) {
   }
 }
 
+[$DEFAULT_SCHEME, $DEFAULT_TAX] = get_effective_tax_defaults($settings, $company);
+$DEFAULT_SCHEME = in_array($DEFAULT_SCHEME, ['standard','tax_exempt','reverse_charge'], true)
+  ? $DEFAULT_SCHEME
+  : 'standard';
+$DEFAULT_TAX = (float)$DEFAULT_TAX;
+if (!empty($groups)) {
+  foreach ($groups as &$g) {
+    foreach ($g['rows'] as &$r) {
+      $r['tax_rate'] = ($DEFAULT_SCHEME === 'standard') ? $DEFAULT_TAX : 0.0;
+    }
+  }
+  unset($r, $g);
+}
+
 // --- Kontakte (Rechnungsempfänger) der Firma
 $contacts = [];
 $recipient_contact_id = 0;
@@ -746,7 +760,8 @@ $tax_reason_value = isset($_POST['tax_exemption_reason']) ? (string)$_POST['tax_
         type="button"
         id="addManualItem"
         class="btn btn-sm btn-outline-primary"
-        data-default-vat="<?php echo h(number_format((float)$settings['default_vat_rate'],2,'.','')) ?>"
+        data-default-vat="<?php echo h(number_format((float)$DEFAULT_TAX,2,'.','')) ?>"
+        data-default-scheme="<?php echo h($DEFAULT_SCHEME) ?>"
         data-default-rate="<?php echo h(number_format((float)$default_manual_rate,2,'.','')) ?>">+ Position</button>
 
     </div>
@@ -1289,6 +1304,9 @@ $tax_reason_value = isset($_POST['tax_exemption_reason']) ? (string)$_POST['tax_
     const idx     = nextIndex();
     const defVat  = addBtn.getAttribute('data-default-vat') || '19.00';
     const defRate = addBtn.getAttribute('data-default-rate') || '0.00';
+    const defSchemeRaw = (addBtn.getAttribute('data-default-scheme') || 'standard').trim().toLowerCase();
+    const defScheme = ['standard','tax_exempt','reverse_charge'].includes(defSchemeRaw) ? defSchemeRaw : 'standard';
+    const vatValue = (defScheme === 'standard') ? defVat : '0.00';
 
     const tr = document.createElement('tr');
     tr.className = 'inv-item-row';
@@ -1338,19 +1356,19 @@ $tax_reason_value = isset($_POST['tax_exemption_reason']) ? (string)$_POST['tax_
                 name="items[${idx}][hourly_rate]"  value="${defRate}" step="0.01" min="0">
        </td>
 
-       <td class="text-end">
-         <select name="items[${idx}][tax_scheme]" class="form-select form-select-sm inv-tax-sel"
-                 data-rate-standard="${defVat}" data-rate-tax-exempt="0.00" data-rate-reverse-charge="0.00">
-           <option value="standard" selected>standard (mit MwSt)</option>
-           <option value="tax_exempt">steuerfrei</option>
-           <option value="reverse_charge">Reverse-Charge</option>
-         </select>
-       </td>
+      <td class="text-end">
+        <select name="items[${idx}][tax_scheme]" class="form-select form-select-sm inv-tax-sel"
+                data-rate-standard="${defVat}" data-rate-tax-exempt="0.00" data-rate-reverse-charge="0.00">
+          <option value="standard" ${defScheme==='standard'?'selected':''}>standard (mit MwSt)</option>
+          <option value="tax_exempt" ${defScheme==='tax_exempt'?'selected':''}>steuerfrei</option>
+          <option value="reverse_charge" ${defScheme==='reverse_charge'?'selected':''}>Reverse-Charge</option>
+        </select>
+      </td>
 
        <td class="text-end">
-         <input type="number" min="0" max="100" step="0.01" class="form-control form-control-sm text-end inv-vat-input no-spin"
-                name="items[${idx}][vat_rate]" value="${defVat}">
-       </td>
+        <input type="number" min="0" max="100" step="0.01" class="form-control form-control-sm text-end inv-vat-input no-spin"
+                name="items[${idx}][vat_rate]" value="${vatValue}">
+      </td>
 
        <td class="text-end"><span class="net">0,00</span></td>
 
@@ -1373,6 +1391,11 @@ $tax_reason_value = isset($_POST['tax_exemption_reason']) ? (string)$_POST['tax_
       btn.setAttribute('aria-pressed', active ? 'true' : 'false');
     })(btnQty, true);
     (function setInactive(btn){ btn.classList.add('btn-outline-secondary'); })(btnTim);
+
+    const sel = tr.querySelector('.inv-tax-sel');
+    if (sel) {
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+    }
 
     var evt = new Event('input', {bubbles:true});
     var rate = tr.querySelector('.rate'); if (rate) rate.dispatchEvent(evt);

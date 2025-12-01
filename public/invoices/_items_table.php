@@ -304,6 +304,9 @@ else:
     $qtyHours   = max(0, $minutesSum) / 60.0; // nur Anzeige / auto
 
     $scheme = $__DEFAULT_SCHEME;
+    if (!in_array($scheme, ['standard','tax_exempt','reverse_charge'], true)) {
+      $scheme = 'standard';
+    }
     $vat    = ($scheme === 'standard') ? (float)$__DEFAULT_TAX : 0.0;
 
     // Soft-Lock / Already billed UI (Info)
@@ -391,9 +394,9 @@ else:
                 data-rate-standard="<?= number_format($__DEFAULT_TAX,2,'.','') ?>"
                 data-rate-tax-exempt="0.00"
                 data-rate-reverse-charge="0.00">
-          <option value="standard" selected>standard (mit MwSt)</option>
-          <option value="tax_exempt">steuerfrei</option>
-          <option value="reverse_charge">Reverse-Charge</option>
+          <option value="standard" <?= $scheme==='standard'?'selected':'' ?>>standard (mit MwSt)</option>
+          <option value="tax_exempt" <?= $scheme==='tax_exempt'?'selected':'' ?>>steuerfrei</option>
+          <option value="reverse_charge" <?= $scheme==='reverse_charge'?'selected':'' ?>>Reverse-Charge</option>
         </select>
       </td>
 
