@@ -16,18 +16,40 @@ $company_id = isset($_GET['company_id']) && $_GET['company_id'] !== '' ? (int)$_
 $project_id = isset($_GET['project_id']) && $_GET['project_id'] !== '' ? (int)$_GET['project_id'] : 0;
 $prio       = isset($_GET['priority']) ? trim($_GET['priority']) : '';
 
-$has_filters = ($company_id !== 0) || ($project_id !== 0) || ($prio !== '');
+$status_allowed  = ['angeboten','offen','warten'];
+$status_selected = [];
+if (isset($_GET['status']) && is_array($_GET['status'])) {
+  foreach ($_GET['status'] as $st) {
+    if (!is_string($st)) continue;
+    $st = strtolower(trim($st));
+    if (in_array($st, $status_allowed, true)) $status_selected[] = $st;
+  }
+}
+if (!$status_selected) {
+  $status_selected = ['offen']; // Default
+}
+$status_include_null = in_array('offen', $status_selected, true);
+
+$has_filters = ($company_id !== 0) || ($project_id !== 0) || ($prio !== '') || ($status_selected !== ['offen']);
 // ---------- filter options (nur mit tatsächlich vorhandenen Aufgaben) ----------
 
 // Firmen: aus Aufgaben ableiten (Status-/Priority-Filter wie unten), aber OHNE company-Filter.
 // Wenn ein Projekt gewählt ist, wird automatisch auf dessen Firma eingeschränkt.
-$c_where = [
-  'ta.account_id = :acc',
-  "(ta.status IS NULL OR ta.status NOT IN ('abgeschlossen','angeboten','in_abrechnung'))",
-];
+$c_where = [ 'ta.account_id = :acc' ];
 $c_params = [':acc' => $account_id];
 if ($prio !== '') { $c_where[] = 'ta.priority = :prio'; $c_params[':prio'] = $prio; }
 if ($project_id)  { $c_where[] = 'p.id = :pid';        $c_params[':pid']  = $project_id; }
+if ($status_selected) {
+  $in = [];
+  foreach ($status_selected as $i => $st) {
+    $key = ':cst'.$i;
+    $in[] = $key;
+    $c_params[$key] = $st;
+  }
+  $cond = 'ta.status IN ('.implode(',', $in).')';
+  if ($status_include_null) { $cond = '(' . $cond . ' OR ta.status IS NULL)'; }
+  $c_where[] = $cond;
+}
 
 $c_sql = "
   SELECT DISTINCT c.id, c.name
@@ -48,10 +70,20 @@ if ($company_id) {
   $p_where = [
     'ta.account_id = :acc',
     'c.id = :cid',
-    "(ta.status IS NULL OR ta.status NOT IN ('abgeschlossen','angeboten','in_abrechnung'))",
   ];
   $p_params = [':acc'=>$account_id, ':cid'=>$company_id];
   if ($prio !== '') { $p_where[] = 'ta.priority = :prio'; $p_params[':prio'] = $prio; }
+  if ($status_selected) {
+    $in = [];
+    foreach ($status_selected as $i => $st) {
+      $key = ':pst'.$i;
+      $in[] = $key;
+      $p_params[$key] = $st;
+    }
+    $cond = 'ta.status IN ('.implode(',', $in).')';
+    if ($status_include_null) { $cond = '(' . $cond . ' OR ta.status IS NULL)'; }
+    $p_where[] = $cond;
+  }
 
   $p_sql = "
     SELECT DISTINCT p.id, p.title
@@ -75,7 +107,18 @@ $priorities = array_values(array_filter(array_map(function($r){ return $r['prior
 // ---------- query tasks ----------
 $where = ['ta.account_id = :acc'];
 $params = [':acc'=>$account_id];
-$where[] = "(ta.status IS NULL OR ta.status NOT IN ('abgeschlossen','angeboten','in_abrechnung'))";
+$status_cond = '';
+if ($status_selected) {
+  $in = [];
+  foreach ($status_selected as $i => $st) {
+    $key = ':st'.$i;
+    $in[] = $key;
+    $params[$key] = $st;
+  }
+  $status_cond = 'ta.status IN ('.implode(',', $in).')';
+  if ($status_include_null) { $status_cond = '(' . $status_cond . ' OR ta.status IS NULL)'; }
+  $where[] = $status_cond;
+}
 
 if ($company_id) { $where[] = 'c.id = :cid';  $params[':cid']  = $company_id; }
 if ($project_id) { $where[] = 'p.id = :pid';  $params[':pid']  = $project_id; }
@@ -128,7 +171,8 @@ function qs_keep($base, $keep, $extra = []){
 $keep = [
   'company_id'=>$company_id?:'',
   'project_id'=>$project_id?:'',
-  'priority'=>$prio
+  'priority'=>$prio,
+  'status'=>$status_selected,
 ];
 ?>
 <div class="d-flex justify-content-between align-items-center mb-3">
@@ -165,8 +209,29 @@ $keep = [
           <?php endforeach; ?>
         </select>
       </div>
-      <div class="col-md-1 d-flex align-items-end">
-        <a href="<?=hurl($base)?>" class="btn btn-outline-secondary w-100">Reset</a>
+      <div class="col-md-12">
+        <label class="form-label mb-1">Status</label>
+        <div class="d-flex flex-wrap gap-3">
+          <?php
+            $status_labels = [
+              'angeboten' => 'angeboten',
+              'offen'     => 'offen',
+              'warten'    => 'warten',
+            ];
+          ?>
+          <?php foreach ($status_labels as $key => $label): ?>
+            <div class="form-check form-check-inline">
+              <input class="form-check-input" type="checkbox" id="st-<?=$key?>" name="status[]" value="<?=$key?>"
+                     <?= in_array($key, $status_selected, true) ? 'checked' : '' ?>
+                     onchange="document.getElementById('dashFilter').submit()">
+              <label class="form-check-label" for="st-<?=$key?>"><?=h($label)?></label>
+            </div>
+          <?php endforeach; ?>
+        </div>
+        <div class="form-text">Standard: „offen“.</div>
+      </div>
+      <div class="col-md-12 d-flex justify-content-end">
+        <a href="<?=hurl($base)?>" class="btn btn-outline-secondary">Reset</a>
       </div>
     </form>
 
